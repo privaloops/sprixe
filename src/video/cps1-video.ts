@@ -455,19 +455,21 @@ export class CPS1Video {
     const fb32 = new Uint32Array(framebuffer.buffer, framebuffer.byteOffset, framebuffer.byteLength / 4);
 
     // Row scroll mode for scroll2: render per-scanline with per-row X offset
+    // From MAME: for (int i = 0; i < 256; i++)
+    //   set_scrollx((i - scrly) & 0x3ff, m_scroll2x + m_other[(i + otheroffs) & 0x3ff])
+    // where scrly = -m_scroll2y, i = screen row
     if (useRowScroll) {
-      const scrly = (-scrollY) & 0xFFFF;
       for (let screenY = 0; screenY < SCREEN_HEIGHT; screenY++) {
         const vy = ((screenY + scrollY) & 0xFFFF) % virtualH;
-        // Read per-row scroll offset from "other" VRAM region
-        // MAME: m_scroll2x + m_other[(i + otheroffs) & 0x3ff]
-        // i = screen row, otheroffs = CPS_A register 0x20
-        const rowIdx = (screenY + ((scrly + CPS_VBEND) & 0xFFFF)) & 0x3FF;
-        const otherAddr = otherBase + ((rowIdx + otherOffs) & 0x3FF) * 2;
+        // MAME: other[(i + otheroffs) & 0x3ff] where i = screenY
+        const otherIdx = (screenY + otherOffs) & 0x3FF;
+        const otherAddr = otherBase + otherIdx * 2;
         const rowOffset = otherAddr + 1 < VRAM_SIZE
-          ? (this.vram[otherAddr]! << 8) | this.vram[otherAddr + 1]!
+          ? ((this.vram[otherAddr]! << 8) | this.vram[otherAddr + 1]!) & 0xFFFF
           : 0;
-        const rowScrollX = (baseScrollX + rowOffset) & 0xFFFF;
+        // Sign-extend the 16-bit row offset
+        const rowOffsetSigned = rowOffset > 0x7FFF ? rowOffset - 0x10000 : rowOffset;
+        const rowScrollX = (baseScrollX + rowOffsetSigned) & 0xFFFF;
 
         for (let screenX = 0; screenX < SCREEN_WIDTH; screenX++) {
           const vx = ((screenX + rowScrollX) & 0xFFFF) % virtualW;
