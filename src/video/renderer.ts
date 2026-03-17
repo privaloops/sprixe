@@ -1,0 +1,108 @@
+/**
+ * CPS1-Web — Canvas 2D Renderer
+ *
+ * Fallback renderer (Phase 1/2). Takes a 384×224 RGBA framebuffer produced by
+ * the CPS-A/B emulation layer and blits it to an HTMLCanvasElement.
+ *
+ * The internal canvas is always 384×224 (native CPS1 resolution). CSS scaling
+ * fills the container while preserving the native aspect ratio (384:224 ≈ 1.714:1).
+ *
+ * WebGPU renderer (Phase 6) will replace this; keep the same interface.
+ */
+
+export const SCREEN_WIDTH = 384;
+export const SCREEN_HEIGHT = 224;
+export const FRAMEBUFFER_SIZE = SCREEN_WIDTH * SCREEN_HEIGHT * 4; // RGBA bytes
+
+export class Renderer {
+  private readonly canvas: HTMLCanvasElement;
+  private readonly ctx: CanvasRenderingContext2D;
+  private readonly imageData: ImageData;
+
+  constructor(canvas: HTMLCanvasElement) {
+    // Fix internal resolution regardless of how the element was sized in CSS.
+    canvas.width = SCREEN_WIDTH;
+    canvas.height = SCREEN_HEIGHT;
+
+    const ctx = canvas.getContext("2d", { alpha: false });
+    if (!ctx) {
+      throw new Error("Renderer: could not obtain 2D rendering context");
+    }
+
+    this.canvas = canvas;
+    this.ctx = ctx;
+    this.imageData = new ImageData(SCREEN_WIDTH, SCREEN_HEIGHT);
+
+    // Apply CSS scaling so the canvas fills its container while keeping ratio.
+    this.resize();
+  }
+
+  /**
+   * Blit `framebuffer` (384×224 RGBA, Uint8Array) to the canvas.
+   *
+   * We write directly into `this.imageData.data` (a Uint8ClampedArray) to
+   * avoid an extra allocation every frame, then call `putImageData` which
+   * uploads the pixel buffer in a single DMA-like operation.
+   */
+  render(framebuffer: Uint8Array): void {
+    if (framebuffer.length !== FRAMEBUFFER_SIZE) {
+      throw new Error(
+        `Renderer.render: expected ${FRAMEBUFFER_SIZE} bytes, got ${framebuffer.length}`
+      );
+    }
+
+    this.imageData.data.set(framebuffer);
+    this.ctx.putImageData(this.imageData, 0, 0);
+  }
+
+  /**
+   * Recalculate CSS dimensions so the canvas fills its parent while keeping
+   * the native 384:224 aspect ratio (letterboxed / pillarboxed as needed).
+   *
+   * Call this on `window` "resize" events.
+   */
+  resize(): void {
+    const parent = this.canvas.parentElement;
+
+    let availableWidth: number;
+    let availableHeight: number;
+
+    if (parent) {
+      availableWidth = parent.clientWidth;
+      availableHeight = parent.clientHeight;
+    } else {
+      availableWidth = window.innerWidth;
+      availableHeight = window.innerHeight;
+    }
+
+    const scaleX = availableWidth / SCREEN_WIDTH;
+    const scaleY = availableHeight / SCREEN_HEIGHT;
+    const scale = Math.min(scaleX, scaleY);
+
+    const displayWidth = Math.floor(SCREEN_WIDTH * scale);
+    const displayHeight = Math.floor(SCREEN_HEIGHT * scale);
+
+    this.canvas.style.width = `${displayWidth}px`;
+    this.canvas.style.height = `${displayHeight}px`;
+    // Centre inside the parent with CSS absolute positioning if needed.
+    this.canvas.style.imageRendering = "pixelated";
+  }
+
+  /**
+   * Toggle the browser's native fullscreen API on the canvas element.
+   * Falls back silently if the API is unavailable (e.g. during tests).
+   */
+  toggleFullscreen(): void {
+    if (!document.fullscreenEnabled) return;
+
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {
+        // Ignore — nothing meaningful to do if exit fails.
+      });
+    } else {
+      this.canvas.requestFullscreen().catch(() => {
+        // Ignore — can fail if not triggered by a user gesture.
+      });
+    }
+  }
+}

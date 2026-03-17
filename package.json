@@ -1,0 +1,21 @@
+{
+  "name": "cps1-web",
+  "version": "1.0.0",
+  "description": "CPS1 (Capcom Play System 1) emulator in the browser — TypeScript + WebGPU + WebRTC",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vite": "^8.0.0"
+  },
+  "dependencies": {
+    "jszip": "^3.10.1"
+  }
+}
