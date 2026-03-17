@@ -677,42 +677,43 @@ export class CPS1Video {
       const code = (objData[entryOffset + 4]! << 8) | objData[entryOffset + 5]!;
       const colour = (objData[entryOffset + 6]! << 8) | objData[entryOffset + 7]!;
 
-      const mappedBaseCode = gfxromBankMapper(GFXTYPE_SPRITES, code);
-      if (mappedBaseCode === -1) continue;
-
       const col = colour & 0x1F;
       const flipX = (colour >> 5) & 1;
       const flipY = (colour >> 6) & 1;
 
       if (colour & 0xFF00) {
         // Multi-tile (blocked) sprite
+        // MAME does tile arithmetic on RAW code, then bank-maps each sub-tile
         const nx = ((colour >> 8) & 0x0F) + 1;
         const ny = ((colour >> 12) & 0x0F) + 1;
 
         for (let nys = 0; nys < ny; nys++) {
           for (let nxs = 0; nxs < nx; nxs++) {
-            // Sprite coords are in full raster space; convert to screen
             const sx = ((x + nxs * 16) & 0x1FF) - CPS_HBEND;
             const sy = ((y + nys * 16) & 0x1FF) - CPS_VBEND;
 
-            // Early skip: if entirely off screen
             if (sx >= SCREEN_WIDTH || sx + 15 < 0) continue;
             if (sy >= SCREEN_HEIGHT || sy + 15 < 0) continue;
 
-            let tileCode: number;
+            // Calculate sub-tile from RAW code (before bank mapping)
+            let rawTile: number;
             if (flipY) {
               if (flipX) {
-                tileCode = (mappedBaseCode & ~0x0F) + ((mappedBaseCode + (nx - 1) - nxs) & 0x0F) + 0x10 * (ny - 1 - nys);
+                rawTile = (code & ~0x0F) + ((code + (nx - 1) - nxs) & 0x0F) + 0x10 * (ny - 1 - nys);
               } else {
-                tileCode = (mappedBaseCode & ~0x0F) + ((mappedBaseCode + nxs) & 0x0F) + 0x10 * (ny - 1 - nys);
+                rawTile = (code & ~0x0F) + ((code + nxs) & 0x0F) + 0x10 * (ny - 1 - nys);
               }
             } else {
               if (flipX) {
-                tileCode = (mappedBaseCode & ~0x0F) + ((mappedBaseCode + (nx - 1) - nxs) & 0x0F) + 0x10 * nys;
+                rawTile = (code & ~0x0F) + ((code + (nx - 1) - nxs) & 0x0F) + 0x10 * nys;
               } else {
-                tileCode = (mappedBaseCode & ~0x0F) + ((mappedBaseCode + nxs) & 0x0F) + 0x10 * nys;
+                rawTile = (code & ~0x0F) + ((code + nxs) & 0x0F) + 0x10 * nys;
               }
             }
+
+            // Bank-map each sub-tile individually
+            const tileCode = gfxromBankMapper(GFXTYPE_SPRITES, rawTile);
+            if (tileCode === -1) continue;
 
             this.drawSpriteTileFast(
               fb32, palCache, gfxRom, gfxRomLen, rowBuf,
@@ -722,10 +723,12 @@ export class CPS1Video {
           }
         }
       } else {
-        // Single 16x16 sprite tile — convert to screen coords
+        // Single 16x16 sprite tile
+        const mappedCode = gfxromBankMapper(GFXTYPE_SPRITES, code);
+        if (mappedCode === -1) continue;
         this.drawSpriteTileFast(
           fb32, palCache, gfxRom, gfxRomLen, rowBuf,
-          mappedBaseCode, col, flipX, flipY,
+          mappedCode, col, flipX, flipY,
           (x & 0x1FF) - CPS_HBEND, (y & 0x1FF) - CPS_VBEND,
         );
       }
