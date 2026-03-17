@@ -141,6 +141,11 @@ export class Emulator {
       return this.oki6295 !== null ? this.oki6295.read() : 0;
     });
 
+    // Wire sound latch: immediate forwarding from 68000 bus to Z80 bus
+    this.bus.setSoundLatchCallback((value: number) => {
+      this.z80Bus.setSoundLatch(value);
+    });
+
     // Wire up IRQ acknowledge: when the 68000 processes an interrupt,
     // it performs an IACK cycle that clears all interrupt lines.
     // This matches MAME's irqack_r which clears both IPL1 and IPL2.
@@ -277,10 +282,21 @@ export class Emulator {
 
   // ── Private: main loop ────────────────────────────────────────────────────
 
+  private lastFrameTime = 0;
+  private readonly frameDuration = 1000 / FRAME_RATE; // ~16.77ms for 59.637 Hz
+
   private scheduleFrame(): void {
     if (!this.running || this.paused) return;
-    this.animFrameId = requestAnimationFrame(() => {
-      this.runOneFrame();
+    this.animFrameId = requestAnimationFrame((timestamp) => {
+      // Throttle to CPS1 native frame rate (~59.637 Hz)
+      if (this.lastFrameTime === 0) this.lastFrameTime = timestamp;
+      const elapsed = timestamp - this.lastFrameTime;
+
+      if (elapsed >= this.frameDuration) {
+        this.lastFrameTime = timestamp - (elapsed % this.frameDuration);
+        this.runOneFrame();
+      }
+
       this.scheduleFrame();
     });
   }
@@ -291,8 +307,21 @@ export class Emulator {
     // 1. Update input ports on the bus
     this.input.updateBusPorts(this.bus.getIoPorts());
 
-    // 2. Sync sound latch
-    this.z80Bus.setSoundLatch(this.bus.getSoundLatch()[0]!);
+    // 2. Sync sound latch — the 68000 writes to 0x800180-0x800187.
+    // MAME uses a generic_latch_8, any write in the range sets the latch.
+    // The 68000 typically writes a byte to the odd address (0x800181).
+    // Check all bytes and use the first non-zero one, or byte 1 (odd).
+    const latchBuf = this.bus.getSoundLatch();
+    const latchVal = latchBuf[1] !== 0 ? latchBuf[1]! : latchBuf[0]!;
+    if (latchVal !== 0) {
+      this.z80Bus.setSoundLatch(latchVal);
+      // Clear latch after read (one-shot)
+      latchBuf[0] = 0;
+      latchBuf[1] = 0;
+      if (this.frameCount < 1000 && this.frameCount % 100 === 0) {
+        console.log(`Frame ${this.frameCount}: Sound latch = 0x${latchVal.toString(16)}`);
+      }
+    }
 
     // 3. Run M68000 with scanline-accurate VBlank timing.
     //
@@ -338,10 +367,19 @@ export class Emulator {
     }
 
     // 5. Generate audio samples for this frame and push to output
-    if (this.audioOutput.isInitialized()) {
-      // YM2151: 55930 Hz / ~59.637 fps ≈ 938 samples per frame
+    {
+      // YM2151: always generate samples (timers must advance for Z80 IRQs)
       const ymSamplesPerFrame = Math.ceil(this.ym2151.getSampleRate() / FRAME_RATE);
       this.ym2151.generateSamples(this.ymBufferL, this.ymBufferR, ymSamplesPerFrame);
+
+      // Debug: check if YM2151 is producing non-zero samples
+      if (this.frameCount === 300 || this.frameCount === 600) {
+        let nonZeroL = 0;
+        for (let i = 0; i < ymSamplesPerFrame; i++) {
+          if (this.ymBufferL[i] !== 0) nonZeroL++;
+        }
+        console.log(`Frame ${this.frameCount}: Audio debug - YM samples/frame=${ymSamplesPerFrame}, non-zero=${nonZeroL}, audioInit=${this.audioOutput.isInitialized()}`);
+      }
 
       // OKI6295: 7575 Hz / ~59.637 fps ≈ 127 samples per frame
       let okiSamplesPerFrame = 0;
@@ -350,10 +388,13 @@ export class Emulator {
         this.oki6295.generateSamples(this.okiBuffer, okiSamplesPerFrame);
       }
 
-      this.audioOutput.pushEmulatorSamples(
-        this.ymBufferL, this.ymBufferR, ymSamplesPerFrame,
-        this.okiBuffer, okiSamplesPerFrame,
-      );
+      // Push to audio output if initialized
+      if (this.audioOutput.isInitialized()) {
+        this.audioOutput.pushEmulatorSamples(
+          this.ymBufferL, this.ymBufferR, ymSamplesPerFrame,
+          this.okiBuffer, okiSamplesPerFrame,
+        );
+      }
     }
 
     // 6. Debug: log state periodically

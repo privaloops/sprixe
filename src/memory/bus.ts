@@ -34,6 +34,8 @@ export class Bus implements BusInterface {
   private coinCtrl: Uint8Array;      // 0x800030-0x800037 (8 bytes)
   private vram: Uint8Array;          // 0x900000-0x92FFFF (192KB)
   private workRam: Uint8Array;       // 0xFF0000-0xFFFFFF (64KB)
+  private _soundLatchDebugCount: number = 0;
+  private _soundLatchCallback: ((value: number) => void) | null = null;
 
   // Callback for IRQ acknowledge — set by the emulator to clear interrupt lines
   private irqAckCallback: (() => void) | null = null;
@@ -50,6 +52,7 @@ export class Bus implements BusInterface {
 
     // I/O ports default to 0xFF (active LOW = all buttons released)
     this.ioPorts.fill(0xFF);
+    this._soundLatchDebugCount = 0;
 
     // CPS-B ID register: SF2 (CPS_B_11) expects 0x0401 at offset 0x32
     // This is read by the game during startup to verify the B-board.
@@ -80,6 +83,10 @@ export class Bus implements BusInterface {
 
   getSoundLatch(): Uint8Array {
     return this.soundLatch;
+  }
+
+  setSoundLatchCallback(cb: (value: number) => void): void {
+    this._soundLatchCallback = cb;
   }
 
   getWorkRam(): Uint8Array {
@@ -188,6 +195,10 @@ export class Bus implements BusInterface {
     // Sound latch: 0x800180-0x80018F
     if (address >= 0x800180 && address <= 0x80018F) {
       this.soundLatch[address - 0x800180] = value;
+      // Immediately forward to Z80 bus (real-time, not frame-synced)
+      if (value !== 0 && this._soundLatchCallback !== null) {
+        this._soundLatchCallback(value);
+      }
       return;
     }
 
