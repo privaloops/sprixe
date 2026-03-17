@@ -31,19 +31,12 @@ const TILE32 = 32;
 
 // ---------------------------------------------------------------------------
 // CPS-A register offsets (byte offsets into cpsaRegs, read as 16-bit words)
-//
-// Each register is a 16-bit word at the given byte offset (big-endian).
-// The bus stores CPS-A registers as a raw Uint8Array in big-endian format.
-//
-// MAME uses word indices: CPS1_OBJ_BASE = 0x00/2 = 0, CPS1_SCROLL1_BASE = 0x02/2 = 1, etc.
-// Our byte offsets: multiply MAME's word index by 2 to get the byte offset.
 // ---------------------------------------------------------------------------
 
 const CPSA_OBJ_BASE      = 0x00; // Object (sprite) table base in VRAM
 const CPSA_SCROLL1_BASE  = 0x02; // Scroll 1 tilemap base in VRAM
 const CPSA_SCROLL2_BASE  = 0x04; // Scroll 2 tilemap base in VRAM
 const CPSA_SCROLL3_BASE  = 0x06; // Scroll 3 tilemap base in VRAM
-const CPSA_OTHER_BASE    = 0x08; // "Other" base (row scroll, etc.)
 const CPSA_PALETTE_BASE  = 0x0A; // Palette base in VRAM
 const CPSA_SCROLL1_XSCR  = 0x0C; // Scroll 1 X scroll
 const CPSA_SCROLL1_YSCR  = 0x0E; // Scroll 1 Y scroll
@@ -57,12 +50,6 @@ const CPSA_VIDEOCONTROL   = 0x22;
 
 // ---------------------------------------------------------------------------
 // CPS-B register offsets (byte offsets into cpsbRegs)
-//
-// For SF2 (CPS_B_11):
-//   layer_control = 0x26
-//   priority masks = {0x28, 0x2a, 0x2c, 0x2e}
-//   palette_control = 0x30
-//   layer_enable_mask = {0x08, 0x10, 0x20, 0x00, 0x00}
 // ---------------------------------------------------------------------------
 
 const CPSB_LAYER_CTRL     = 0x26; // Layer control register (SF2)
@@ -70,10 +57,6 @@ const CPSB_PALETTE_CTRL   = 0x30; // Palette control
 
 // ---------------------------------------------------------------------------
 // Layer identifiers (matching MAME convention)
-//
-// MAME uses: 0 = sprites, 1 = scroll1, 2 = scroll2, 3 = scroll3
-// Our internal rendering uses the same convention for layer order,
-// but LAYER_SCROLL1/2/3 are used for the scroll render dispatch.
 // ---------------------------------------------------------------------------
 
 const LAYER_OBJ     = 0; // MAME layer 0 = sprites
@@ -81,10 +64,7 @@ const LAYER_SCROLL1 = 1; // MAME layer 1 = scroll1
 const LAYER_SCROLL2 = 2; // MAME layer 2 = scroll2
 const LAYER_SCROLL3 = 3; // MAME layer 3 = scroll3
 
-// SF2 (CPS_B_11) layer enable masks: {0x08, 0x10, 0x20, 0x00, 0x00}
-// scroll1 enabled when layercontrol & 0x08
-// scroll2 enabled when (layercontrol & 0x10) && (videocontrol & 0x04)
-// scroll3 enabled when (layercontrol & 0x20) && (videocontrol & 0x08)
+// SF2 (CPS_B_11) layer enable masks
 const SF2_LAYER_ENABLE_SCROLL1 = 0x08;
 const SF2_LAYER_ENABLE_SCROLL2 = 0x10;
 const SF2_LAYER_ENABLE_SCROLL3 = 0x20;
@@ -105,13 +85,6 @@ function readWord(data: Uint8Array, offset: number): number {
 
 // ---------------------------------------------------------------------------
 // Tilemap scan functions (from MAME)
-//
-// These map (col, row) to a tile_index used to address the tilemap in VRAM.
-// All tilemaps are logically 64 columns x 64 rows but use different row
-// grouping to create different effective virtual sizes.
-//
-// Each tilemap entry is 2 words (4 bytes) in VRAM.
-// The tile_index is multiplied by 4 (bytes) to get the VRAM byte offset.
 // ---------------------------------------------------------------------------
 
 /** Scroll 1 (8x8): 64x64 tiles = 512x512 virtual pixels */
@@ -132,20 +105,6 @@ function tilemap2Scan(col: number, row: number): number {
 
 // ---------------------------------------------------------------------------
 // GFX ROM bank mapper (from MAME gfxrom_bank_mapper)
-//
-// The CPS1 uses a PAL to map tile codes to physical GFX ROM addresses.
-// Different layer types (sprites, scroll1/2/3) use different code ranges
-// within the same ROM data. The mapper shifts the code based on tile size
-// and then looks up which ROM bank contains that code.
-//
-// For SF2 (mapper_STF29):
-//   bank_sizes = [0x8000, 0x8000, 0x8000, 0]
-//   Sprites:  0x00000-0x07fff -> bank 0
-//   Sprites:  0x08000-0x0ffff -> bank 1
-//   Sprites:  0x10000-0x11fff -> bank 2
-//   Scroll3:  0x02000-0x03fff -> bank 2
-//   Scroll1:  0x04000-0x04fff -> bank 2
-//   Scroll2:  0x05000-0x07fff -> bank 2
 // ---------------------------------------------------------------------------
 
 const GFXTYPE_SPRITES = 1;
@@ -171,16 +130,16 @@ const SF2_MAPPER_TABLE: GfxRange[] = [
   { type: GFXTYPE_SCROLL2, start: 0x05000, end: 0x07fff, bank: 2 },
 ];
 
-/**
- * Map a tile code to a physical GFX ROM tile index.
- *
- * From MAME cps_state::gfxrom_bank_mapper:
- *   1. Shift the code left by a type-dependent amount (8x8=0, 16x16=1, 32x32=3)
- *   2. Find the matching range in the mapper table
- *   3. Calculate: (bank_base + (shifted_code & (bank_size - 1))) >> shift
- *
- * Returns -1 if the code is out of range (tile should be transparent).
- */
+// Pre-compute bank base offsets to avoid loop in hot path
+const SF2_BANK_BASES: number[] = [];
+{
+  let base = 0;
+  for (let i = 0; i < SF2_BANK_SIZES.length; i++) {
+    SF2_BANK_BASES.push(base);
+    base += SF2_BANK_SIZES[i]!;
+  }
+}
+
 function gfxromBankMapper(type: number, code: number): number {
   let shift = 0;
   switch (type) {
@@ -192,14 +151,11 @@ function gfxromBankMapper(type: number, code: number): number {
 
   const shiftedCode = code << shift;
 
-  for (const range of SF2_MAPPER_TABLE) {
+  for (let i = 0; i < SF2_MAPPER_TABLE.length; i++) {
+    const range = SF2_MAPPER_TABLE[i]!;
     if (shiftedCode >= range.start && shiftedCode <= range.end) {
       if (range.type & type) {
-        let base = 0;
-        for (let i = 0; i < range.bank; i++) {
-          base += SF2_BANK_SIZES[i]!;
-        }
-        return (base + (shiftedCode & (SF2_BANK_SIZES[range.bank]! - 1))) >> shift;
+        return (SF2_BANK_BASES[range.bank]! + (shiftedCode & (SF2_BANK_SIZES[range.bank]! - 1))) >> shift;
       }
     }
   }
@@ -209,11 +165,6 @@ function gfxromBankMapper(type: number, code: number): number {
 
 // ---------------------------------------------------------------------------
 // GFX pixel decoding from interleaved graphics ROM.
-//
-// For all layouts, the plane offsets are {24,16,8,0} in bits, meaning:
-//   byte[3] = plane 0, byte[2] = plane 1, byte[1] = plane 2, byte[0] = plane 3
-//
-// The bit index within each byte corresponds to the pixel X position (0-7).
 // ---------------------------------------------------------------------------
 
 /** Char sizes for each tile dimension */
@@ -226,79 +177,26 @@ const ROW_STRIDE_8 = 8;    // 8 bytes per row for 8x8 and 16x16
 const ROW_STRIDE_32 = 16;  // 16 bytes per row for 32x32
 
 /**
- * Read a pixel from the graphics ROM for an 8x8 tile.
- * tileCode indexes into 64-byte chars.
- * localX: 0-7, localY: 0-7
- * gfxSet: 0 = bytes 0-3 (cps1_layout8x8), 1 = bytes 4-7 (cps1_layout8x8_2)
+ * Decode an entire row of 8 pixels from a 4-byte plane group.
+ * Writes 8 palette indices into `out` starting at `outOffset`.
+ * MSB-first: bit 7 = leftmost pixel (x=0).
  */
-function getGfxPixel8(
-  graphicsRom: Uint8Array,
-  tileCode: number,
-  localX: number,
-  localY: number,
-  gfxSet: number = 0,
-): number {
-  const charBase = tileCode * CHAR_SIZE_8;
-  const rowBase = charBase + localY * ROW_STRIDE_8 + gfxSet * 4;
-
-  if (rowBase + 3 >= graphicsRom.length) return 0;
-
-  const bit = 7 - localX;  // MSB-first: bit 7 = leftmost pixel
-  return ((graphicsRom[rowBase + 3]! >> bit) & 1) |
-         (((graphicsRom[rowBase + 2]! >> bit) & 1) << 1) |
-         (((graphicsRom[rowBase + 1]! >> bit) & 1) << 2) |
-         (((graphicsRom[rowBase]! >> bit) & 1) << 3);
+function decodeRow(
+  b0: number, b1: number, b2: number, b3: number,
+  out: Uint8Array, outOffset: number,
+): void {
+  // b3 = plane 0 (bit 0), b2 = plane 1 (bit 1), b1 = plane 2 (bit 2), b0 = plane 3 (bit 3)
+  // Unrolled for all 8 pixels (MSB-first)
+  out[outOffset]     = ((b3 >> 7) & 1) | (((b2 >> 7) & 1) << 1) | (((b1 >> 7) & 1) << 2) | (((b0 >> 7) & 1) << 3);
+  out[outOffset + 1] = ((b3 >> 6) & 1) | (((b2 >> 6) & 1) << 1) | (((b1 >> 6) & 1) << 2) | (((b0 >> 6) & 1) << 3);
+  out[outOffset + 2] = ((b3 >> 5) & 1) | (((b2 >> 5) & 1) << 1) | (((b1 >> 5) & 1) << 2) | (((b0 >> 5) & 1) << 3);
+  out[outOffset + 3] = ((b3 >> 4) & 1) | (((b2 >> 4) & 1) << 1) | (((b1 >> 4) & 1) << 2) | (((b0 >> 4) & 1) << 3);
+  out[outOffset + 4] = ((b3 >> 3) & 1) | (((b2 >> 3) & 1) << 1) | (((b1 >> 3) & 1) << 2) | (((b0 >> 3) & 1) << 3);
+  out[outOffset + 5] = ((b3 >> 2) & 1) | (((b2 >> 2) & 1) << 1) | (((b1 >> 2) & 1) << 2) | (((b0 >> 2) & 1) << 3);
+  out[outOffset + 6] = ((b3 >> 1) & 1) | (((b2 >> 1) & 1) << 1) | (((b1 >> 1) & 1) << 2) | (((b0 >> 1) & 1) << 3);
+  out[outOffset + 7] = (b3 & 1) | ((b2 & 1) << 1) | ((b1 & 1) << 2) | ((b0 & 1) << 3);
 }
 
-/**
- * Read a pixel from the graphics ROM for a 16x16 tile.
- * tileCode indexes into 128-byte chars.
- * localX: 0-15, localY: 0-15
- */
-function getGfxPixel16(
-  graphicsRom: Uint8Array,
-  tileCode: number,
-  localX: number,
-  localY: number,
-): number {
-  const charBase = tileCode * CHAR_SIZE_16;
-  const rowBase = charBase + localY * ROW_STRIDE_8;
-  const halfOff = localX >= 8 ? 4 : 0;
-  const planeBase = rowBase + halfOff;
-  const bit = 7 - (localX & 7);  // MSB-first: bit 7 = leftmost pixel
-
-  if (planeBase + 3 >= graphicsRom.length) return 0;
-
-  return ((graphicsRom[planeBase + 3]! >> bit) & 1) |
-         (((graphicsRom[planeBase + 2]! >> bit) & 1) << 1) |
-         (((graphicsRom[planeBase + 1]! >> bit) & 1) << 2) |
-         (((graphicsRom[planeBase]! >> bit) & 1) << 3);
-}
-
-/**
- * Read a pixel from the graphics ROM for a 32x32 tile.
- * tileCode indexes into 512-byte chars.
- * localX: 0-31, localY: 0-31
- */
-function getGfxPixel32(
-  graphicsRom: Uint8Array,
-  tileCode: number,
-  localX: number,
-  localY: number,
-): number {
-  const charBase = tileCode * CHAR_SIZE_32;
-  const rowBase = charBase + localY * ROW_STRIDE_32;
-  const groupOff = (localX >> 3) * 4;
-  const planeBase = rowBase + groupOff;
-  const bit = 7 - (localX & 7);  // MSB-first: bit 7 = leftmost pixel
-
-  if (planeBase + 3 >= graphicsRom.length) return 0;
-
-  return ((graphicsRom[planeBase + 3]! >> bit) & 1) |
-         (((graphicsRom[planeBase + 2]! >> bit) & 1) << 1) |
-         (((graphicsRom[planeBase + 1]! >> bit) & 1) << 2) |
-         (((graphicsRom[planeBase]! >> bit) & 1) << 3);
-}
 
 // ---------------------------------------------------------------------------
 // CPS1Video
@@ -310,9 +208,18 @@ export class CPS1Video {
   private readonly cpsaRegs: Uint8Array;
   private readonly cpsbRegs: Uint8Array;
 
-  // Internal priority buffer: stores the priority value per pixel so we can
-  // composite layers correctly. 0 = transparent / not yet drawn.
+  // Internal priority buffer
   private readonly priorityBuf: Uint8Array;
+
+  // Pre-decoded palette cache: 16 RGBA32 values per palette entry
+  // Max palettes: VRAM palette area can hold up to ~192 palettes (0x60 * 32 = 0x1800 bytes max used)
+  // We cache up to 256 palettes (covers all group offsets)
+  // Each palette = 16 colors, each color = 1 Uint32 (ABGR for little-endian canvas)
+  private readonly paletteCache: Uint32Array;
+  private paletteCacheValid: boolean = false;
+
+  // Tile row decode buffer (reused across calls)
+  private readonly tileRowBuf: Uint8Array;
 
   constructor(
     vram: Uint8Array,
@@ -325,6 +232,8 @@ export class CPS1Video {
     this.cpsaRegs = cpsaRegs;
     this.cpsbRegs = cpsbRegs;
     this.priorityBuf = new Uint8Array(SCREEN_WIDTH * SCREEN_HEIGHT);
+    this.paletteCache = new Uint32Array(256 * 16); // 256 palettes * 16 colors
+    this.tileRowBuf = new Uint8Array(32); // max tile width = 32 pixels
   }
 
   // -------------------------------------------------------------------------
@@ -339,23 +248,11 @@ export class CPS1Video {
     return readWord(this.cpsbRegs, offset);
   }
 
-  /**
-   * Get the VRAM byte offset for a given base register and alignment boundary.
-   *
-   * From MAME cps1_base():
-   *   int base = m_cps_a_regs[offset] * 256;
-   *   base &= ~(boundary - 1);
-   *   return &m_gfxram[(base & 0x3ffff) / 2];
-   *
-   * MAME gfxram is a uint16_t array, so the /2 converts a byte address to a
-   * word index. Our VRAM is a byte array, so we keep the byte address.
-   */
   private vramBaseOffset(regOffset: number, boundary: number): number {
     const regValue = this.readCpsaReg(regOffset);
     let base = regValue * 256;
     base &= ~(boundary - 1);
     const byteAddr = base & 0x3FFFF;
-    // Clamp to VRAM size (192KB is not a power of 2)
     return byteAddr < VRAM_SIZE ? byteAddr : byteAddr % VRAM_SIZE;
   }
 
@@ -365,16 +262,6 @@ export class CPS1Video {
 
   /**
    * Decode a 16-bit CPS1 palette color to RGBA.
-   *
-   * From MAME cps1_build_palette():
-   *   bright = 0x0f + ((palette >> 12) << 1);
-   *   r = ((palette >> 8) & 0x0f) * 0x11 * bright / 0x2d;
-   *   g = ((palette >> 4) & 0x0f) * 0x11 * bright / 0x2d;
-   *   b = ((palette >> 0) & 0x0f) * 0x11 * bright / 0x2d;
-   *
-   * The format is: BBBBrrrrggggbbbb where BBBB is a 4-bit brightness value.
-   * When brightness nibble is 0, bright = 0x0f, giving ~1/3 brightness.
-   * When brightness nibble is 0xf, bright = 0x2d (= 45), giving full brightness.
    */
   decodeColor(colorValue: number): [number, number, number, number] {
     const bright = 0x0f + (((colorValue >> 12) & 0x0f) << 1);
@@ -387,23 +274,58 @@ export class CPS1Video {
   }
 
   /**
-   * Read a palette color from VRAM.
-   *
-   * The palette base points to a region of VRAM containing palette data.
-   * MAME organizes palettes in groups of 32 colors (512 bytes per page,
-   * 6 pages). Each palette entry = 16 colors * 2 bytes = 32 bytes.
-   *
-   * @param paletteBase - VRAM byte offset of the palette data
-   * @param paletteIndex - Palette number (absolute, includes layer group offset)
-   * @param colorIndex - Color within the palette (0-15)
-   * @returns RGBA tuple
+   * Decode a 16-bit CPS1 palette color directly to a packed RGBA32 value.
+   * Uses 0xFFBBGGRR format (little-endian ABGR for canvas ImageData).
+   */
+  private decodeColorPacked(colorValue: number): number {
+    const bright = 0x0f + (((colorValue >> 12) & 0x0f) << 1);
+
+    const r = Math.min(255, ((colorValue >> 8) & 0x0f) * 0x11 * bright / 0x2d | 0);
+    const g = Math.min(255, ((colorValue >> 4) & 0x0f) * 0x11 * bright / 0x2d | 0);
+    const b = Math.min(255, ((colorValue >> 0) & 0x0f) * 0x11 * bright / 0x2d | 0);
+
+    // ABGR little-endian: byte order in memory = R, G, B, A
+    return (255 << 24) | (b << 16) | (g << 8) | r;
+  }
+
+  /**
+   * Build the palette cache for the current frame.
+   * Pre-decodes all palette colors from VRAM into packed RGBA32 values.
+   */
+  private buildPaletteCache(paletteBase: number): void {
+    const vram = this.vram;
+    const cache = this.paletteCache;
+
+    // Decode up to 256 palettes * 16 colors
+    for (let pal = 0; pal < 256; pal++) {
+      const palOffset = paletteBase + pal * 32;
+      const cacheBase = pal * 16;
+
+      if (palOffset + 31 >= VRAM_SIZE) {
+        // Fill remaining with transparent black
+        for (let c = 0; c < 16; c++) {
+          cache[cacheBase + c] = 0;
+        }
+        continue;
+      }
+
+      for (let c = 0; c < 16; c++) {
+        const colorWord = (vram[palOffset + c * 2]! << 8) | vram[palOffset + c * 2 + 1]!;
+        cache[cacheBase + c] = this.decodeColorPacked(colorWord);
+      }
+    }
+
+    this.paletteCacheValid = true;
+  }
+
+  /**
+   * Read a palette color from VRAM (legacy API, kept for compatibility).
    */
   private readPaletteColor(
     paletteBase: number,
     paletteIndex: number,
     colorIndex: number,
   ): [number, number, number, number] {
-    // Each palette = 16 colors * 2 bytes = 32 bytes
     const offset = paletteBase + paletteIndex * 32 + colorIndex * 2;
     if (offset + 1 >= VRAM_SIZE) return [0, 0, 0, 0];
     const colorWord = readWord(this.vram, offset);
@@ -411,26 +333,13 @@ export class CPS1Video {
   }
 
   // -------------------------------------------------------------------------
-  // Scroll layer rendering
+  // Scroll layer rendering (tile-based)
   // -------------------------------------------------------------------------
 
   /**
-   * Render a scroll tilemap layer.
-   *
-   * From MAME get_tile0_info / get_tile1_info / get_tile2_info:
-   *   code = m_scrollN[2 * tile_index]
-   *   attr = m_scrollN[2 * tile_index + 1]
-   *   color = (attr & 0x1f) + palette_group_offset
-   *   flip  = (attr & 0x60) >> 5  (bit 5 = X flip, bit 6 = Y flip)
-   *
-   * Scroll3 additionally masks: code & 0x3fff
-   *
-   * Palette group offsets: scroll1 = 0x20, scroll2 = 0x40, scroll3 = 0x60
-   *
-   * All tilemaps are 64x64 tiles with non-trivial scan functions.
-   *
-   * @param layerIndex - LAYER_SCROLL1, LAYER_SCROLL2, or LAYER_SCROLL3
-   * @param framebuffer - RGBA framebuffer (384x224 x 4 bytes)
+   * Render a scroll tilemap layer using tile-based iteration.
+   * Instead of iterating per-pixel (384x224 = 86K iterations per layer),
+   * we iterate over visible tiles and blit them in bulk.
    */
   renderScrollLayer(layerIndex: number, framebuffer: Uint8Array): void {
     let tileW: number;
@@ -442,7 +351,8 @@ export class CPS1Video {
     let paletteGroupOffset: number;
     let codeMask: number;
     let gfxType: number;
-    let getPixel: (rom: Uint8Array, code: number, x: number, y: number) => number;
+    let charSize: number;
+    let rowStride: number;
 
     switch (layerIndex) {
       case LAYER_SCROLL1:
@@ -455,7 +365,8 @@ export class CPS1Video {
         paletteGroupOffset = 0x20;
         codeMask = 0xFFFF;
         gfxType = GFXTYPE_SCROLL1;
-        getPixel = getGfxPixel8;
+        charSize = CHAR_SIZE_8;
+        rowStride = ROW_STRIDE_8;
         break;
       case LAYER_SCROLL2:
         tileW = TILE16;
@@ -467,7 +378,8 @@ export class CPS1Video {
         paletteGroupOffset = 0x40;
         codeMask = 0xFFFF;
         gfxType = GFXTYPE_SCROLL2;
-        getPixel = getGfxPixel16;
+        charSize = CHAR_SIZE_16;
+        rowStride = ROW_STRIDE_8;
         break;
       case LAYER_SCROLL3:
         tileW = TILE32;
@@ -477,9 +389,10 @@ export class CPS1Video {
         baseReg = CPSA_SCROLL3_BASE;
         scanFn = tilemap2Scan;
         paletteGroupOffset = 0x60;
-        codeMask = 0x3FFF; // MAME: m_scroll3[2*tile_index] & 0x3fff
+        codeMask = 0x3FFF;
         gfxType = GFXTYPE_SCROLL3;
-        getPixel = getGfxPixel32;
+        charSize = CHAR_SIZE_32;
+        rowStride = ROW_STRIDE_32;
         break;
       default:
         return;
@@ -490,75 +403,130 @@ export class CPS1Video {
     const tilemapBase = this.vramBaseOffset(baseReg, SCROLL_SIZE);
     const paletteBase = this.vramBaseOffset(CPSA_PALETTE_BASE, PALETTE_ALIGN);
 
-    // Virtual tilemap: 64x64 tiles
-    const tilemapCols = 64;
-    const tilemapRows = 64;
-    const virtualW = tilemapCols * tileW;
-    const virtualH = tilemapRows * tileH;
+    // Build palette cache if not done yet this frame
+    if (!this.paletteCacheValid) {
+      this.buildPaletteCache(paletteBase);
+    }
 
-    for (let screenY = 0; screenY < SCREEN_HEIGHT; screenY++) {
-      for (let screenX = 0; screenX < SCREEN_WIDTH; screenX++) {
-        // Apply scroll to get the virtual pixel coordinate
-        const vx = ((screenX + scrollX) & 0xFFFF) % virtualW;
-        const vy = ((screenY + scrollY) & 0xFFFF) % virtualH;
+    const virtualW = 64 * tileW;
+    const virtualH = 64 * tileH;
+    const gfxRom = this.graphicsRom;
+    const gfxRomLen = gfxRom.length;
+    const vram = this.vram;
+    const palCache = this.paletteCache;
+    const prioBuf = this.priorityBuf;
+    const rowBuf = this.tileRowBuf;
 
-        // Which tile in the tilemap?
-        const tileCol = (vx / tileW) | 0;
-        const tileRow = (vy / tileH) | 0;
+    // Use Uint32Array view for 4-byte writes
+    const fb32 = new Uint32Array(framebuffer.buffer, framebuffer.byteOffset, framebuffer.byteLength / 4);
 
-        // Use MAME's scan function to get the tile_index
+    // Calculate which tiles are visible on screen (with partial tiles at edges)
+    // First visible virtual pixel
+    const vxStart = ((scrollX) & 0xFFFF) % virtualW;
+    const vyStart = ((scrollY) & 0xFFFF) % virtualH;
+
+    // First tile col/row
+    const startTileCol = (vxStart / tileW) | 0;
+    const startTileRow = (vyStart / tileH) | 0;
+
+    // Number of tiles that fit on screen (+ 1 for partial tiles at edges)
+    const numTileCols = ((SCREEN_WIDTH / tileW) | 0) + 2;
+    const numTileRows = ((SCREEN_HEIGHT / tileH) | 0) + 2;
+
+    // Offset of first tile's top-left pixel within the screen
+    const firstTilePixelX = -(vxStart % tileW);
+    const firstTilePixelY = -(vyStart % tileH);
+
+    const isScroll1 = layerIndex === LAYER_SCROLL1;
+    // Number of 8-pixel groups per tile row
+    const groupsPerRow = tileW >> 3;
+
+    for (let tileRowIdx = 0; tileRowIdx < numTileRows; tileRowIdx++) {
+      const tileRow = (startTileRow + tileRowIdx) % 64;
+      const screenTileY = firstTilePixelY + tileRowIdx * tileH;
+
+      // Skip if entirely off screen
+      if (screenTileY >= SCREEN_HEIGHT) break;
+      if (screenTileY + tileH <= 0) continue;
+
+      for (let tileColIdx = 0; tileColIdx < numTileCols; tileColIdx++) {
+        const tileCol = (startTileCol + tileColIdx) % 64;
+        const screenTileX = firstTilePixelX + tileColIdx * tileW;
+
+        // Skip if entirely off screen
+        if (screenTileX >= SCREEN_WIDTH) break;
+        if (screenTileX + tileW <= 0) continue;
+
+        // Tilemap lookup
         const tileIndex = scanFn(tileCol, tileRow);
-
-        // Each tilemap entry is 2 words (4 bytes). tile_index addresses words
-        // in a uint16_t array. In our byte array: offset = tileIndex * 4.
         const entryOffset = tilemapBase + tileIndex * 4;
         if (entryOffset + 3 >= VRAM_SIZE) continue;
 
-        // Word 0: tile code, Word 1: attributes
-        const rawCode = readWord(this.vram, entryOffset) & codeMask;
+        const rawCode = ((vram[entryOffset]! << 8) | vram[entryOffset + 1]!) & codeMask;
         const tileCode = gfxromBankMapper(gfxType, rawCode);
-        if (tileCode === -1) continue; // out of range -> transparent
-        const attribs = readWord(this.vram, entryOffset + 2);
+        if (tileCode === -1) continue;
 
-        // From MAME: color = (attr & 0x1f) + group_offset
-        // flip = TILE_FLIPYX((attr & 0x60) >> 5)
-        //   TILE_FLIPYX expands to: bit 0 = X flip, bit 1 = Y flip
-        //   So: (attr >> 5) & 1 = X flip, (attr >> 6) & 1 = Y flip
+        const attribs = (vram[entryOffset + 2]! << 8) | vram[entryOffset + 3]!;
         const palette = (attribs & 0x1F) + paletteGroupOffset;
         const flipX = (attribs >> 5) & 1;
         const flipY = (attribs >> 6) & 1;
 
-        // Pixel position within the tile
-        let localX = vx % tileW;
-        let localY = vy % tileH;
+        // For scroll1, MAME alternates gfx set based on tileIndex bit 5
+        const gfxSetOffset = isScroll1 ? ((tileIndex & 0x20) >> 5) * 4 : 0;
 
-        if (flipX) localX = tileW - 1 - localX;
-        if (flipY) localY = tileH - 1 - localY;
+        const charBase = tileCode * charSize;
+        const palCacheBase = palette * 16;
 
-        // For scroll1 (8x8), MAME alternates gfx set based on tile_index bit 5:
-        //   gfxset = (tile_index & 0x20) >> 5
-        // This alternates between cps1_layout8x8 (bytes 0-3) and cps1_layout8x8_2 (bytes 4-7)
-        let colorIdx: number;
-        if (layerIndex === LAYER_SCROLL1) {
-          const gfxSet = (tileIndex & 0x20) >> 5;
-          colorIdx = getGfxPixel8(this.graphicsRom, tileCode, localX, localY, gfxSet);
-        } else {
-          colorIdx = getPixel(this.graphicsRom, tileCode, localX, localY);
+        // Iterate over each row of the tile
+        for (let ty = 0; ty < tileH; ty++) {
+          const screenY = screenTileY + ty;
+          if (screenY < 0 || screenY >= SCREEN_HEIGHT) continue;
+
+          const localY = flipY ? (tileH - 1 - ty) : ty;
+          const rowBase = charBase + localY * rowStride + gfxSetOffset;
+
+          const fbRowBase = screenY * SCREEN_WIDTH;
+
+          // Decode each 8-pixel group in this tile row
+          for (let group = 0; group < groupsPerRow; group++) {
+            const groupScreenX = screenTileX + (flipX ? (groupsPerRow - 1 - group) * 8 : group * 8);
+
+            // Quick check: if the entire 8-pixel group is off screen, skip
+            if (groupScreenX >= SCREEN_WIDTH || groupScreenX + 8 <= 0) continue;
+
+            // For 16x16 tiles, each row has two 4-byte groups (left half at +0, right half at +4)
+            // For 32x32 tiles, each row has four 4-byte groups
+            // For 8x8 tiles (with gfxSet), the offset is already in gfxSetOffset
+            const planeBase = rowBase + (isScroll1 ? 0 : group * 4);
+
+            if (planeBase + 3 >= gfxRomLen) continue;
+
+            const b0 = gfxRom[planeBase]!;
+            const b1 = gfxRom[planeBase + 1]!;
+            const b2 = gfxRom[planeBase + 2]!;
+            const b3 = gfxRom[planeBase + 3]!;
+
+            // Skip fully transparent row (all pixels = 15 means all planes set)
+            // Quick zero check: if all 4 bytes are 0xFF, all pixels are 15
+            // No quick skip otherwise — decode
+
+            // Decode 8 pixels at once
+            decodeRow(b0, b1, b2, b3, rowBuf, 0);
+
+            // Blit the 8 pixels
+            for (let px = 0; px < 8; px++) {
+              const sx = flipX ? groupScreenX + 7 - px : groupScreenX + px;
+              if (sx < 0 || sx >= SCREEN_WIDTH) continue;
+
+              const colorIdx = rowBuf[px]!;
+              if (colorIdx === 15) continue; // transparent pen
+
+              const fbPixelIdx = fbRowBase + sx;
+              fb32[fbPixelIdx] = palCache[palCacheBase + colorIdx]!;
+              prioBuf[fbPixelIdx] = 1;
+            }
+          }
         }
-
-        // Color index 15 (0xf) is transparent for tilemaps in MAME
-        // (prio_transpen uses pen 15 as transparent for scroll layers)
-        if (colorIdx === 15) continue;
-
-        const fbIdx = (screenY * SCREEN_WIDTH + screenX) * 4;
-        const prioIdx = screenY * SCREEN_WIDTH + screenX;
-
-        const [r, g, b, a] = this.readPaletteColor(paletteBase, palette, colorIdx);
-        framebuffer[fbIdx] = r;
-        framebuffer[fbIdx + 1] = g;
-        framebuffer[fbIdx + 2] = b;
-        framebuffer[fbIdx + 3] = a;
-        this.priorityBuf[prioIdx] = 1;
       }
     }
   }
@@ -569,62 +537,51 @@ export class CPS1Video {
 
   /**
    * Render all objects (sprites) from the object table in VRAM.
-   *
-   * From MAME cps1_render_sprites() and the sprite format comment:
-   *
-   *   xx xx yy yy nn nn aa aa
-   *
-   *   Word 0 (+0): X position (9 bits used)
-   *   Word 1 (+2): Y position (9 bits used)
-   *   Word 2 (+4): Tile code (16-bit)
-   *   Word 3 (+6): Attributes:
-   *     bits 0-4:   palette (5-bit color)
-   *     bit 5:      X flip
-   *     bit 6:      Y flip
-   *     bits 8-11:  nx (X block size in tiles, 0 = 1 tile)
-   *     bits 12-15: ny (Y block size in tiles, 0 = 1 tile)
-   *
-   * End of table marker: (colour & 0xff00) == 0xff00
-   *
-   * The obj table size is 0x0800 bytes = 256 entries of 8 bytes each.
-   * Sprites are rendered from last to first (lower index = higher priority).
-   *
-   * Multi-tile sprite tile calculation (from MAME, no-flip case):
-   *   (code & ~0xf) + ((code + nxs) & 0xf) + 0x10 * nys
    */
   renderObjects(framebuffer: Uint8Array): void {
     const objBase = this.vramBaseOffset(CPSA_OBJ_BASE, OBJ_SIZE);
     const paletteBase = this.vramBaseOffset(CPSA_PALETTE_BASE, PALETTE_ALIGN);
 
-    // Object table: 0x0800 bytes / 2 = 0x400 words, each sprite = 4 words
-    const OBJ_WORD_SIZE = OBJ_SIZE / 2; // 0x400 words
+    // Build palette cache if not done yet this frame
+    if (!this.paletteCacheValid) {
+      this.buildPaletteCache(paletteBase);
+    }
+
+    const OBJ_WORD_SIZE = OBJ_SIZE / 2;
     const MAX_ENTRIES = OBJ_WORD_SIZE / 4; // 256 sprites
 
-    // Find last sprite (end-of-table marker: attribute word upper byte = 0xFF)
+    const vram = this.vram;
+
+    // Find last sprite (end-of-table marker)
     let lastSpriteIdx = MAX_ENTRIES - 1;
     for (let i = 0; i < MAX_ENTRIES; i++) {
       const entryOffset = objBase + i * 8;
       if (entryOffset + 7 >= VRAM_SIZE) break;
-      const colour = readWord(this.vram, entryOffset + 6);
+      const colour = (vram[entryOffset + 6]! << 8) | vram[entryOffset + 7]!;
       if ((colour & 0xFF00) === 0xFF00) {
         lastSpriteIdx = i - 1;
         break;
       }
     }
 
+    const fb32 = new Uint32Array(framebuffer.buffer, framebuffer.byteOffset, framebuffer.byteLength / 4);
+    const palCache = this.paletteCache;
+    const gfxRom = this.graphicsRom;
+    const gfxRomLen = gfxRom.length;
+    const rowBuf = this.tileRowBuf;
+
     // Render from last to first (lower index = draws on top)
     for (let i = lastSpriteIdx; i >= 0; i--) {
       const entryOffset = objBase + i * 8;
       if (entryOffset + 7 >= VRAM_SIZE) continue;
 
-      const x = readWord(this.vram, entryOffset);
-      const y = readWord(this.vram, entryOffset + 2);
-      const code = readWord(this.vram, entryOffset + 4);
-      const colour = readWord(this.vram, entryOffset + 6);
+      const x = (vram[entryOffset]! << 8) | vram[entryOffset + 1]!;
+      const y = (vram[entryOffset + 2]! << 8) | vram[entryOffset + 3]!;
+      const code = (vram[entryOffset + 4]! << 8) | vram[entryOffset + 5]!;
+      const colour = (vram[entryOffset + 6]! << 8) | vram[entryOffset + 7]!;
 
-      // Map the base tile code through the bank mapper first
       const mappedBaseCode = gfxromBankMapper(GFXTYPE_SPRITES, code);
-      if (mappedBaseCode === -1) continue; // out of range
+      if (mappedBaseCode === -1) continue;
 
       const col = colour & 0x1F;
       const flipX = (colour >> 5) & 1;
@@ -640,8 +597,10 @@ export class CPS1Video {
             const sx = (x + nxs * 16) & 0x1FF;
             const sy = (y + nys * 16) & 0x1FF;
 
-            // Tile code calculation from MAME (handles flip variants)
-            // Applied to the MAPPED base code, same arithmetic
+            // Early skip: if entirely off screen
+            if (sx >= SCREEN_WIDTH && sx + 15 < 512) continue;
+            if (sy >= SCREEN_HEIGHT && sy + 15 < 512) continue;
+
             let tileCode: number;
             if (flipY) {
               if (flipX) {
@@ -657,17 +616,17 @@ export class CPS1Video {
               }
             }
 
-            this.drawSpriteTile(
-              framebuffer, paletteBase,
+            this.drawSpriteTileFast(
+              fb32, palCache, gfxRom, gfxRomLen, rowBuf,
               tileCode, col, flipX, flipY,
               sx, sy,
             );
           }
         }
       } else {
-        // Simple case: single 16x16 sprite tile
-        this.drawSpriteTile(
-          framebuffer, paletteBase,
+        // Single 16x16 sprite tile
+        this.drawSpriteTileFast(
+          fb32, palCache, gfxRom, gfxRomLen, rowBuf,
           mappedBaseCode, col, flipX, flipY,
           x & 0x1FF, y & 0x1FF,
         );
@@ -676,12 +635,15 @@ export class CPS1Video {
   }
 
   /**
-   * Draw a single 16x16 sprite tile to the framebuffer.
-   * Transparent pixel = color index 15 (MAME uses transpen 15 for sprites).
+   * Draw a single 16x16 sprite tile using batch decoding.
+   * Uses Uint32Array for single-op pixel writes and pre-cached palette.
    */
-  private drawSpriteTile(
-    framebuffer: Uint8Array,
-    paletteBase: number,
+  private drawSpriteTileFast(
+    fb32: Uint32Array,
+    palCache: Uint32Array,
+    gfxRom: Uint8Array,
+    gfxRomLen: number,
+    rowBuf: Uint8Array,
     tileCode: number,
     palette: number,
     flipX: number,
@@ -689,27 +651,36 @@ export class CPS1Video {
     sx: number,
     sy: number,
   ): void {
+    const charBase = tileCode * CHAR_SIZE_16;
+    const palCacheBase = palette * 16;
+
     for (let py = 0; py < TILE16; py++) {
       const drawY = (sy + py) & 0x1FF;
       if (drawY >= SCREEN_HEIGHT) continue;
 
+      const localY = flipY ? (TILE16 - 1 - py) : py;
+      const rowBase = charBase + localY * ROW_STRIDE_8;
+      const fbRowBase = drawY * SCREEN_WIDTH;
+
+      // Decode left half (pixels 0-7)
+      if (rowBase + 3 < gfxRomLen) {
+        decodeRow(gfxRom[rowBase]!, gfxRom[rowBase + 1]!, gfxRom[rowBase + 2]!, gfxRom[rowBase + 3]!, rowBuf, 0);
+      }
+      // Decode right half (pixels 8-15)
+      if (rowBase + 7 < gfxRomLen) {
+        decodeRow(gfxRom[rowBase + 4]!, gfxRom[rowBase + 5]!, gfxRom[rowBase + 6]!, gfxRom[rowBase + 7]!, rowBuf, 8);
+      }
+
+      // Blit 16 pixels
       for (let px = 0; px < TILE16; px++) {
         const drawX = (sx + px) & 0x1FF;
         if (drawX >= SCREEN_WIDTH) continue;
 
         const gfxPx = flipX ? (TILE16 - 1 - px) : px;
-        const gfxPy = flipY ? (TILE16 - 1 - py) : py;
-
-        const colorIdx = getGfxPixel16(this.graphicsRom, tileCode, gfxPx, gfxPy);
+        const colorIdx = rowBuf[gfxPx]!;
         if (colorIdx === 15) continue; // transparent pen
 
-        const fbIdx = (drawY * SCREEN_WIDTH + drawX) * 4;
-
-        const [r, g, b, a] = this.readPaletteColor(paletteBase, palette, colorIdx);
-        framebuffer[fbIdx] = r;
-        framebuffer[fbIdx + 1] = g;
-        framebuffer[fbIdx + 2] = b;
-        framebuffer[fbIdx + 3] = a;
+        fb32[fbRowBase + drawX] = palCache[palCacheBase + colorIdx]!;
       }
     }
   }
@@ -718,19 +689,6 @@ export class CPS1Video {
   // Layer priority resolution (CPS-B)
   // -------------------------------------------------------------------------
 
-  /**
-   * Determine the rendering order of layers based on CPS-B layer control.
-   *
-   * From MAME render_layers():
-   *   int layercontrol = m_cps_b_regs[m_game_config->layer_control / 2];
-   *   int l0 = (layercontrol >> 0x06) & 0x03;
-   *   int l1 = (layercontrol >> 0x08) & 0x03;
-   *   int l2 = (layercontrol >> 0x0a) & 0x03;
-   *   int l3 = (layercontrol >> 0x0c) & 0x03;
-   *
-   * Layer IDs: 0 = sprites, 1 = scroll1, 2 = scroll2, 3 = scroll3
-   * l0 is drawn first (back), l3 is drawn last (front).
-   */
   private getLayerOrder(): number[] {
     const ctrl = this.readCpsbReg(CPSB_LAYER_CTRL);
 
@@ -746,26 +704,13 @@ export class CPS1Video {
   // Layer enable check
   // -------------------------------------------------------------------------
 
-  /**
-   * Check if a layer is enabled.
-   *
-   * From MAME cps1_get_video_base():
-   *   layercontrol = m_cps_b_regs[m_game_config->layer_control / 2];
-   *   videocontrol = m_cps_a_regs[CPS1_VIDEOCONTROL];
-   *   scroll1: layercontrol & layer_enable_mask[0]
-   *   scroll2: (layercontrol & layer_enable_mask[1]) && (videocontrol & 4)
-   *   scroll3: (layercontrol & layer_enable_mask[2]) && (videocontrol & 8)
-   *
-   * For SF2 (CPS_B_11): masks are {0x08, 0x10, 0x20, 0x00, 0x00}
-   * Sprites are always enabled (mask = 0x00 means no check needed).
-   */
   private isLayerEnabled(layerId: number): boolean {
     const layercontrol = this.readCpsbReg(CPSB_LAYER_CTRL);
     const videocontrol = this.readCpsaReg(CPSA_VIDEOCONTROL);
 
     switch (layerId) {
       case LAYER_OBJ:
-        return true; // Sprites always enabled for SF2
+        return true;
       case LAYER_SCROLL1:
         return (layercontrol & SF2_LAYER_ENABLE_SCROLL1) !== 0;
       case LAYER_SCROLL2:
@@ -783,15 +728,6 @@ export class CPS1Video {
   // Full frame rendering
   // -------------------------------------------------------------------------
 
-  /**
-   * Render a complete frame into an RGBA framebuffer (384x224 x 4 bytes).
-   *
-   * The rendering pipeline:
-   * 1. Clear the framebuffer to black
-   * 2. Clear the priority buffer
-   * 3. Determine layer order from CPS-B registers
-   * 4. Render layers from back to front
-   */
   renderFrame(framebuffer: Uint8Array): void {
     if (framebuffer.length < FRAMEBUFFER_SIZE) {
       throw new Error(
@@ -799,14 +735,13 @@ export class CPS1Video {
       );
     }
 
+    // Invalidate palette cache for new frame
+    this.paletteCacheValid = false;
+
     // 1. Clear framebuffer to black (RGBA = 0, 0, 0, 255)
-    for (let i = 0; i < SCREEN_WIDTH * SCREEN_HEIGHT; i++) {
-      const base = i * 4;
-      framebuffer[base] = 0;
-      framebuffer[base + 1] = 0;
-      framebuffer[base + 2] = 0;
-      framebuffer[base + 3] = 255;
-    }
+    // Use Uint32Array for fast fill: 0xFF000000 = ABGR(255, 0, 0, 0) = opaque black
+    const fb32 = new Uint32Array(framebuffer.buffer, framebuffer.byteOffset, framebuffer.byteLength / 4);
+    fb32.fill(0xFF000000);
 
     // 2. Clear priority buffer
     this.priorityBuf.fill(0);

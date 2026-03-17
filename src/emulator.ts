@@ -301,20 +301,21 @@ export class Emulator {
   // ── Private: main loop ────────────────────────────────────────────────────
 
   private lastFrameTime = 0;
-  private readonly frameDuration = 1000 / FRAME_RATE; // ~16.77ms for 59.637 Hz
 
   private scheduleFrame(): void {
     if (!this.running || this.paused) return;
     this.animFrameId = requestAnimationFrame((timestamp) => {
-      // Throttle to CPS1 native frame rate (~59.637 Hz)
-      if (this.lastFrameTime === 0) this.lastFrameTime = timestamp;
-      const elapsed = timestamp - this.lastFrameTime;
-
-      if (elapsed >= this.frameDuration) {
-        this.lastFrameTime = timestamp - (elapsed % this.frameDuration);
-        this.runOneFrame();
+      // On high refresh rate displays (120/144Hz), skip frames to match
+      // CPS1 native ~60Hz. On 60Hz displays, run every rAF.
+      if (this.lastFrameTime > 0) {
+        const elapsed = timestamp - this.lastFrameTime;
+        if (elapsed < 14) { // less than ~14ms since last frame → skip
+          this.scheduleFrame();
+          return;
+        }
       }
-
+      this.lastFrameTime = timestamp;
+      this.runOneFrame();
       this.scheduleFrame();
     });
   }
@@ -341,6 +342,7 @@ export class Emulator {
       }
     }
 
+    const tCpu0 = performance.now();
     // 3. Run M68000 with scanline-accurate VBlank timing.
     //
     // Like real CPS1 hardware (and MAME), we iterate through 262 scanlines.
@@ -377,19 +379,24 @@ export class Emulator {
     // The YM2151 runs at 55930 Hz (3.579545 MHz / 64). The Z80 runs at
     // 3.579545 MHz. So the YM2151 ticks once every 64 Z80 T-states.
     // We advance the YM2151 timers proportionally as the Z80 executes.
-    const YM_TICK_INTERVAL = 64; // Z80 T-states between YM2151 timer ticks
+    // Batch YM2151 timer ticks: tick every 256 Z80 T-states (4x fewer calls)
+    // then advance multiple ticks at once. This is less accurate but much faster.
+    const YM_TICK_INTERVAL = 64;
+    const YM_BATCH_SIZE = 256;
     let z80Cycles = 0;
-    let ymTickAccum = 0; // accumulator for YM2151 timer ticks
+    let ymTickAccum = 0;
     try {
       while (z80Cycles < Z80_CYCLES_PER_FRAME) {
         const cyc = this.z80.step();
         z80Cycles += cyc;
         ymTickAccum += cyc;
 
-        // Advance YM2151 timers proportionally
-        while (ymTickAccum >= YM_TICK_INTERVAL) {
-          ymTickAccum -= YM_TICK_INTERVAL;
-          this.ym2151.tickTimers();
+        if (ymTickAccum >= YM_BATCH_SIZE) {
+          const ticks = (ymTickAccum / YM_TICK_INTERVAL) | 0;
+          ymTickAccum -= ticks * YM_TICK_INTERVAL;
+          for (let t = 0; t < ticks; t++) {
+            this.ym2151.tickTimers();
+          }
         }
       }
     } catch (e) {
@@ -456,8 +463,16 @@ export class Emulator {
     }
     this.frameCount++;
 
+    const tCpu1 = performance.now();
+
     // 7. Render the frame
+    const t0 = performance.now();
     this.renderFrame();
+    const renderMs = performance.now() - t0;
+    if (this.frameCount % 120 === 0 && this.frameCount > 0) {
+      const cpuMs = tCpu1 - tCpu0;
+      console.log('F' + this.frameCount + ' CPU: ' + cpuMs.toFixed(1) + 'ms, Render: ' + renderMs.toFixed(1) + 'ms, Total: ' + (cpuMs + renderMs).toFixed(1) + 'ms');
+    }
   }
 
   private renderFrame(): void {
