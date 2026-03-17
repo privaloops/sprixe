@@ -141,9 +141,13 @@ export class Emulator {
       return this.oki6295 !== null ? this.oki6295.read() : 0;
     });
 
-    // Wire sound latch: immediate forwarding from 68000 bus to Z80 bus
+    // Wire sound latch: immediate forwarding from 68000 bus to Z80 bus.
+    // In real CPS1 hardware, the sound latch write triggers a Z80 IRQ
+    // (generic_latch_8_device callback). The Z80 IM1 handler at 0x0038
+    // reads the latch and updates the command queue in RAM.
     this.bus.setSoundLatchCallback((value: number) => {
       this.z80Bus.setSoundLatch(value);
+      this.z80.irq(); // trigger Z80 IRQ on sound latch write
     });
 
     // Wire up IRQ acknowledge: when the 68000 processes an interrupt,
