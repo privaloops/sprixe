@@ -300,22 +300,21 @@ export class Emulator {
 
   // ── Private: main loop ────────────────────────────────────────────────────
 
-  private lastFrameTime = 0;
-
+  private prevRafTime = 0;
   private scheduleFrame(): void {
     if (!this.running || this.paused) return;
-    this.animFrameId = requestAnimationFrame((timestamp) => {
-      // On high refresh rate displays (120/144Hz), skip frames to match
-      // CPS1 native ~60Hz. On 60Hz displays, run every rAF.
-      if (this.lastFrameTime > 0) {
-        const elapsed = timestamp - this.lastFrameTime;
-        if (elapsed < 14) { // less than ~14ms since last frame → skip
-          this.scheduleFrame();
-          return;
-        }
+    this.animFrameId = requestAnimationFrame((ts) => {
+      const elapsed = this.prevRafTime > 0 ? ts - this.prevRafTime : 16.7;
+      this.prevRafTime = ts;
+
+      // Run enough emulation frames to match real time.
+      // CPS1 = ~59.637 Hz = ~16.77ms per frame.
+      // If browser throttles rAF (e.g. 33ms = 30fps), run 2 frames.
+      const framesToRun = Math.min(3, Math.round(elapsed / 16.77));
+      for (let i = 0; i < framesToRun; i++) {
+        this.runOneFrame();
       }
-      this.lastFrameTime = timestamp;
-      this.runOneFrame();
+
       this.scheduleFrame();
     });
   }
@@ -468,10 +467,12 @@ export class Emulator {
     // 7. Render the frame
     const t0 = performance.now();
     this.renderFrame();
-    const renderMs = performance.now() - t0;
+    const t1 = performance.now();
     if (this.frameCount % 120 === 0 && this.frameCount > 0) {
       const cpuMs = tCpu1 - tCpu0;
-      console.log('F' + this.frameCount + ' CPU: ' + cpuMs.toFixed(1) + 'ms, Render: ' + renderMs.toFixed(1) + 'ms, Total: ' + (cpuMs + renderMs).toFixed(1) + 'ms');
+      const audioMs = t0 - tCpu1; // audio gen happens between CPU and render
+      const renderMs = t1 - t0;
+      console.log('F' + this.frameCount + ' CPU: ' + cpuMs.toFixed(1) + 'ms, Audio: ' + audioMs.toFixed(1) + 'ms, Render: ' + renderMs.toFixed(1) + 'ms, Total: ' + (cpuMs + audioMs + renderMs).toFixed(1) + 'ms');
     }
   }
 
