@@ -355,7 +355,20 @@ export async function loadRomFromZip(file: File): Promise<RomSet> {
 
   const programRom = assembleProgram(gameDef.program, fileMap);
   const graphicsRom = assembleGraphicsNew(gameDef.graphics, fileMap);
-  const audioRom = assembleLinear(gameDef.audio.files, fileMap, gameDef.audio.size);
+  // Audio ROM uses ROM_LOAD + ROM_CONTINUE format:
+  // First 0x8000 bytes → offset 0x0000, next 0x8000 bytes → offset 0x10000
+  const audioFileData = fileMap.get(gameDef.audio.files[0]!.toLowerCase());
+  const audioRom = new Uint8Array(gameDef.audio.size);
+  if (audioFileData !== undefined) {
+    // ROM_LOAD: first 0x8000 bytes at offset 0x0000
+    const firstChunk = Math.min(0x8000, audioFileData.length);
+    audioRom.set(audioFileData.subarray(0, firstChunk), 0x0000);
+    // ROM_CONTINUE: remaining bytes at offset 0x10000
+    if (audioFileData.length > 0x8000) {
+      const remaining = audioFileData.subarray(0x8000);
+      audioRom.set(remaining, 0x10000);
+    }
+  }
   const okiRom = assembleLinear(gameDef.oki.files, fileMap, gameDef.oki.size);
 
   return {

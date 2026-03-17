@@ -332,7 +332,7 @@ export class AudioOutput {
     this.ymResamplerR = new LinearResampler(YM2151_SAMPLE_RATE, rate);
     this.okiResampler = new LinearResampler(OKI6295_SAMPLE_RATE, rate);
 
-    if (this.context.audioWorklet) {
+    if (this.context.audioWorklet && typeof SharedArrayBuffer !== 'undefined') {
       await this._initWorklet();
     } else {
       this._initScriptProcessor();

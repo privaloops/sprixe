@@ -129,37 +129,39 @@ export class Z80Bus implements Z80BusInterface {
       return this.workRam[address - 0xD000]!;
     }
 
-    // Memory-mapped I/O registers
+    // Memory-mapped I/O registers (from MAME cps1.cpp sound_map)
+    // 0xF000-0xF001 : YM2151 (address at 0xF000, data/status at 0xF001)
     if (address === 0xF000) {
-      // OKI6295 command (read returns last written command)
-      return this.okiCommand;
-    }
-
-    if (address === 0xF002) {
-      // OKI6295 status
-      if (this.onOkiReadStatus !== null) {
-        return this.onOkiReadStatus();
+      // YM2151 status register (same value at both 0xF000 and 0xF001)
+      if (this.onYm2151ReadStatus !== null) {
+        return this.onYm2151ReadStatus();
       }
-      return this.okiStatus;
+      return 0x00;
     }
-
-    if (address === 0xF004) {
-      // Sound latch from 68000
-      return this.soundLatchValue;
-    }
-
-    if (address === 0xF006 || address === 0xF008) {
-      // YM2151 status register (readable from both addresses)
-      // Bit 7 = busy, bit 1 = timer B overflow, bit 0 = timer A overflow
+    if (address === 0xF001) {
+      // YM2151 status register
       if (this.onYm2151ReadStatus !== null) {
         return this.onYm2151ReadStatus();
       }
       return 0x00;
     }
 
+    // 0xF002 : OKI6295 status
+    if (address === 0xF002) {
+      if (this.onOkiReadStatus !== null) {
+        return this.onOkiReadStatus();
+      }
+      return this.okiStatus;
+    }
+
+    // 0xF008 : Sound latch from 68000
+    if (address === 0xF008) {
+      return this.soundLatchValue;
+    }
+
+    // 0xF00A : Sound latch 2
     if (address === 0xF00A) {
-      // Bank switch register (read returns current bank)
-      return this.currentBank;
+      return 0; // sound latch 2 (unused in basic setup)
     }
 
     // Unmapped
@@ -187,27 +189,10 @@ export class Z80Bus implements Z80BusInterface {
       return;
     }
 
-    // OKI6295 command
+    // Memory-mapped I/O writes (from MAME cps1.cpp sound_map)
+
+    // 0xF000 : YM2151 register select
     if (address === 0xF000) {
-      this.okiCommand = value;
-      if (this.onOkiWrite !== null) {
-        this.onOkiWrite(value);
-      }
-      return;
-    }
-
-    // OKI6295 status (write ignored, read-only)
-    if (address === 0xF002) {
-      return;
-    }
-
-    // Sound latch (read-only from Z80 side)
-    if (address === 0xF004) {
-      return;
-    }
-
-    // YM2151 register select
-    if (address === 0xF006) {
       this.ym2151Register = value;
       if (this.onYm2151AddressWrite !== null) {
         this.onYm2151AddressWrite(value);
@@ -215,8 +200,8 @@ export class Z80Bus implements Z80BusInterface {
       return;
     }
 
-    // YM2151 data write
-    if (address === 0xF008) {
+    // 0xF001 : YM2151 data write
+    if (address === 0xF001) {
       this.ym2151Data = value;
       if (this.onYm2151Write !== null) {
         this.onYm2151Write(this.ym2151Register, value);
@@ -224,8 +209,17 @@ export class Z80Bus implements Z80BusInterface {
       return;
     }
 
-    // Bank switch
-    if (address === 0xF00A) {
+    // 0xF002 : OKI6295 command
+    if (address === 0xF002) {
+      this.okiCommand = value;
+      if (this.onOkiWrite !== null) {
+        this.onOkiWrite(value);
+      }
+      return;
+    }
+
+    // 0xF004 : Bank switch
+    if (address === 0xF004) {
       this.currentBank = value & 0x0F; // 4-bit bank number (max 16 banks)
       return;
     }

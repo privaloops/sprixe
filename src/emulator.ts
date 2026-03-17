@@ -119,10 +119,17 @@ export class Emulator {
     });
 
     // Wire Z80 bus → YM2151 chip
+    let ym2151WriteCount = 0;
     this.z80Bus.setYm2151AddressWriteCallback((value: number) => {
       this.ym2151.writeAddress(value);
     });
     this.z80Bus.setYm2151WriteCallback((_register: number, data: number) => {
+      ym2151WriteCount++;
+      if (ym2151WriteCount <= 5) {
+        console.log('YM2151 write #' + ym2151WriteCount + ': reg=0x' + _register.toString(16).padStart(2, '0') + ' data=0x' + data.toString(16).padStart(2, '0'));
+      } else if (ym2151WriteCount === 100) {
+        console.log('YM2151: 100 writes so far');
+      }
       this.ym2151.writeData(data);
     });
     this.z80Bus.setYm2151ReadStatusCallback(() => {
