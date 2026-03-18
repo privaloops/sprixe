@@ -17,15 +17,6 @@ const canvas = getElement<HTMLCanvasElement>("screen");
 const dropZone = getElement<HTMLDivElement>("drop-zone");
 const statusEl = getElement<HTMLParagraphElement>("status");
 
-// ── Canvas init ──────────────────────────────────────────────────────────────
-
-const ctx = canvas.getContext("2d");
-if (!ctx) {
-  throw new Error("Could not get 2D context from canvas");
-}
-ctx.fillStyle = "#000";
-ctx.fillRect(0, 0, canvas.width, canvas.height);
-
 // ── Emulator instance ────────────────────────────────────────────────────────
 
 const emulator = new Emulator(canvas);
