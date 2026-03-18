@@ -2210,12 +2210,22 @@ export class NukedOPM {
         bufferL[startOffset + i] = this.sampleBufL[i]!;
         bufferR[startOffset + i] = this.sampleBufR[i]!;
       }
-      // Fill remainder with silence
-      for (let i = toCopy; i < numSamples; i++) {
-        bufferL[startOffset + i] = 0;
-        bufferR[startOffset + i] = 0;
+      // Hold last sample value for remainder (avoids click from zero-padding)
+      if (toCopy < numSamples && toCopy > 0) {
+        const lastL = this.sampleBufL[toCopy - 1]!;
+        const lastR = this.sampleBufR[toCopy - 1]!;
+        for (let i = toCopy; i < numSamples; i++) {
+          bufferL[startOffset + i] = lastL;
+          bufferR[startOffset + i] = lastR;
+        }
       }
-      this.sampleBufWritePos = 0;
+      // Keep excess samples for next frame (don't lose data)
+      const excess = available - toCopy;
+      for (let i = 0; i < excess; i++) {
+        this.sampleBufL[i] = this.sampleBufL[toCopy + i]!;
+        this.sampleBufR[i] = this.sampleBufR[toCopy + i]!;
+      }
+      this.sampleBufWritePos = excess;
       return;
     }
 

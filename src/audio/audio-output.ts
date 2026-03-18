@@ -59,6 +59,9 @@ class AudioRingBufferProcessor extends AudioWorkletProcessor {
   _ctrl = null;
   /** @type {Float32Array | null} */
   _data = null;
+  /** Last output values — held on underrun to fade out smoothly */
+  _lastL = 0;
+  _lastR = 0;
 
   constructor() {
     super();
@@ -100,17 +103,23 @@ class AudioRingBufferProcessor extends AudioWorkletProcessor {
       const available = (writePtr - readPtr + RING_BUFFER_SAMPLES) % RING_BUFFER_SAMPLES;
 
       if (available < 1) {
-        // Underrun — output silence for the rest of the block
-        for (let j = i; j < blockSize; j++) {
-          left[j]  = 0;
-          right[j] = 0;
+        // Underrun — fade from last sample to zero (avoid hard click)
+        const remaining = blockSize - i;
+        for (let j = 0; j < remaining; j++) {
+          const fade = 1.0 - j / remaining;
+          left[i + j]  = this._lastL * fade;
+          right[i + j] = this._lastR * fade;
         }
+        this._lastL = 0;
+        this._lastR = 0;
         break;
       }
 
       const base = (readPtr % RING_BUFFER_SAMPLES) * 2;
-      left[i]  = this._data[base];
-      right[i] = this._data[base + 1];
+      this._lastL = this._data[base];
+      this._lastR = this._data[base + 1];
+      left[i]  = this._lastL;
+      right[i] = this._lastR;
       readPtr  = (readPtr + 1) % RING_BUFFER_SAMPLES;
     }
 
@@ -303,11 +312,13 @@ export class AudioOutput {
   private ymResamplerR: LinearResampler | null = null;
   private okiResampler: LinearResampler | null = null;
 
-  /** Scratch buffers for resampling output (allocated once) */
+  /** Scratch buffers (allocated once, reused every frame — zero GC pressure) */
   private _debugPushCount = 0;
   private ymResampledL: Float32Array = new Float32Array(8192);
   private ymResampledR: Float32Array = new Float32Array(8192);
   private okiResampledM: Float32Array = new Float32Array(8192);
+  private _mixedL: Float32Array = new Float32Array(2048);
+  private _mixedR: Float32Array = new Float32Array(2048);
 
   private _volume = 1.0;
   private _initialized = false;
@@ -397,16 +408,20 @@ export class AudioOutput {
 
     // Mix: use the output count from YM (dominant), pad OKI if needed
     const nOut = nYmL;
-    const mixedL = new Float32Array(nOut);
-    const mixedR = new Float32Array(nOut);
+    if (this._mixedL.length < nOut) {
+      this._mixedL = new Float32Array(nOut * 2);
+      this._mixedR = new Float32Array(nOut * 2);
+    }
+    const mixedL = this._mixedL;
+    const mixedR = this._mixedR;
 
     // CPS1 is MONO: MAME routes both YM channels to a single speaker:
     //   ym2151.add_route(0, "mono", 0.35)   → L to mono at 0.35
     //   ym2151.add_route(1, "mono", 0.35)   → R to mono at 0.35
     //   OKIM6295.add_route(ALL_OUTPUTS, "mono", 0.30)
     // Mono output = ymL*0.35 + ymR*0.35 + oki*0.30
-    // We output stereo for browser compatibility but sum both YM channels
-    // to match the mono level (verified: MAME peak=0.87, RMS=0.12).
+    //
+    // CPS1 MAME route gains: YM2151 L/R → mono at 0.35 each, OKI → mono at 0.30.
     for (let i = 0; i < nOut; i++) {
       const oki = i < nOki ? (okiOut[i] ?? 0) : 0;
       const ymMono = (ymOutL[i] ?? 0) * 0.35 + (ymOutR[i] ?? 0) * 0.35;
@@ -503,11 +518,11 @@ export class AudioOutput {
     return out;
   }
 
-  /** Soft limiter: smoothly compresses peaks approaching ±1.0.
-   *  Linear below 0.8, soft knee above. No harsh discontinuity. */
+  /** Soft limiter at ±0.95 — only compresses extreme peaks (multiple OKI channels).
+   *  MAME route gains sum to 1.0; typical signal stays well below 0.95. */
   private _clip(s: number): number {
-    if (s > 0.8) return 0.8 + 0.2 * Math.tanh((s - 0.8) * 5);
-    if (s < -0.8) return -0.8 - 0.2 * Math.tanh((-s - 0.8) * 5);
+    if (s > 0.95) return 0.95 + 0.05 * Math.tanh((s - 0.95) * 10);
+    if (s < -0.95) return -0.95 - 0.05 * Math.tanh((-s - 0.95) * 10);
     return s;
   }
 
