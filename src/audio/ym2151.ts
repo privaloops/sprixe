@@ -344,12 +344,44 @@ class Operator {
     this.phaseInc = phaseStep & 0xFFFFF;
   }
 
+  /**
+   * Recompute phase increment with LFO PM delta applied.
+   * Called every sample when channel PMS != 0 (YMFM: PHASE_STEP_DYNAMIC).
+   */
+  computePhaseIncWithPM(keyCode: number, keyFraction: number, pmDelta: number): void {
+    const blockFreq = (keyCode << 6) | keyFraction;
+    const dt2Delta = S_DETUNE2_DELTA[this.dt2 & 3]!;
+
+    // Add PM delta to DT2 delta (YMFM: delta += pm_adjustment)
+    let phaseStep = opmKeyCodeToPhaseStep(blockFreq, dt2Delta + pmDelta);
+
+    // Apply DT1
+    const dt1Idx = this.dt1 & 7;
+    if (dt1Idx !== 0) {
+      const kcDiv = Math.min(31, keyCode >> 1);
+      phaseStep += dt1Table[dt1Idx]![kcDiv]!;
+    }
+
+    // Apply MUL
+    if (this.mul === 0) {
+      phaseStep >>= 1;
+    } else {
+      phaseStep *= this.mul;
+    }
+
+    this.phaseInc = phaseStep & 0xFFFFF;
+  }
+
   keyOnEvent(): void {
     if (!this.keyOn) {
       this.keyOn = true;
       this.phase = 0;
       this.envPhase = EnvPhase.Attack;
-      // Don't reset envLevel -- real YM2151 starts attack from current level
+      // YMFM: rates >= 62 set attenuation to 0 immediately at key-on
+      if (this.effAR >= 62) {
+        this.envLevel = 0;
+      }
+      // Don't reset envLevel for other rates -- real YM2151 starts attack from current level
     }
   }
 
@@ -361,90 +393,67 @@ class Operator {
   }
 
   /**
-   * Advance envelope by one sample.
-   * Uses YMFM-style rate-dependent counter with the increment table.
+   * Advance envelope using YMFM's global counter logic.
+   * Called every 4 samples (YMFM: bitfield(env_counter, 0, 2) == 0).
+   * @param envCounter Global envelope counter (incremented every 4 samples)
    */
-  updateEnvelope(): void {
-    this.egCounter = (this.egCounter + 1) & 7;
+  clockEnvelope(envCounter: number): void {
+    // Handle attack→decay transition (YMFM checks this first)
+    if (this.envPhase === EnvPhase.Attack && this.envLevel === 0) {
+      this.envPhase = EnvPhase.Decay1;
+    }
+    // Handle decay→sustain transition (immediately after attack→decay)
+    if (this.envPhase === EnvPhase.Decay1 && this.envLevel >= this.d1lLevel) {
+      this.envPhase = EnvPhase.Decay2;
+    }
 
+    // Get the rate for the current phase
+    let rate: number;
     switch (this.envPhase) {
-      case EnvPhase.Attack: {
-        if (this.effAR >= 62) {
-          this.envLevel = 0;
-          this.envPhase = EnvPhase.Decay1;
-        } else if (this.effAR > 0) {
-          const increment = this._getIncrement(this.effAR);
-          if (increment > 0) {
-            // YMFM attack formula: m_env_attenuation += (~m_env_attenuation * increment) >> 4
-            this.envLevel += ((~this.envLevel * increment) >> 4);
-            if (this.envLevel <= 0) {
-              this.envLevel = 0;
-              this.envPhase = EnvPhase.Decay1;
-            }
-          }
-        }
-        break;
+      case EnvPhase.Attack:  rate = this.effAR; break;
+      case EnvPhase.Decay1:  rate = this.effD1R; break;
+      case EnvPhase.Decay2:  rate = this.effD2R; break;
+      case EnvPhase.Release: rate = this.effRR; break;
+      default: return; // Off
+    }
+
+    if (rate <= 0) return;
+
+    // YMFM rate-dependent counter logic (ymfm_fm.ipp line 695):
+    // rate_shift = rate >> 2
+    // env_counter <<= rate_shift
+    // if fractional bits [0..10] != 0, skip
+    // relevant_bits = bits [11..13] (or [rate_shift..rate_shift+2] if shift > 11)
+    const rateShift = rate >> 2;
+    const shifted = (envCounter << rateShift) >>> 0;
+
+    // Check fractional part (low 11 bits)
+    if ((shifted & 0x7FF) !== 0) return;
+
+    // Extract 3-bit sub-step index
+    const extractBit = rateShift <= 11 ? 11 : rateShift;
+    const relevantBits = (shifted >>> extractBit) & 7;
+    const increment = egIncTable[rate]![relevantBits]!;
+
+    if (increment === 0) return;
+
+    if (this.envPhase === EnvPhase.Attack) {
+      // Attack: rate < 62 uses exponential curve
+      // Rate >= 62 handled at key-on (instant attack)
+      if (rate < 62) {
+        this.envLevel += ((~this.envLevel * increment) >> 4);
+        if (this.envLevel <= 0) this.envLevel = 0;
       }
-      case EnvPhase.Decay1: {
-        if (this.effD1R > 0) {
-          const increment = this._getIncrement(this.effD1R);
-          this.envLevel += increment;
-          if (this.envLevel >= this.d1lLevel) {
-            this.envLevel = this.d1lLevel;
-            this.envPhase = EnvPhase.Decay2;
-          }
-        } else {
-          this.envPhase = EnvPhase.Decay2;
-        }
-        break;
-      }
-      case EnvPhase.Decay2: {
-        if (this.effD2R > 0) {
-          const increment = this._getIncrement(this.effD2R);
-          this.envLevel += increment;
-          if (this.envLevel >= EG_MAX) {
-            this.envLevel = EG_MAX;
-            this.envPhase = EnvPhase.Off;
-          }
-        }
-        break;
-      }
-      case EnvPhase.Release: {
-        if (this.effRR > 0) {
-          const increment = this._getIncrement(this.effRR);
-          this.envLevel += increment;
-          if (this.envLevel >= EG_MAX) {
-            this.envLevel = EG_MAX;
-            this.envPhase = EnvPhase.Off;
-          }
-        }
-        break;
-      }
-      case EnvPhase.Off:
+    } else {
+      // Decay/sustain/release: linear increment
+      this.envLevel += increment;
+      if (this.envLevel >= 0x400) {
         this.envLevel = EG_MAX;
-        break;
+        if (this.envPhase === EnvPhase.Release) {
+          this.envPhase = EnvPhase.Off;
+        }
+      }
     }
-  }
-
-  /**
-   * Get the envelope increment for the current sub-step, using the rate table.
-   */
-  private _getIncrement(rate: number): number {
-    if (rate <= 0) return 0;
-
-    const effectiveRate = Math.min(63, rate);
-    const shift = Math.max(0, 13 - (effectiveRate >> 2));
-    const counterMask = (1 << shift) - 1;
-
-    if (shift > 0 && (this.egCounter & counterMask) !== 0) {
-      return 0;
-    }
-
-    const subStep = shift > 0
-      ? (this.egCounter >> shift) & 7
-      : this.egCounter & 7;
-
-    return egIncTable[effectiveRate]![subStep]!;
   }
 
   /**
@@ -538,7 +547,23 @@ class Channel {
    *   6: (O1->O2)+O3+O4, output O2+O3+O4
    *   7: O1+O2+O3+O4, output all
    */
-  generateSample(_lfoPhase: number, lfoAm: number): number {
+  generateSample(lfoRawPm: number, lfoAm: number): number {
+    // Apply LFO phase modulation: recompute phase increments when PMS != 0
+    if (this.pms !== 0 && lfoRawPm !== 0) {
+      // YMFM opm_registers::compute_phase_step:
+      //   if (pm_sensitivity < 6) delta += lfo_raw_pm >> (6 - pm_sensitivity);
+      //   else delta += lfo_raw_pm << (pm_sensitivity - 5);
+      let pmDelta: number;
+      if (this.pms < 6) {
+        pmDelta = lfoRawPm >> (6 - this.pms);
+      } else {
+        pmDelta = lfoRawPm << (this.pms - 5);
+      }
+      // Recompute phase increments for all operators with PM-adjusted delta
+      for (let i = 0; i < NUM_OPERATORS; i++) {
+        this.ops[i]!.computePhaseIncWithPM(this.keyCode, this.keyFraction, pmDelta);
+      }
+    }
     const m1 = this.ops[0]!;
     const c1 = this.ops[1]!;
     const m2 = this.ops[2]!;
@@ -627,16 +652,11 @@ class Channel {
       }
     }
 
-    // Advance all operator phases and envelopes
+    // Advance all operator phases (envelopes are clocked globally in generateSamples)
     m1.advancePhase();
     c1.advancePhase();
     m2.advancePhase();
     c2.advancePhase();
-
-    m1.updateEnvelope();
-    c1.updateEnvelope();
-    m2.updateEnvelope();
-    c2.updateEnvelope();
 
     return output;
   }
@@ -788,6 +808,9 @@ export class YM2151 {
 
   private _externalTimerMode: boolean;
 
+  /** Global envelope counter (YMFM: x.2 format, incremented each sample) */
+  private envCounter: number;
+
   constructor() {
     this.channels = [];
     for (let i = 0; i < NUM_CHANNELS; i++) {
@@ -809,6 +832,7 @@ export class YM2151 {
     this.ct1 = false;
     this.ct2 = false;
     this._externalTimerMode = false;
+    this.envCounter = 0;
   }
 
   // -- Public interface -------------------------------------------------------
@@ -862,6 +886,12 @@ export class YM2151 {
 
       const noiseOut = this.noise.advance();
 
+      // YMFM: envelope counter is x.2 format, clock envelopes when low 2 bits == 0
+      // (every 4 samples). Pass counter >> 2 to clock_envelope.
+      const clockEnv = (this.envCounter & 3) === 0;
+      const envCounterForClock = this.envCounter >> 2;
+      this.envCounter++;
+
       let mixL = 0;
       let mixR = 0;
 
@@ -878,6 +908,13 @@ export class YM2151 {
 
         if (channel.leftEnable) mixL += sample;
         if (channel.rightEnable) mixR += sample;
+
+        // Clock envelopes for all 4 operators of this channel (global timing)
+        if (clockEnv) {
+          for (let op = 0; op < NUM_OPERATORS; op++) {
+            channel.ops[op]!.clockEnvelope(envCounterForClock);
+          }
+        }
       }
 
       const scale = 1.0 / 16384;
@@ -932,6 +969,7 @@ export class YM2151 {
     this.timerBValue = 0;
     this.ct1 = false;
     this.ct2 = false;
+    this.envCounter = 0;
 
     this.lfo.reset();
     this.lfo.amd = 0;
