@@ -142,39 +142,23 @@ loadBtn.addEventListener("click", () => {
   loadBtn.disabled = true;
   gameSelect.disabled = true;
 
-  // Try local public/ first, then download from archive.org
-  const localUrl = `/${gameName}.zip`;
-  const archiveUrl = getArchiveOrgUrl(gameName);
+  // Download via server proxy (archive.org) — avoids CORS
+  const proxyUrl = `/api/rom/${gameName}.zip`;
 
-  setStatus(`Loading ${gameName}…`);
+  setStatus(`Downloading ${gameName} from archive.org…`);
 
-  fetch(localUrl, { method: "HEAD" })
-    .then((res) => {
-      if (res.ok) {
-        setStatus(`Loading ${gameName} (local)…`);
-        return fetch(localUrl).then((r) => r.blob());
-      }
-      // Local not found — download from archive.org via no-cors proxy
-      // archive.org doesn't support CORS, so we use a hidden link download
-      // and ask the user to drag & drop the result.
-      setStatus(`Downloading ${gameName} from archive.org…`);
-
-      // Use cors-anywhere or direct fetch with no-cors won't give us the body.
-      // Best approach: fetch via the archive.org CORS-friendly /download/ endpoint
-      return fetch(archiveUrl, { redirect: "follow" }).then((r) => {
-        if (!r.ok) throw new Error(`Download failed (${r.status})`);
-        return r.blob();
-      });
+  fetch(proxyUrl)
+    .then((r) => {
+      if (!r.ok) throw new Error(`Download failed (${r.status})`);
+      return r.blob();
     })
     .then((blob) => {
-      if (!blob) return;
       const file = new File([blob], `${gameName}.zip`, { type: "application/zip" });
       return handleRomFile(file);
     })
-    .catch(() => {
-      // Fetch failed (likely CORS) — open download link in new tab
-      setStatus(`Opening download link — save the ZIP then drag & drop it here.`);
-      window.open(archiveUrl, "_blank");
+    .catch((err) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      setStatus(`Error: ${msg}`);
     })
     .finally(() => {
       loadBtn.disabled = false;
