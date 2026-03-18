@@ -2,13 +2,22 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="manifest" href="/manifest.json" />
     <title>CPS1-Web</title>
     <style>
       *, *::before, *::after {
         box-sizing: border-box;
         margin: 0;
         padding: 0;
+      }
+
+      html, body {
+        height: 100%;
+        overflow: hidden;
+        touch-action: manipulation;
       }
 
       body {
@@ -20,7 +29,8 @@
         align-items: center;
         justify-content: center;
         min-height: 100vh;
-        overflow: hidden;
+        min-height: 100dvh;
+        padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
       }
 
       #app {
@@ -52,11 +62,12 @@
         margin-top: 4px;
       }
 
-      /* Canvas wrapper — CPS1 native 384x224, displayed at 2x */
+      /* Canvas wrapper — responsive with CPS1 aspect ratio */
       #canvas-wrapper {
         position: relative;
-        width: 768px;
-        height: 448px;
+        width: 100%;
+        max-width: 768px;
+        aspect-ratio: 384 / 224;
         background: #0a0a0a;
         border: 1px solid #1a1a1a;
       }
@@ -68,10 +79,40 @@
         image-rendering: pixelated;
       }
 
-      /* Fullscreen: canvas fills entire screen */
+      /* Native fullscreen (desktop) */
       #screen:fullscreen {
         width: 100vw;
         height: 100vh;
+        object-fit: contain;
+        background: #000;
+      }
+
+      /* Pseudo-fullscreen for mobile (iOS has no Fullscreen API on canvas) */
+      body.pseudo-fullscreen {
+        padding: 0;
+      }
+      body.pseudo-fullscreen #app {
+        padding: 0;
+        gap: 0;
+        max-width: none;
+        justify-content: center;
+        height: 100vh;
+        height: 100dvh;
+      }
+      body.pseudo-fullscreen header,
+      body.pseudo-fullscreen #rom-controls,
+      body.pseudo-fullscreen #status {
+        display: none;
+      }
+      body.pseudo-fullscreen #canvas-wrapper {
+        max-width: none;
+        border: none;
+        width: 100%;
+        height: 100%;
+      }
+      body.pseudo-fullscreen #screen {
+        width: 100%;
+        height: 100%;
         object-fit: contain;
         background: #000;
       }
@@ -118,6 +159,14 @@
         letter-spacing: 0.1em;
       }
 
+      #rom-controls {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        justify-content: center;
+        flex-wrap: wrap;
+      }
+
       #file-input {
         display: none;
       }
@@ -127,6 +176,29 @@
         color: #444;
         letter-spacing: 0.1em;
         min-height: 1em;
+      }
+
+      /* Mobile: smaller controls */
+      @media (max-width: 500px) {
+        #app { padding: 8px; gap: 10px; }
+        header h1 { font-size: 1.1rem; }
+        header p { font-size: 0.6rem; }
+        #rom-controls { width: 100%; }
+        #game-select { flex: 1; min-width: 0; font-size: 0.7rem; }
+      }
+
+      /* Landscape mobile: maximize canvas height */
+      @media (max-height: 500px) and (orientation: landscape) {
+        #app { padding: 4px; gap: 4px; }
+        header { display: none; }
+        #canvas-wrapper {
+          max-width: none;
+          height: calc(100dvh - 40px);
+          width: auto;
+          aspect-ratio: 384 / 224;
+        }
+        #rom-controls { gap: 4px; }
+        #status { font-size: 0.6rem; }
       }
     </style>
   </head>
@@ -145,7 +217,7 @@
         </div>
       </div>
 
-      <div id="rom-controls" style="display:flex;gap:8px;align-items:center;justify-content:center;flex-wrap:wrap;">
+      <div id="rom-controls">
         <select id="game-select" style="padding:6px 10px;background:#1a1a1a;color:#e8003c;border:1px solid #333;font-family:inherit;font-size:0.75rem;">
           <option value="">-- Select a CPS1 game --</option>
         </select>

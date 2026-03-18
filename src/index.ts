@@ -72,6 +72,35 @@ window.addEventListener("keydown", (e) => {
   }
 });
 
+// ── Double-tap fullscreen (mobile — iOS has no Fullscreen API on canvas) ─────
+
+let lastTapTime = 0;
+canvas.addEventListener("touchend", (e) => {
+  const now = Date.now();
+  if (now - lastTapTime < 300) {
+    e.preventDefault();
+    // Toggle pseudo-fullscreen (or native if supported)
+    if (document.fullscreenElement) {
+      void document.exitFullscreen();
+    } else if (canvas.requestFullscreen) {
+      canvas.requestFullscreen().catch(() => {
+        // Fullscreen API failed (iOS) — use pseudo-fullscreen
+        document.body.classList.toggle("pseudo-fullscreen");
+      });
+    } else {
+      document.body.classList.toggle("pseudo-fullscreen");
+    }
+  }
+  lastTapTime = now;
+});
+
+// Exit pseudo-fullscreen on Escape
+window.addEventListener("keydown", (e) => {
+  if (e.code === "Escape" && document.body.classList.contains("pseudo-fullscreen")) {
+    document.body.classList.remove("pseudo-fullscreen");
+  }
+});
+
 // ── ROM drag & drop ──────────────────────────────────────────────────────────
 
 function setStatus(message: string): void {
