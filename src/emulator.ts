@@ -20,7 +20,7 @@ import { Renderer, FRAMEBUFFER_SIZE } from "./video/renderer";
 import { CPS1Video } from "./video/cps1-video";
 import { InputManager } from "./input/input";
 import { loadRomFromZip, RomSet } from "./memory/rom-loader";
-import { YM2151 } from "./audio/ym2151";
+import { NukedOPM as YM2151 } from "./audio/nuked-opm";
 import { OKI6295 } from "./audio/oki6295";
 import { AudioOutput } from "./audio/audio-output";
 
@@ -359,25 +359,22 @@ export class Emulator {
       }
     }
 
-    // 4. Run Z80 with interleaved YM2151 timer ticks.
+    // 4. Run Z80 with interleaved YM2151 clocking.
     //
-    // The YM2151 runs at 55930 Hz (3.579545 MHz / 64). The Z80 runs at
-    // 3.579545 MHz. So the YM2151 ticks once every 64 Z80 T-states.
-    // We advance the YM2151 timers proportionally as the Z80 executes.
-    // Batch YM2151 timer ticks: tick every 256 Z80 T-states (4x fewer calls)
-    // then advance multiple ticks at once. This is less accurate but much faster.
-    const YM_TICK_INTERVAL = 64;
+    // The YM2151 has an internal prescale of 2 (YMFM: DEFAULT_PRESCALE=2).
+    // Its internal clock = master / 2. We clock the OPM once per 2 Z80 T-states.
+    // This gives Timer A the correct ~250 Hz rate and audio at 55930 Hz.
     let z80Cycles = 0;
-    let ymTickAccum = 0;
+    let opmAccum = 0;
     try {
       while (z80Cycles < Z80_CYCLES_PER_FRAME) {
         const cyc = this.z80.step();
         z80Cycles += cyc;
-        ymTickAccum += cyc;
-
-        while (ymTickAccum >= YM_TICK_INTERVAL) {
-          ymTickAccum -= YM_TICK_INTERVAL;
-          this.ym2151.tickTimers();
+        opmAccum += cyc;
+        const opmClocks = opmAccum >> 1; // divide by 2 (prescale)
+        opmAccum &= 1; // keep remainder
+        if (opmClocks > 0) {
+          this.ym2151.clockCycles(opmClocks);
         }
       }
     } catch (e) {
