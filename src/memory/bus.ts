@@ -44,6 +44,8 @@ export class Bus implements BusInterface {
     this.programRom = new Uint8Array(0);
     this.cpsaRegisters = new Uint8Array(0x40); // 64 bytes
     this.cpsbRegisters = new Uint8Array(0x40); // 64 bytes
+    // CPS-B registers default to 0xFF (MAME returns 0xFFFF for unknown reads)
+    this.cpsbRegisters.fill(0xFF);
     this.ioPorts = new Uint8Array(0x20);       // 32 bytes (0x800000-0x80001F)
     this.soundLatch = new Uint8Array(0x10);    // 16 bytes
     this.coinCtrl = new Uint8Array(0x08);      // 8 bytes
@@ -54,11 +56,14 @@ export class Bus implements BusInterface {
     this.ioPorts.fill(0xFF);
     this._soundLatchDebugCount = 0;
 
-    // CPS-B ID register: SF2 (CPS_B_11) expects 0x0401 at offset 0x32
-    // This is read by the game during startup to verify the B-board.
-    // Offset 0x32 in CPS-B regs = address 0x800172
-    this.cpsbRegisters[0x32] = 0x04;
-    this.cpsbRegisters[0x33] = 0x01;
+  }
+
+  /** Set CPS-B ID register for the current game */
+  setCpsBId(offset: number, value: number): void {
+    if (offset >= 0 && offset + 1 < this.cpsbRegisters.length) {
+      this.cpsbRegisters[offset] = (value >> 8) & 0xFF;
+      this.cpsbRegisters[offset + 1] = value & 0xFF;
+    }
   }
 
   loadProgramRom(data: Uint8Array): void {

@@ -1,3 +1,32 @@
+import type { CpsBConfig, GfxMapperConfig } from '../memory/rom-loader';
+
+/**
+ * Apply CPS-B configuration (called once per game load).
+ */
+export function applyCpsBConfig(config: CpsBConfig): void {
+  CPSB_LAYER_CTRL = config.layerControl;
+  CPSB_PALETTE_CTRL = config.paletteControl;
+  LAYER_ENABLE_SCROLL1 = config.layerEnableMask[0];
+  LAYER_ENABLE_SCROLL2 = config.layerEnableMask[1];
+  LAYER_ENABLE_SCROLL3 = config.layerEnableMask[2];
+}
+
+/**
+ * Apply GFX ROM bank mapper configuration (called once per game load).
+ */
+export function applyGfxMapper(config: GfxMapperConfig): void {
+  activeMapperTable = config.ranges.map(r => ({
+    type: r.type, start: r.start, end: r.end, bank: r.bank,
+  }));
+  activeBankSizes = [...config.bankSizes];
+  activeBankBases = [];
+  let base = 0;
+  for (let i = 0; i < config.bankSizes.length; i++) {
+    activeBankBases.push(base);
+    base += config.bankSizes[i]!;
+  }
+}
+
 /**
  * CPS1 Video — CPS-A / CPS-B Graphics Decoder
  *
@@ -61,8 +90,9 @@ const CPSA_VIDEOCONTROL   = 0x22;
 // CPS-B register offsets (byte offsets into cpsbRegs)
 // ---------------------------------------------------------------------------
 
-const CPSB_LAYER_CTRL     = 0x26; // Layer control register (SF2)
-const CPSB_PALETTE_CTRL   = 0x30; // Palette control
+// Default CPS-B offsets (overridden per-game via CpsBConfig)
+let CPSB_LAYER_CTRL     = 0x26;
+let CPSB_PALETTE_CTRL   = 0x30;
 
 // ---------------------------------------------------------------------------
 // Layer identifiers (matching MAME convention)
@@ -73,10 +103,10 @@ const LAYER_SCROLL1 = 1; // MAME layer 1 = scroll1
 const LAYER_SCROLL2 = 2; // MAME layer 2 = scroll2
 const LAYER_SCROLL3 = 3; // MAME layer 3 = scroll3
 
-// SF2 (CPS_B_11) layer enable masks
-const SF2_LAYER_ENABLE_SCROLL1 = 0x08;
-const SF2_LAYER_ENABLE_SCROLL2 = 0x10;
-const SF2_LAYER_ENABLE_SCROLL3 = 0x20;
+// Layer enable masks (overridden per-game via CpsBConfig)
+let LAYER_ENABLE_SCROLL1 = 0x08;
+let LAYER_ENABLE_SCROLL2 = 0x10;
+let LAYER_ENABLE_SCROLL3 = 0x20;
 
 // VRAM base alignment boundaries (from MAME video_start)
 const SCROLL_SIZE    = 0x4000;
@@ -128,26 +158,10 @@ interface GfxRange {
   bank: number;
 }
 
-const SF2_BANK_SIZES = [0x8000, 0x8000, 0x8000, 0];
-
-const SF2_MAPPER_TABLE: GfxRange[] = [
-  { type: GFXTYPE_SPRITES, start: 0x00000, end: 0x07fff, bank: 0 },
-  { type: GFXTYPE_SPRITES, start: 0x08000, end: 0x0ffff, bank: 1 },
-  { type: GFXTYPE_SPRITES, start: 0x10000, end: 0x11fff, bank: 2 },
-  { type: GFXTYPE_SCROLL3, start: 0x02000, end: 0x03fff, bank: 2 },
-  { type: GFXTYPE_SCROLL1, start: 0x04000, end: 0x04fff, bank: 2 },
-  { type: GFXTYPE_SCROLL2, start: 0x05000, end: 0x07fff, bank: 2 },
-];
-
-// Pre-compute bank base offsets to avoid loop in hot path
-const SF2_BANK_BASES: number[] = [];
-{
-  let base = 0;
-  for (let i = 0; i < SF2_BANK_SIZES.length; i++) {
-    SF2_BANK_BASES.push(base);
-    base += SF2_BANK_SIZES[i]!;
-  }
-}
+// Active GFX mapper (set per-game via applyGfxMapper)
+let activeMapperTable: GfxRange[] = [];
+let activeBankSizes: number[] = [0, 0, 0, 0];
+let activeBankBases: number[] = [0, 0, 0, 0];
 
 function gfxromBankMapper(type: number, code: number): number {
   let shift = 0;
@@ -160,11 +174,12 @@ function gfxromBankMapper(type: number, code: number): number {
 
   const shiftedCode = code << shift;
 
-  for (let i = 0; i < SF2_MAPPER_TABLE.length; i++) {
-    const range = SF2_MAPPER_TABLE[i]!;
+  for (let i = 0; i < activeMapperTable.length; i++) {
+    const range = activeMapperTable[i]!;
     if (shiftedCode >= range.start && shiftedCode <= range.end) {
       if (range.type & type) {
-        return (SF2_BANK_BASES[range.bank]! + (shiftedCode & (SF2_BANK_SIZES[range.bank]! - 1))) >> shift;
+        const bankSize = activeBankSizes[range.bank]!;
+        return (activeBankBases[range.bank]! + (shiftedCode & (bankSize - 1))) >> shift;
       }
     }
   }
@@ -811,12 +826,12 @@ export class CPS1Video {
       case LAYER_OBJ:
         return true;
       case LAYER_SCROLL1:
-        return (layercontrol & SF2_LAYER_ENABLE_SCROLL1) !== 0;
+        return (layercontrol & LAYER_ENABLE_SCROLL1) !== 0;
       case LAYER_SCROLL2:
-        return (layercontrol & SF2_LAYER_ENABLE_SCROLL2) !== 0 &&
+        return (layercontrol & LAYER_ENABLE_SCROLL2) !== 0 &&
                (videocontrol & 0x04) !== 0;
       case LAYER_SCROLL3:
-        return (layercontrol & SF2_LAYER_ENABLE_SCROLL3) !== 0 &&
+        return (layercontrol & LAYER_ENABLE_SCROLL3) !== 0 &&
                (videocontrol & 0x08) !== 0;
       default:
         return false;

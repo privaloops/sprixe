@@ -14,6 +14,8 @@ export interface RomSet {
   graphicsRom: Uint8Array;
   audioRom: Uint8Array;
   okiRom: Uint8Array;
+  cpsBConfig: CpsBConfig;
+  gfxMapper: GfxMapperConfig;
 }
 
 interface RomFileEntry {
@@ -36,8 +38,16 @@ interface ProgramRomEntry {
   size: number;
 }
 
+/** ROM_LOAD16_WORD_SWAP: single file, big-endian (no swap needed for our big-endian bus) */
+interface ProgramWordSwapEntry {
+  file: string;
+  offset: number;
+  size: number;
+}
+
 interface ProgramDef {
   entries: ProgramRomEntry[];
+  wordSwapEntries?: ProgramWordSwapEntry[];
   size: number;
 }
 
@@ -54,12 +64,36 @@ interface GraphicsDef {
   size: number;
 }
 
+/** GFX ROM bank mapper configuration (varies per board PAL) */
+export interface GfxMapperConfig {
+  bankSizes: [number, number, number, number];
+  ranges: { type: number; start: number; end: number; bank: number }[];
+}
+
+/** CPS-B chip configuration (varies per game/board revision) */
+export interface CpsBConfig {
+  /** ID register offset in CPS-B regs (-1 = no ID check) */
+  idOffset: number;
+  /** Expected ID value */
+  idValue: number;
+  /** Layer control register offset */
+  layerControl: number;
+  /** Priority mask register offsets [0..3] */
+  priority: [number, number, number, number];
+  /** Palette control register offset */
+  paletteControl: number;
+  /** Layer enable masks: [scroll1, scroll2, scroll3, mask3, mask4] */
+  layerEnableMask: [number, number, number, number, number];
+}
+
 interface GameDef {
   name: string;
   program: ProgramDef;
   graphics: GraphicsDef;
   audio: RomRegionDef;
   oki: RomRegionDef;
+  cpsBConfig: CpsBConfig;
+  gfxMapper: GfxMapperConfig;
 }
 
 // ---------------------------------------------------------------------------
@@ -111,10 +145,75 @@ const GAME_DEFS: GameDef[] = [
       files: ['sf2_18.11c', 'sf2_19.12c'],
       size: 0x40000,
     },
+    cpsBConfig: {
+      idOffset: 0x32, idValue: 0x0401,
+      layerControl: 0x26,
+      priority: [0x28, 0x2a, 0x2c, 0x2e],
+      paletteControl: 0x30,
+      layerEnableMask: [0x08, 0x10, 0x20, 0x00, 0x00],
+    },
+    gfxMapper: {
+      bankSizes: [0x8000, 0x8000, 0x8000, 0],
+      ranges: [
+        { type: 1, start: 0x00000, end: 0x07fff, bank: 0 },
+        { type: 1, start: 0x08000, end: 0x0ffff, bank: 1 },
+        { type: 1, start: 0x10000, end: 0x11fff, bank: 2 },
+        { type: 8, start: 0x02000, end: 0x03fff, bank: 2 },
+        { type: 2, start: 0x04000, end: 0x04fff, bank: 2 },
+        { type: 4, start: 0x05000, end: 0x07fff, bank: 2 },
+      ],
+    },
   },
 
-  // TODO: Add more game definitions with the new format
-  // For now, only sf2 is fully supported.
+  // Final Fight
+  // Source: MAME cps1.cpp ROM_START(ffight)
+  {
+    name: 'ffight',
+    program: {
+      entries: [
+        { even: 'ff_36.11f',  odd: 'ff_42.11h',  offset: 0x00000, size: 0x20000 },
+        { even: 'ff_37.12f',  odd: 'ffe_43.12h',  offset: 0x40000, size: 0x20000 },
+      ],
+      wordSwapEntries: [
+        { file: 'ff-32m.8h', offset: 0x80000, size: 0x80000 },
+      ],
+      size: 0x100000,
+    },
+    graphics: {
+      banks: [
+        {
+          files: ['ff-5m.7a', 'ff-7m.9a', 'ff-1m.3a', 'ff-3m.5a'],
+          offset: 0x000000,
+          romSize: 0x80000,
+        },
+      ],
+      size: 0x200000,
+    },
+    audio: {
+      files: ['ff_09.12b'],
+      size: 0x18000,
+    },
+    oki: {
+      files: ['ff_18.11c', 'ff_19.12c'],
+      size: 0x40000,
+    },
+    cpsBConfig: {
+      idOffset: 0x20, idValue: 0x0004,
+      layerControl: 0x2e,
+      priority: [0x26, 0x30, 0x28, 0x32],
+      paletteControl: 0x2a,
+      layerEnableMask: [0x02, 0x04, 0x08, 0x00, 0x00],
+    },
+    gfxMapper: {
+      bankSizes: [0x8000, 0, 0, 0],
+      ranges: [
+        { type: 1, start: 0x0000, end: 0x43ff, bank: 0 },
+        { type: 2, start: 0x4400, end: 0x4bff, bank: 0 },
+        { type: 8, start: 0x4c00, end: 0x5fff, bank: 0 },
+        { type: 4, start: 0x6000, end: 0x7fff, bank: 0 },
+      ],
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -126,6 +225,11 @@ function getAllFiles(def: GameDef): string[] {
   const files: string[] = [];
   for (const entry of def.program.entries) {
     files.push(entry.even, entry.odd);
+  }
+  if (def.program.wordSwapEntries) {
+    for (const entry of def.program.wordSwapEntries) {
+      files.push(entry.file);
+    }
   }
   for (const bank of def.graphics.banks) {
     files.push(...bank.files);
@@ -254,6 +358,20 @@ function assembleProgram(
     }
   }
 
+  // ROM_LOAD16_WORD_SWAP: swap bytes within each 16-bit word
+  if (def.wordSwapEntries) {
+    for (const entry of def.wordSwapEntries) {
+      const data = fileMap.get(entry.file.toLowerCase());
+      if (data !== undefined) {
+        const copyLen = Math.min(data.length, entry.size, def.size - entry.offset);
+        for (let i = 0; i < copyLen; i += 2) {
+          result[entry.offset + i] = data[i + 1] ?? 0;
+          result[entry.offset + i + 1] = data[i] ?? 0;
+        }
+      }
+    }
+  }
+
   return result;
 }
 
@@ -352,6 +470,15 @@ export async function loadRomFromZip(file: File): Promise<RomSet> {
       );
     }
   }
+  if (gameDef.program.wordSwapEntries) {
+    for (const entry of gameDef.program.wordSwapEntries) {
+      if (!fileMap.has(entry.file.toLowerCase())) {
+        throw new Error(
+          `Missing program ROM file for ${gameDef.name}: ${entry.file}`
+        );
+      }
+    }
+  }
 
   const programRom = assembleProgram(gameDef.program, fileMap);
   const graphicsRom = assembleGraphicsNew(gameDef.graphics, fileMap);
@@ -377,6 +504,8 @@ export async function loadRomFromZip(file: File): Promise<RomSet> {
     graphicsRom,
     audioRom,
     okiRom,
+    cpsBConfig: gameDef.cpsBConfig,
+    gfxMapper: gameDef.gfxMapper,
   };
 }
 

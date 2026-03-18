@@ -17,7 +17,7 @@ import { Z80, Z80State } from "./cpu/z80";
 import { Bus } from "./memory/bus";
 import { Z80Bus } from "./memory/z80-bus";
 import { Renderer, FRAMEBUFFER_SIZE } from "./video/renderer";
-import { CPS1Video } from "./video/cps1-video";
+import { CPS1Video, applyCpsBConfig, applyGfxMapper } from "./video/cps1-video";
 import { InputManager } from "./input/input";
 import { loadRomFromZip, RomSet } from "./memory/rom-loader";
 import { NukedOPM as YM2151 } from "./audio/nuked-opm";
@@ -172,6 +172,14 @@ export class Emulator {
 
     this.bus.loadProgramRom(romSet.programRom);
     this.z80Bus.loadAudioRom(romSet.audioRom);
+
+    // Apply CPS-B configuration for this game
+    const cpsBConfig = romSet.cpsBConfig;
+    if (cpsBConfig.idOffset >= 0) {
+      this.bus.setCpsBId(cpsBConfig.idOffset, cpsBConfig.idValue);
+    }
+    applyCpsBConfig(cpsBConfig);
+    applyGfxMapper(romSet.gfxMapper);
 
     // Wire up CPS1 video with VRAM and graphics ROM
     this.video = new CPS1Video(

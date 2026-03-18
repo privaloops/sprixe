@@ -101,17 +101,26 @@ fileInput.addEventListener("change", () => {
   if (file) void handleRomFile(file);
 });
 
-// Auto-load sf2.zip from the public folder if available
-fetch("/sf2.zip")
-  .then((res) => {
-    if (!res.ok) return;
-    return res.blob();
-  })
-  .then((blob) => {
-    if (!blob) return;
-    const file = new File([blob], "sf2.zip", { type: "application/zip" });
-    void handleRomFile(file);
-  })
-  .catch(() => {
-    // No auto-load ROM available, user must drag & drop
-  });
+// Detect available ROMs in public/ and create load buttons
+const romButtons = getElement<HTMLDivElement>("rom-buttons");
+const ROM_LIST = ["sf2.zip", "ffight.zip"];
+
+for (const romName of ROM_LIST) {
+  fetch(`/${romName}`, { method: "HEAD" })
+    .then((res) => {
+      if (!res.ok) return;
+      const btn = document.createElement("button");
+      btn.textContent = romName.replace(".zip", "").toUpperCase();
+      btn.style.cssText = "padding:6px 16px;background:#1a1a1a;color:#e8003c;border:1px solid #333;cursor:pointer;font-family:inherit;font-size:0.8rem;letter-spacing:0.1em;";
+      btn.addEventListener("click", () => {
+        fetch(`/${romName}`)
+          .then(r => r.blob())
+          .then(blob => {
+            const file = new File([blob], romName, { type: "application/zip" });
+            void handleRomFile(file);
+          });
+      });
+      romButtons.appendChild(btn);
+    })
+    .catch(() => {});
+}
