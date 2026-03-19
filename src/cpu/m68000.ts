@@ -463,23 +463,22 @@ export class M68000 {
 
     // Address error stack frame (14 bytes, 68000 format):
     // Push order (high addr first):
-    //   PC (long) — current PC after instruction fetch
+    //   PC (long) — PC minus 2 (last prefetch word consumed)
     //   SR (word) — status before exception
     //   IR (word) — instruction register (current opcode)
     //   Access address (long) — the faulting address
-    //   Access info (word) — R/W, I/N, function code + IR MSW
-    this.pushLong(this.pc);
+    //   Access info (word) — opcode upper bits + R/W + I/N + function code
+    this.pushLong((this.pc - 2) & 0xFFFFFFFF);
     this.pushWord(oldSR);
     this.pushWord(this.opcode);
     this.pushLong(address);
 
-    // Function code word: contains the in-progress prefetch word in upper bits
-    // and R/W + I/N + FC in lower bits. The real 68000 puts the next prefetch
-    // word here. We approximate with the current prefetch[0].
-    const fcWord = (this.prefetch[0]! & 0xFFE0) |
-      (isWrite ? 0 : 0x10) |  // bit 4: R/W (1=read)
-      0x08 |                    // bit 3: I/N (1=not instruction)
-      0x05;                     // bits 2-0: FC=5 (supervisor data)
+    // Info word: upper 11 bits from opcode, lower 5 bits = R/W + I/N + FC
+    const fc = this.isSupervisor() ? 5 : 1; // supervisor data / user data
+    const fcWord = (this.opcode & 0xFFE0) |
+      (isWrite ? 0 : 0x10) |  // bit 4: R/W (1=read, 0=write)
+      0x00 |                    // bit 3: I/N (0=data access)
+      fc;                       // bits 2-0: function code
     this.pushWord(fcWord);
 
     this.pc = this.bus.read32(VEC_ADDRESS_ERROR * 4);
@@ -564,9 +563,9 @@ export class M68000 {
       case EA_ADDR_REG:
         return -1; // register direct — no memory address
       case EA_ADDR_IND:
-        return this.a[reg]! & 0xFFFFFF;
+        return this.a[reg]!;
       case EA_ADDR_INC: {
-        const addr = this.a[reg]! & 0xFFFFFF;
+        const addr = this.a[reg]!;
         let inc = size;
         // Byte size on A7 still moves by 2 to keep stack aligned
         if (size === 1 && reg === 7) inc = 2;
@@ -577,11 +576,11 @@ export class M68000 {
         let dec = size;
         if (size === 1 && reg === 7) dec = 2;
         this.a[reg] = (this.a[reg]! - dec) | 0;
-        return this.a[reg]! & 0xFFFFFF;
+        return this.a[reg]!;
       }
       case EA_ADDR_DISP: {
         const disp = signExtend16(this.readImm16());
-        return ((this.a[reg]! + disp) & 0xFFFFFF);
+        return (this.a[reg]! + disp) | 0;
       }
       case EA_ADDR_IDX: {
         return this.computeIndexEA(this.a[reg]!);
@@ -596,16 +595,15 @@ export class M68000 {
   private computeEAOther(reg: number): number {
     switch (reg) {
       case EA_ABS_W: {
-        const addr = signExtend16(this.readImm16());
-        return addr & 0xFFFFFF;
+        return signExtend16(this.readImm16());
       }
       case EA_ABS_L: {
-        return this.readImm32() & 0xFFFFFF;
+        return this.readImm32();
       }
       case EA_PC_DISP: {
         const base = this.pc;
         const disp = signExtend16(this.readImm16());
-        return (base + disp) & 0xFFFFFF;
+        return (base + disp) | 0;
       }
       case EA_PC_IDX: {
         const base = this.pc;
@@ -627,7 +625,7 @@ export class M68000 {
     const idxLong = (ext & 0x0800) !== 0;
     let idx = idxIsAddr ? this.a[idxReg]! : this.d[idxReg]!;
     if (!idxLong) idx = signExtend16(idx & 0xFFFF);
-    return ((baseReg + disp + idx) & 0xFFFFFF);
+    return (baseReg + disp + idx) | 0;
   }
 
   private computeIndexEAFromBase(base: number): number {
@@ -638,7 +636,7 @@ export class M68000 {
     const idxLong = (ext & 0x0800) !== 0;
     let idx = idxIsAddr ? this.a[idxReg]! : this.d[idxReg]!;
     if (!idxLong) idx = signExtend16(idx & 0xFFFF);
-    return ((base + disp + idx) & 0xFFFFFF);
+    return (base + disp + idx) | 0;
   }
 
   // Read a value from an effective address
@@ -2736,7 +2734,8 @@ export class M68000 {
     const mode = (op >> 3) & 7;
     const reg = op & 7;
     const addr = this.computeEA(mode, reg, 2);
-    let val = this.bus.read16(addr);
+    let val = this.readFromAddr(addr, 2);
+    if (this.addressError) return;
 
     if (dr === 0) {
       // Right
@@ -2756,7 +2755,7 @@ export class M68000 {
       }
     }
 
-    this.bus.write16(addr, val & 0xFFFF);
+    this.writeToAddr(addr, 2, val);
     this.cycles += 8;
   }
 
@@ -2835,10 +2834,19 @@ export class M68000 {
     else if (size === 2) v = signExtend16(val & 0xFFFF);
     else v = val | 0;
 
-    for (let i = 0; i < count; i++) {
+    const sizeBits = size * 8;
+    const effectiveCount = Math.min(count, sizeBits);
+
+    for (let i = 0; i < effectiveCount; i++) {
       this.flagC = (v & 1) !== 0;
       this.flagX = this.flagC;
       v = v >> 1; // arithmetic shift preserves sign
+    }
+
+    // Beyond operand width, no more original bits to shift out
+    if (count > sizeBits) {
+      this.flagC = false;
+      this.flagX = false;
     }
 
     const result = v & mask;
