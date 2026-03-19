@@ -113,6 +113,81 @@ export class SpriteSheetManager {
     this.lastPaletteBase = -1;
   }
 
+  /**
+   * Get a data URL for a multi-tile sprite (nx * ny tiles of 16x16).
+   * Composes sub-tiles using MAME formula: (code & ~0xF) + ((code + nxs) & 0xF) + 0x10 * nys
+   */
+  getMultiTileUrl(
+    baseCode: number,
+    nx: number,
+    ny: number,
+    paletteIndex: number,
+    vram: Uint8Array,
+    paletteBase: number,
+  ): string {
+    const key = `multi:${baseCode}:${nx}x${ny}:${paletteIndex}`;
+    const cached = this.cache.get(key);
+    if (cached) return cached;
+
+    // Check palette hash
+    const paletteHash = this.hashPaletteVram(vram, paletteBase);
+    if (paletteBase !== this.lastPaletteBase || paletteHash !== this.lastPaletteHash) {
+      this.paletteCache.clear();
+      this.cache.clear();
+      this.lastPaletteBase = paletteBase;
+      this.lastPaletteHash = paletteHash;
+    }
+
+    let palette = this.paletteCache.get(paletteIndex);
+    if (!palette) {
+      palette = this.decodePalette(paletteIndex, vram, paletteBase);
+      this.paletteCache.set(paletteIndex, palette);
+    }
+
+    const w = nx * 16;
+    const h = ny * 16;
+    this.canvas.width = w;
+    this.canvas.height = h;
+    const imageData = this.ctx.createImageData(w, h);
+    const pixels = imageData.data;
+    const gfx = this.gfxRom;
+    const gfxLen = gfx.length;
+    const rowBuf = this.rowBuf;
+
+    for (let nys = 0; nys < ny; nys++) {
+      for (let nxs = 0; nxs < nx; nxs++) {
+        const subCode = (baseCode & ~0x0F) + ((baseCode + nxs) & 0x0F) + 0x10 * nys;
+        const charBase = subCode * 128; // CHAR_SIZE_16
+        const offsetX = nxs * 16;
+        const offsetY = nys * 16;
+
+        for (let ty = 0; ty < 16; ty++) {
+          for (let group = 0; group < 2; group++) {
+            const planeBase = charBase + ty * 8 + group * 4;
+            if (planeBase + 3 >= gfxLen) continue;
+            decodeRow(gfx[planeBase]!, gfx[planeBase + 1]!, gfx[planeBase + 2]!, gfx[planeBase + 3]!, rowBuf, 0);
+            for (let px = 0; px < 8; px++) {
+              const colorIdx = rowBuf[px]!;
+              const [r, g, b, a] = palette[colorIdx]!;
+              const screenX = offsetX + group * 8 + px;
+              const screenY = offsetY + ty;
+              const pixelOffset = (screenY * w + screenX) * 4;
+              pixels[pixelOffset] = r;
+              pixels[pixelOffset + 1] = g;
+              pixels[pixelOffset + 2] = b;
+              pixels[pixelOffset + 3] = a;
+            }
+          }
+        }
+      }
+    }
+
+    this.ctx.putImageData(imageData, 0, 0);
+    const url = this.canvas.toDataURL();
+    this.cache.set(key, url);
+    return url;
+  }
+
   /** For compatibility with GameScreen — not used in per-tile mode. */
   getSheet(
     _tileSize: TileSize,
@@ -142,8 +217,7 @@ export class SpriteSheetManager {
   private hashPaletteVram(vram: Uint8Array, paletteBase: number): number {
     let hash = 0;
     const end = Math.min(paletteBase + 8192, vram.length);
-    // Sample every 4th byte for speed (2048 reads instead of 8192)
-    for (let i = paletteBase; i < end; i += 4) {
+    for (let i = paletteBase; i < end; i++) {
       hash = ((hash << 5) - hash + vram[i]!) | 0;
     }
     return hash;

@@ -28,7 +28,12 @@ export class GameScreen {
   private sheets: SpriteSheetManager | null = null;
   private vram: Uint8Array | null = null;
 
+  private readonly inner: HTMLDivElement;
+  private scale: number;
+
   constructor(parent: HTMLElement, scale: number = 2) {
+    this.scale = scale;
+
     // Root container
     this.root = document.createElement('div');
     this.root.style.cssText = `
@@ -41,8 +46,8 @@ export class GameScreen {
     `;
 
     // Inner container (scaled)
-    const inner = document.createElement('div');
-    inner.style.cssText = `
+    this.inner = document.createElement('div');
+    this.inner.style.cssText = `
       width: ${SCREEN_WIDTH}px;
       height: ${SCREEN_HEIGHT}px;
       position: absolute;
@@ -50,6 +55,7 @@ export class GameScreen {
       transform: scale(${scale});
       transform-origin: top left;
     `;
+    const inner = this.inner;
 
     // Background canvas (scroll layers)
     this.canvas = document.createElement('canvas');
@@ -137,11 +143,26 @@ export class GameScreen {
       }
 
       const sprite = sprites[i]!;
-      const tileUrl = sheets.getTileUrl(sprite.code, 16, sprite.palette, vram, paletteBase);
+      const isMulti = sprite.nx > 1 || sprite.ny > 1;
+
+      const tileUrl = isMulti
+        ? sheets.getMultiTileUrl(sprite.code, sprite.nx, sprite.ny, sprite.palette, vram, paletteBase)
+        : sheets.getTileUrl(sprite.code, 16, sprite.palette, vram, paletteBase);
 
       if (!tileUrl) {
         if (div.style.display !== 'none') div.style.display = 'none';
         continue;
+      }
+
+      // Update size for multi-tile sprites
+      const w = sprite.nx * 16;
+      const h = sprite.ny * 16;
+      if (div.offsetWidth !== w) {
+        div.style.width = w + 'px';
+        div.style.backgroundSize = w + 'px ' + h + 'px';
+      }
+      if (div.offsetHeight !== h) {
+        div.style.height = h + 'px';
       }
 
       div.style.left = sprite.screenX + 'px';
@@ -160,10 +181,37 @@ export class GameScreen {
         div.style.transform = transform;
       }
 
-      div.dataset['sprite'] = `code:${sprite.code} pal:${sprite.palette}`;
+      div.dataset['sprite'] = `code:${sprite.code} pal:${sprite.palette}${isMulti ? ` ${sprite.nx}x${sprite.ny}` : ''}`;
 
       if (div.style.display === 'none') div.style.display = '';
     }
+  }
+
+  /** Resize to fill the given dimensions (call on fullscreen change). */
+  resize(width: number, height: number): void {
+    const scaleX = width / SCREEN_WIDTH;
+    const scaleY = height / SCREEN_HEIGHT;
+    const s = Math.min(scaleX, scaleY); // no floor — fill 100%
+
+    this.root.style.width = width + 'px';
+    this.root.style.height = height + 'px';
+
+    // Center the inner container
+    const scaledW = SCREEN_WIDTH * s;
+    const scaledH = SCREEN_HEIGHT * s;
+    this.inner.style.transform = `scale(${s})`;
+    this.inner.style.left = Math.floor((width - scaledW) / 2) + 'px';
+    this.inner.style.top = Math.floor((height - scaledH) / 2) + 'px';
+  }
+
+  /** Reset to default scale. */
+  resetSize(scale: number = 2): void {
+    this.scale = scale;
+    this.root.style.width = SCREEN_WIDTH * scale + 'px';
+    this.root.style.height = SCREEN_HEIGHT * scale + 'px';
+    this.inner.style.transform = `scale(${scale})`;
+    this.inner.style.left = '0px';
+    this.inner.style.top = '0px';
   }
 
   /** Remove from DOM. */

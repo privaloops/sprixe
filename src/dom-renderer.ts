@@ -74,6 +74,29 @@ window.addEventListener('keydown', (e) => {
   } else if (e.code === 'KeyP' || e.key === 'p' || e.key === 'P') {
     if (emulator.isRunning()) { emulator.pause(); emulator.suspendAudio(); }
     else { emulator.resume(); if (!muted) emulator.resumeAudio(); }
+  } else if (e.code === 'KeyF' || e.key === 'f' || e.key === 'F') {
+    if (document.fullscreenElement) {
+      void document.exitFullscreen();
+    } else {
+      void gameContainer.requestFullscreen();
+    }
+  } else if (e.code === 'Escape') {
+    if (document.fullscreenElement) {
+      void document.exitFullscreen();
+    }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Fullscreen resize
+// ---------------------------------------------------------------------------
+
+document.addEventListener('fullscreenchange', () => {
+  if (!gameScreen) return;
+  if (document.fullscreenElement) {
+    gameScreen.resize(window.innerWidth, window.innerHeight);
+  } else {
+    gameScreen.resetSize(2);
   }
 });
 
