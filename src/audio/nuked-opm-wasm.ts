@@ -50,7 +50,6 @@ export async function initOPMWasm(): Promise<void> {
 export class NukedOPMWasm {
   private timerCallback: ((timerIndex: number) => void) | null = null;
   private irqClearCallback: (() => void) | null = null;
-  private irqAsserted = false;
 
   constructor() {
     if (!wasmModule) {
@@ -64,13 +63,6 @@ export class NukedOPMWasm {
 
   writeData(value: number): void {
     wasmModule!._opm_write_data(value);
-    // Writing register 0x14 can clear timer overflow → IRQ de-asserted.
-    // clockCycles() can't detect this transition since it happens outside
-    // the OPM_Clock loop. Check explicitly after each data write.
-    if (this.irqAsserted && !wasmModule!._opm_read_irq()) {
-      this.irqAsserted = false;
-      if (this.irqClearCallback) this.irqClearCallback();
-    }
   }
 
   readStatus(): number {
@@ -85,17 +77,13 @@ export class NukedOPMWasm {
 
     // flags: bit 0 = IRQ asserted, bit 1 = IRQ cleared
     //        bit 2 = timer A, bit 3 = timer B
-    //
-    // Only handle IRQ assert from clockCycles. The clear (bit 1) is ignored
-    // because Nuked OPM auto-clears timer_irq after one clock cycle, but
-    // the real YM2151 latches IRQ until the Z80 explicitly clears it by
-    // writing to register 0x14. The clear is handled in writeData() instead.
     if (flags & 1) {
-      this.irqAsserted = true;
       if (this.timerCallback) {
         if (flags & 4) this.timerCallback(0); // Timer A
         if (flags & 8) this.timerCallback(1); // Timer B
       }
+    } else if (flags & 2) {
+      if (this.irqClearCallback) this.irqClearCallback();
     }
   }
 
@@ -161,6 +149,5 @@ export class NukedOPMWasm {
 
   reset(): void {
     wasmModule!._opm_reset();
-    this.irqAsserted = false;
   }
 }

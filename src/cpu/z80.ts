@@ -133,6 +133,10 @@ export class Z80 {
   // The Z80 will accept the IRQ as soon as iff1 becomes true (after EI).
   private irqLineAsserted = false;
 
+  // Edge-triggered pending IRQ: set by requestInterrupt(), cleared when
+  // the Z80 accepts it. Survives timer auto-clear unlike irqLineAsserted.
+  private pendingIrq = false;
+
   private readonly bus: Z80BusInterface;
 
   constructor(bus: Z80BusInterface) {
@@ -155,13 +159,15 @@ export class Z80 {
     this.halted = false;
     this.enableInterruptsNext = false;
     this.irqLineAsserted = false;
+    this.pendingIrq = false;
   }
 
   /** Execute one instruction. Returns T-states consumed. */
   step(): number {
     // Check level-triggered IRQ line: if asserted and interrupts enabled,
     // accept the interrupt (same as calling irq() but driven by the line state).
-    if (this.irqLineAsserted && this.iff1) {
+    if ((this.irqLineAsserted || this.pendingIrq) && this.iff1) {
+      this.pendingIrq = false;
       this.irq();
     }
 
@@ -200,6 +206,13 @@ export class Z80 {
    */
   setIrqLine(asserted: boolean): void {
     this.irqLineAsserted = asserted;
+  }
+
+  /** Request a one-shot interrupt (edge-triggered). The Z80 will accept
+   *  it as soon as iff1 becomes true. Unlike setIrqLine, this survives
+   *  auto-clear cycles from hardware that pulses the IRQ line. */
+  requestInterrupt(): void {
+    this.pendingIrq = true;
   }
 
   /** Non-maskable interrupt */
@@ -924,7 +937,6 @@ export class Z80 {
       // =====================================================================
       case 0x76: // HALT
         this.halted = true;
-        this.pc = (this.pc - 1) & 0xFFFF; // re-execute HALT
         return 4;
 
       // Generate all LD r,r' combinations
