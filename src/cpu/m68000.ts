@@ -152,6 +152,9 @@ export class M68000 {
   // Cycles accumulated for current instruction
   private cycles: number = 0;
 
+  // Address error flag — set during readFromAddr/writeToAddr, checked by step()
+  private addressError: boolean = false;
+
   // Instruction tracer
   private _traceLog: string[] = [];
   private _traceEnabled: boolean = false;
@@ -240,9 +243,18 @@ export class M68000 {
       }
     }
 
+    // Reset address error flag
+    this.addressError = false;
+
     // Fetch and decode
     this.opcode = this.prefetchRead();
     this.executeInstruction();
+
+    // If an address error occurred during execution, the exception
+    // handler already set PC/SR/SP. Don't do trace or further processing.
+    if (this.addressError) {
+      return this.cycles;
+    }
 
     // Trace exception after instruction
     if (traceBeforeExec) {
@@ -444,18 +456,31 @@ export class M68000 {
     this.stopped = false;
   }
 
-  private raiseAddressError(address: number): void {
+  private raiseAddressError(address: number, isWrite: boolean = false): void {
     const oldSR = this.sr;
     this.setSupervisorMode(true);
     this.sr &= ~(1 << SR_T);
 
-    // Address error pushes extra info
+    // Address error stack frame (14 bytes, 68000 format):
+    // Push order (high addr first):
+    //   PC (long) — current PC after instruction fetch
+    //   SR (word) — status before exception
+    //   IR (word) — instruction register (current opcode)
+    //   Access address (long) — the faulting address
+    //   Access info (word) — R/W, I/N, function code + IR MSW
     this.pushLong(this.pc);
     this.pushWord(oldSR);
     this.pushWord(this.opcode);
     this.pushLong(address);
-    // Read function code word
-    this.pushWord(0); // simplified
+
+    // Function code word: contains the in-progress prefetch word in upper bits
+    // and R/W + I/N + FC in lower bits. The real 68000 puts the next prefetch
+    // word here. We approximate with the current prefetch[0].
+    const fcWord = (this.prefetch[0]! & 0xFFE0) |
+      (isWrite ? 0 : 0x10) |  // bit 4: R/W (1=read)
+      0x08 |                    // bit 3: I/N (1=not instruction)
+      0x05;                     // bits 2-0: FC=5 (supervisor data)
+    this.pushWord(fcWord);
 
     this.pc = this.bus.read32(VEC_ADDRESS_ERROR * 4);
     this.prefetchFill();
@@ -644,15 +669,19 @@ export class M68000 {
   }
 
   private readFromAddr(addr: number, size: number): number {
+    // If an address error already occurred in this instruction, don't do anything
+    if (this.addressError) return 0;
     // Address error: word/long access to odd address
     if (size > 1 && (addr & 1)) {
+      this.addressError = true;
       this.raiseAddressError(addr);
       return 0;
     }
+    const masked = addr & 0xFFFFFF;
     switch (size) {
-      case 1: return this.bus.read8(addr & 0xFFFFFF);
-      case 2: return this.bus.read16(addr & 0xFFFFFF);
-      case 4: return this.bus.read32(addr & 0xFFFFFF);
+      case 1: return this.bus.read8(masked);
+      case 2: return this.bus.read16(masked);
+      case 4: return this.bus.read32(masked);
       default: return 0;
     }
   }
@@ -677,9 +706,12 @@ export class M68000 {
   }
 
   private writeToAddr(addr: number, size: number, val: number): void {
+    // If an address error already occurred in this instruction, don't do anything
+    if (this.addressError) return;
     // Address error: word/long access to odd address
     if (size > 1 && (addr & 1)) {
-      this.raiseAddressError(addr);
+      this.addressError = true;
+      this.raiseAddressError(addr, true);
       return;
     }
     switch (size) {
@@ -947,6 +979,14 @@ export class M68000 {
           this.cycles += (bit > 15 ? 10 : 8);
           break;
       }
+    } else if (mode === EA_OTHER && reg === EA_IMMEDIATE) {
+      // BTST Dn, #imm — test bit in immediate data
+      const bit = bitNum & 7;
+      const val = this.readImm16() & 0xFF;
+      this.flagZ = ((val >>> bit) & 1) === 0;
+      this.cycles += (type === 0 ? 4 : 8);
+      // Note: BCHG/BCLR/BSET on #imm are illegal on real 68000,
+      // but we handle BTST for correctness
     } else {
       const bit = bitNum & 7;
       const addr = this.computeEA(mode, reg, 1);
@@ -2387,10 +2427,14 @@ export class M68000 {
   private opCMPM(sizeBits: number, dstReg: number, srcReg: number): void {
     const size = this.decodeSize2(sizeBits);
 
+    // A7 byte access uses increment of 2 to keep stack aligned
+    const srcInc = (size === 1 && srcReg === 7) ? 2 : size;
+    const dstInc = (size === 1 && dstReg === 7) ? 2 : size;
+
     const srcAddr = this.a[srcReg]! & 0xFFFFFF;
-    this.a[srcReg] = (this.a[srcReg]! + size) | 0;
+    this.a[srcReg] = (this.a[srcReg]! + srcInc) | 0;
     const dstAddr = this.a[dstReg]! & 0xFFFFFF;
-    this.a[dstReg] = (this.a[dstReg]! + size) | 0;
+    this.a[dstReg] = (this.a[dstReg]! + dstInc) | 0;
 
     const src = this.readFromAddr(srcAddr, size);
     const dst = this.readFromAddr(dstAddr, size);

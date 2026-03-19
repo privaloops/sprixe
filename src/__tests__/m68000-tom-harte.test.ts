@@ -223,25 +223,12 @@ for (const file of testFiles) {
       for (const test of subset) {
         setupCPU(cpu, bus, test);
 
-        // Debug first failing test
-        if (test.name.includes('4a79') && test.name.includes('1')) {
-          const state = cpu.getState();
-          console.log('BEFORE step:', 'PC=', state.pc.toString(16), 'SSP=', (state.a[7]! >>> 0).toString(16));
-        }
-
         try {
           cpu.step();
         } catch (e) {
           failures.push(`${test.name}: EXCEPTION: ${e}`);
           failed++;
           continue;
-        }
-
-        // Debug first failing test
-        if (test.name.includes('4a79') && test.name.includes('1')) {
-          const state = cpu.getState();
-          console.log('AFTER step:', 'PC=', state.pc.toString(16), 'SSP=', (state.a[7]! >>> 0).toString(16), 'SR=', state.sr.toString(16));
-          console.log('RAM 0x7f2:', bus.read8(0x7f2).toString(16), 'RAM 0x7f8:', bus.read8(0x7f8).toString(16));
         }
 
         const errors = verifyCPU(cpu, bus, test);
