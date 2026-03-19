@@ -149,7 +149,7 @@ function App() {
       // Hook into the frame loop: extract state after each frame
       // Throttle DOM updates — emulation runs at 60fps but DOM only needs ~15-20fps
       let frameCounter = 0;
-      const DOM_FRAME_SKIP = 3; // update DOM every 3rd frame = 20fps
+      const DOM_FRAME_SKIP = 4; // update DOM every 4th frame = 15fps
 
       (emulator as unknown as { renderFrame: () => void }).renderFrame = function () {
         frameCounter++;

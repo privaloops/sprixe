@@ -843,9 +843,19 @@ export class CPS1Video {
   /** Render a single scroll layer into a framebuffer (for hybrid DOM/canvas mode). */
   renderSingleLayer(layerIndex: number, framebuffer: Uint8Array): void {
     this.paletteCacheValid = false;
-    // Clear to transparent (RGBA 0,0,0,0)
     framebuffer.fill(0);
     this.renderScrollLayer(layerIndex, framebuffer);
+  }
+
+  /** Render multiple scroll layers (no sprites) into a framebuffer. */
+  renderScrollLayers(layerIds: number[], framebuffer: Uint8Array): void {
+    this.paletteCacheValid = false;
+    framebuffer.fill(0);
+    for (const id of layerIds) {
+      if (this.isLayerEnabled(id)) {
+        this.renderScrollLayer(id, framebuffer);
+      }
+    }
   }
 
   renderFrame(framebuffer: Uint8Array): void {

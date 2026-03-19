@@ -1,14 +1,16 @@
 /**
- * React DOM Renderer for CPS1
+ * React DOM Renderer for CPS1 — Hybrid mode
  *
- * Renders the game as DOM elements instead of canvas pixels.
- * Each sprite and tile is a <div> with CSS background-image/position.
- * Inspectable in DevTools — the game IS the DOM.
+ * Scroll layers (background tiles) → single <canvas> via pixel rasterizer
+ * Sprites → DOM <div> elements, inspectable in DevTools
+ *
+ * ~256 DOM nodes instead of ~2000. The interesting part (sprites) stays
+ * as divs; the boring part (background tiles) is a fast canvas.
  */
 
 import React, { memo, useRef, useEffect } from 'react';
-import type { FrameState, ScrollLayerState, SpriteInfo } from './frame-state';
-import type { SpriteSheetManager, TileSize } from './sprite-sheet';
+import type { FrameState, SpriteInfo } from './frame-state';
+import type { SpriteSheetManager } from './sprite-sheet';
 import type { CPS1Video } from './cps1-video';
 
 // ---------------------------------------------------------------------------
@@ -18,79 +20,54 @@ import type { CPS1Video } from './cps1-video';
 const SCREEN_WIDTH = 384;
 const SCREEN_HEIGHT = 224;
 
-// Layer ID constants (must match cps1-video.ts / frame-state.ts)
+// Layer ID constants
 const LAYER_OBJ = 0;
-const LAYER_SCROLL1 = 1;
-const LAYER_SCROLL2 = 2;
-const LAYER_SCROLL3 = 3;
 
 // ---------------------------------------------------------------------------
-// Tile component
+// Background Canvas — renders all 3 scroll layers via pixel rasterizer
 // ---------------------------------------------------------------------------
 
-interface TileProps {
-  flipX: boolean;
-  flipY: boolean;
-  x: number;
-  y: number;
-  size: number;
-  tileUrl: string;
-}
-
-const Tile = memo(function Tile({
-  x, y, size, flipX, flipY, tileUrl,
-}: TileProps) {
-  let transform = '';
-  if (flipX && flipY) transform = 'scaleX(-1) scaleY(-1)';
-  else if (flipX) transform = 'scaleX(-1)';
-  else if (flipY) transform = 'scaleY(-1)';
-
-  return (
-    <div
-      style={{
-        position: 'absolute',
-        left: x,
-        top: y,
-        width: size,
-        height: size,
-        backgroundImage: `url(${tileUrl})`,
-        backgroundSize: `${size}px ${size}px`,
-        transform: transform || undefined,
-        imageRendering: 'pixelated' as const,
-      }}
-    />
-  );
-});
-
-// ---------------------------------------------------------------------------
-// Row Scroll Canvas — hybrid canvas fallback for scroll2 parallax
-// ---------------------------------------------------------------------------
-
-interface RowScrollCanvasProps {
-  zIndex: number;
+interface BackgroundCanvasProps {
   video: CPS1Video;
+  layerOrder: number[];
+  zIndices: Map<number, number>;
 }
 
-function RowScrollCanvas({ zIndex, video }: RowScrollCanvasProps) {
+function BackgroundCanvas({ video, layerOrder, zIndices }: BackgroundCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
+  const fbRef = useRef<Uint8Array>(new Uint8Array(SCREEN_WIDTH * SCREEN_HEIGHT * 4));
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    if (canvasRef.current && !ctxRef.current) {
+      ctxRef.current = canvasRef.current.getContext('2d')!;
+    }
+  }, []);
 
-    // Render scroll2 layer using the original pixel renderer (row scroll capable)
-    const fb = new Uint8Array(SCREEN_WIDTH * SCREEN_HEIGHT * 4);
-    video.renderSingleLayer(2, fb);
+  // Render scroll layers every frame this component renders
+  const ctx = ctxRef.current;
+  if (ctx) {
+    const fb = fbRef.current;
+    // Render all scroll layers in priority order (skipping sprites)
+    const scrollIds = layerOrder.filter(id => id !== LAYER_OBJ);
+    video.renderScrollLayers(scrollIds, fb);
 
     const imageData = new ImageData(
-      new Uint8ClampedArray(fb.buffer),
+      new Uint8ClampedArray(fb.buffer as ArrayBuffer),
       SCREEN_WIDTH,
       SCREEN_HEIGHT,
     );
     ctx.putImageData(imageData, 0, 0);
-  });
+  }
+
+  // z-index: behind all sprite layers, use the lowest scroll layer slot
+  let minScrollZ = 0;
+  for (const [id, z] of zIndices) {
+    if (id !== LAYER_OBJ) {
+      minScrollZ = Math.min(minScrollZ, z);
+      break;
+    }
+  }
 
   return (
     <canvas
@@ -100,7 +77,7 @@ function RowScrollCanvas({ zIndex, video }: RowScrollCanvasProps) {
       style={{
         position: 'absolute',
         inset: 0,
-        zIndex,
+        zIndex: minScrollZ,
         imageRendering: 'pixelated' as const,
       }}
     />
@@ -108,65 +85,7 @@ function RowScrollCanvas({ zIndex, video }: RowScrollCanvasProps) {
 }
 
 // ---------------------------------------------------------------------------
-// Scroll Layer component
-// ---------------------------------------------------------------------------
-
-interface ScrollLayerProps {
-  layer: ScrollLayerState;
-  zIndex: number;
-  sheets: SpriteSheetManager;
-  vram: Uint8Array;
-  paletteBase: number;
-}
-
-const ScrollLayer = memo(function ScrollLayer({
-  layer, zIndex, sheets, vram, paletteBase,
-}: ScrollLayerProps) {
-  if (!layer.enabled || layer.tiles.length === 0) return null;
-
-  const tileSize = layer.tileSize as TileSize;
-
-  return (
-    <div
-      style={{
-        position: 'absolute',
-        inset: 0,
-        overflow: 'hidden',
-        zIndex,
-      }}
-    >
-      <div
-        style={{
-          position: 'absolute',
-          width: layer.virtualWidth,
-          height: layer.virtualHeight,
-          transform: `translate(${-layer.scrollX}px, ${-layer.scrollY}px)`,
-          willChange: 'transform',
-        }}
-      >
-        {layer.tiles.map((tile) => {
-          const tileUrl = sheets.getTileUrl(tile.code, tileSize, tile.palette, vram, paletteBase);
-          if (!tileUrl) return null;
-
-          return (
-            <Tile
-              key={`${tile.x}-${tile.y}`}
-              flipX={tile.flipX}
-              flipY={tile.flipY}
-              x={tile.x}
-              y={tile.y}
-              size={tileSize}
-              tileUrl={tileUrl}
-            />
-          );
-        })}
-      </div>
-    </div>
-  );
-});
-
-// ---------------------------------------------------------------------------
-// Sprite component
+// Sprite component — each sprite is a <div>
 // ---------------------------------------------------------------------------
 
 interface SpriteProps {
@@ -199,7 +118,7 @@ const Sprite = memo(function Sprite({ sprite, tileUrl }: SpriteProps) {
 });
 
 // ---------------------------------------------------------------------------
-// Sprite Layer component
+// Sprite Layer — all sprites in one container
 // ---------------------------------------------------------------------------
 
 interface SpriteLayerProps {
@@ -249,17 +168,8 @@ interface GameScreenProps {
   scale?: number;
 }
 
-function getLayerData(frame: FrameState, layerId: number): ScrollLayerState | null {
-  switch (layerId) {
-    case LAYER_SCROLL1: return frame.scroll1;
-    case LAYER_SCROLL2: return frame.scroll2;
-    case LAYER_SCROLL3: return frame.scroll3;
-    default: return null;
-  }
-}
-
 export function GameScreen({ frame, sheets, vram, video, scale = 2 }: GameScreenProps) {
-  if (!frame) {
+  if (!frame || !video) {
     return (
       <div style={{
         width: SCREEN_WIDTH * scale,
@@ -268,6 +178,14 @@ export function GameScreen({ frame, sheets, vram, video, scale = 2 }: GameScreen
       }} />
     );
   }
+
+  // Build z-index map from layer order
+  const zIndices = new Map<number, number>();
+  frame.layerOrder.forEach((layerId, slot) => {
+    zIndices.set(layerId, slot);
+  });
+
+  const spriteZIndex = zIndices.get(LAYER_OBJ) ?? 2;
 
   return (
     <div
@@ -291,34 +209,21 @@ export function GameScreen({ frame, sheets, vram, video, scale = 2 }: GameScreen
           transformOrigin: 'top left',
         }}
       >
-        {frame.layerOrder.map((layerId, slot) => {
-          if (layerId === LAYER_OBJ) {
-            return (
-              <SpriteLayer
-                key="sprites"
-                sprites={frame.sprites}
-                zIndex={slot}
-                sheets={sheets}
-                vram={vram}
-                paletteBase={frame.paletteBase}
-              />
-            );
-          }
+        {/* Scroll layers: single canvas (fast pixel rasterizer) */}
+        <BackgroundCanvas
+          video={video}
+          layerOrder={frame.layerOrder}
+          zIndices={zIndices}
+        />
 
-          const layerData = getLayerData(frame, layerId);
-          if (!layerData) return null;
-
-          return (
-            <ScrollLayer
-              key={`scroll-${layerId}`}
-              layer={layerData}
-              zIndex={slot}
-              sheets={sheets}
-              vram={vram}
-              paletteBase={frame.paletteBase}
-            />
-          );
-        })}
+        {/* Sprites: DOM divs (inspectable in DevTools) */}
+        <SpriteLayer
+          sprites={frame.sprites}
+          zIndex={spriteZIndex}
+          sheets={sheets}
+          vram={vram}
+          paletteBase={frame.paletteBase}
+        />
       </div>
     </div>
   );
