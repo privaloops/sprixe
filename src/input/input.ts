@@ -230,14 +230,37 @@ export class InputManager {
       e.preventDefault();
     }
     this.keyState.add(e.code);
+    this.updateDebugOverlay();
   }
 
   private onKeyUp(e: KeyboardEvent): void {
     this.keyState.delete(e.code);
+    this.updateDebugOverlay();
   }
 
   private onBlur(): void {
     this.keyState.clear();
+    this.updateDebugOverlay();
+  }
+
+  // ── Debug overlay: shows currently pressed keys ─────────────────────────
+
+  private debugOverlay: HTMLDivElement | null = null;
+
+  enableDebugOverlay(): void {
+    if (this.debugOverlay) return;
+    this.debugOverlay = document.createElement('div');
+    this.debugOverlay.style.cssText = 'position:fixed;top:8px;left:8px;background:rgba(0,0,0,0.8);color:#0f0;font:12px monospace;padding:6px 10px;z-index:9999;pointer-events:none;min-width:150px;';
+    this.debugOverlay.textContent = 'Keys: (none)';
+    document.body.appendChild(this.debugOverlay);
+  }
+
+  private updateDebugOverlay(): void {
+    if (!this.debugOverlay) return;
+    const keys = [...this.keyState];
+    this.debugOverlay.textContent = keys.length > 0
+      ? `Keys: ${keys.join(' + ')}`
+      : 'Keys: (none)';
   }
 
   private isMappedKey(code: string): boolean {
