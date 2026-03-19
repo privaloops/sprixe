@@ -286,13 +286,18 @@ export class FrameStateExtractor {
     const vram = this.vram;
     const tiles: TileInfo[] = [];
 
-    // Compute visible tiles
+    // Compute visible tiles — position in SCREEN space (not tilemap virtual space)
+    // This avoids wrapping issues when the scroll crosses the 64-tile boundary.
     const vxStart = (scrollX & 0xFFFF) % virtualW;
     const vyStart = (scrollY & 0xFFFF) % virtualH;
     const startTileCol = (vxStart / tileW) | 0;
     const startTileRow = (vyStart / tileW) | 0;
     const numTileCols = ((SCREEN_WIDTH / tileW) | 0) + 2;
     const numTileRows = ((SCREEN_HEIGHT / tileW) | 0) + 2;
+
+    // Screen offset of the first tile's top-left corner
+    const firstTileX = -(vxStart % tileW);
+    const firstTileY = -(vyStart % tileW);
 
     for (let tileRowIdx = 0; tileRowIdx < numTileRows; tileRowIdx++) {
       const tileRow = (startTileRow + tileRowIdx) % 64;
@@ -317,13 +322,15 @@ export class FrameStateExtractor {
           palette,
           flipX,
           flipY,
-          x: tileCol * tileW,
-          y: tileRow * tileW,
+          // Screen-space position (no wrapping issues)
+          x: firstTileX + tileColIdx * tileW,
+          y: firstTileY + tileRowIdx * tileW,
         });
       }
     }
 
-    return { scrollX, scrollY, tileSize: tileW, tiles, enabled, virtualWidth: virtualW, virtualHeight: virtualH, useRowScroll: false };
+    // scrollX/Y = 0 since tiles are already in screen space
+    return { scrollX: 0, scrollY: 0, tileSize: tileW, tiles, enabled, virtualWidth: SCREEN_WIDTH, virtualHeight: SCREEN_HEIGHT, useRowScroll: false };
   }
 
   // -------------------------------------------------------------------------
