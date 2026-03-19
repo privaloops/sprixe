@@ -44,9 +44,25 @@ function App() {
     const emulator = new Emulator(canvas);
     emulatorRef.current = emulator;
 
+    // Keyboard shortcuts
+    let muted = false;
+    const onKey = (e: KeyboardEvent) => {
+      const emu = emulatorRef.current;
+      if (!emu) return;
+      if (e.code === 'KeyM' || e.key === 'm' || e.key === 'M') {
+        muted = !muted;
+        if (muted) emu.suspendAudio(); else emu.resumeAudio();
+      } else if (e.code === 'KeyP') {
+        if (emu.isRunning()) { emu.pause(); emu.suspendAudio(); }
+        else { emu.resume(); if (!muted) emu.resumeAudio(); }
+      }
+    };
+    window.addEventListener('keydown', onKey);
+
     return () => {
       emulator.destroy();
       canvas.remove();
+      window.removeEventListener('keydown', onKey);
     };
   }, []);
 
