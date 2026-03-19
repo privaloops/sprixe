@@ -1,10 +1,14 @@
 /**
  * DOM Game Screen — vanilla TypeScript, zero frameworks
  *
- * Scroll layers → single <canvas> via pixel rasterizer
- * Sprites → pool of 256 pre-created <div> elements, updated via direct DOM
+ * Respects CPS-B layer ordering: scroll layers can be behind AND in front
+ * of sprites. Two canvases sandwich the sprite div pool:
  *
- * 60fps. No virtual DOM. No reconciliation. Just style assignments.
+ *   [canvas: scroll layers BEHIND sprites]  z-index: 0
+ *   [div pool: sprites]                     z-index: 1
+ *   [canvas: scroll layers IN FRONT]        z-index: 2
+ *
+ * 60fps. No virtual DOM. Direct style assignments.
  */
 
 import type { FrameStateExtractor } from './frame-state';
@@ -18,10 +22,13 @@ const LAYER_OBJ = 0;
 
 export class GameScreen {
   private readonly root: HTMLDivElement;
-  private readonly canvas: HTMLCanvasElement;
-  private readonly ctx: CanvasRenderingContext2D;
+  private readonly canvasBehind: HTMLCanvasElement;
+  private readonly ctxBehind: CanvasRenderingContext2D;
+  private readonly canvasFront: HTMLCanvasElement;
+  private readonly ctxFront: CanvasRenderingContext2D;
   private readonly spritePool: HTMLDivElement[] = [];
-  private readonly fb: Uint8Array;
+  private readonly fbBehind: Uint8Array;
+  private readonly fbFront: Uint8Array;
 
   private video: CPS1Video | null = null;
   private extractor: FrameStateExtractor | null = null;
@@ -34,7 +41,6 @@ export class GameScreen {
   constructor(parent: HTMLElement, scale: number = 2) {
     this.scale = scale;
 
-    // Root container
     this.root = document.createElement('div');
     this.root.style.cssText = `
       width: ${SCREEN_WIDTH * scale}px;
@@ -45,7 +51,6 @@ export class GameScreen {
       image-rendering: pixelated;
     `;
 
-    // Inner container (scaled)
     this.inner = document.createElement('div');
     this.inner.style.cssText = `
       width: ${SCREEN_WIDTH}px;
@@ -55,46 +60,41 @@ export class GameScreen {
       transform: scale(${scale});
       transform-origin: top left;
     `;
-    const inner = this.inner;
 
-    // Background canvas (scroll layers)
-    this.canvas = document.createElement('canvas');
-    this.canvas.width = SCREEN_WIDTH;
-    this.canvas.height = SCREEN_HEIGHT;
-    this.canvas.style.cssText = `
-      position: absolute;
-      inset: 0;
-      z-index: 0;
-      image-rendering: pixelated;
-    `;
-    this.ctx = this.canvas.getContext('2d')!;
-    this.fb = new Uint8Array(SCREEN_WIDTH * SCREEN_HEIGHT * 4);
+    // Canvas for scroll layers BEHIND sprites
+    this.canvasBehind = document.createElement('canvas');
+    this.canvasBehind.width = SCREEN_WIDTH;
+    this.canvasBehind.height = SCREEN_HEIGHT;
+    this.canvasBehind.style.cssText = 'position:absolute;inset:0;z-index:0;image-rendering:pixelated;';
+    this.ctxBehind = this.canvasBehind.getContext('2d')!;
+    this.fbBehind = new Uint8Array(SCREEN_WIDTH * SCREEN_HEIGHT * 4);
 
     // Sprite container
     const spriteContainer = document.createElement('div');
-    spriteContainer.style.cssText = 'position: absolute; inset: 0; z-index: 1;';
+    spriteContainer.style.cssText = 'position:absolute;inset:0;z-index:1;';
 
-    // Pre-create 256 sprite divs
     for (let i = 0; i < MAX_SPRITES; i++) {
       const div = document.createElement('div');
-      div.style.cssText = `
-        position: absolute;
-        width: 16px; height: 16px;
-        background-size: 16px 16px;
-        image-rendering: pixelated;
-        display: none;
-      `;
+      div.style.cssText = 'position:absolute;width:16px;height:16px;background-size:16px 16px;image-rendering:pixelated;display:none;';
       spriteContainer.appendChild(div);
       this.spritePool.push(div);
     }
 
-    inner.appendChild(this.canvas);
-    inner.appendChild(spriteContainer);
-    this.root.appendChild(inner);
+    // Canvas for scroll layers IN FRONT of sprites
+    this.canvasFront = document.createElement('canvas');
+    this.canvasFront.width = SCREEN_WIDTH;
+    this.canvasFront.height = SCREEN_HEIGHT;
+    this.canvasFront.style.cssText = 'position:absolute;inset:0;z-index:2;image-rendering:pixelated;pointer-events:none;';
+    this.ctxFront = this.canvasFront.getContext('2d')!;
+    this.fbFront = new Uint8Array(SCREEN_WIDTH * SCREEN_HEIGHT * 4);
+
+    this.inner.appendChild(this.canvasBehind);
+    this.inner.appendChild(spriteContainer);
+    this.inner.appendChild(this.canvasFront);
+    this.root.appendChild(this.inner);
     parent.appendChild(this.root);
   }
 
-  /** Set the emulation components (call after ROM load). */
   setComponents(
     video: CPS1Video,
     extractor: FrameStateExtractor,
@@ -107,28 +107,44 @@ export class GameScreen {
     this.vram = vram;
   }
 
-  /** Returns the root DOM element (for layout). */
   getElement(): HTMLDivElement {
     return this.root;
   }
 
-  /** Call once per frame from the emulator loop. */
   updateFrame(): void {
     if (!this.video || !this.extractor || !this.sheets || !this.vram) return;
 
     const frame = this.extractor.extractFrame();
+    const layerOrder = frame.layerOrder;
 
-    // 1. Render scroll layers to canvas
-    const scrollIds = frame.layerOrder.filter(id => id !== LAYER_OBJ);
-    this.video.renderScrollLayers(scrollIds, this.fb);
-    const imageData = new ImageData(
-      new Uint8ClampedArray(this.fb.buffer as ArrayBuffer),
-      SCREEN_WIDTH,
-      SCREEN_HEIGHT,
+    // Find where sprites sit in the layer order
+    const spriteSlot = layerOrder.indexOf(LAYER_OBJ);
+
+    // Layers before sprites → behind canvas
+    const behindIds = layerOrder.slice(0, spriteSlot).filter(id => id !== LAYER_OBJ);
+    // Layers after sprites → front canvas
+    const frontIds = layerOrder.slice(spriteSlot + 1).filter(id => id !== LAYER_OBJ);
+
+    // Render behind layers
+    this.video.renderScrollLayers(behindIds, this.fbBehind);
+    this.ctxBehind.putImageData(
+      new ImageData(new Uint8ClampedArray(this.fbBehind.buffer as ArrayBuffer), SCREEN_WIDTH, SCREEN_HEIGHT),
+      0, 0,
     );
-    this.ctx.putImageData(imageData, 0, 0);
 
-    // 2. Update sprite divs
+    // Render front layers
+    if (frontIds.length > 0) {
+      this.video.renderScrollLayers(frontIds, this.fbFront);
+      this.ctxFront.putImageData(
+        new ImageData(new Uint8ClampedArray(this.fbFront.buffer as ArrayBuffer), SCREEN_WIDTH, SCREEN_HEIGHT),
+        0, 0,
+      );
+      this.canvasFront.style.display = '';
+    } else {
+      this.canvasFront.style.display = 'none';
+    }
+
+    // Update sprite divs
     const sprites = frame.sprites;
     const paletteBase = frame.paletteBase;
     const sheets = this.sheets;
@@ -154,7 +170,6 @@ export class GameScreen {
         continue;
       }
 
-      // Update size for multi-tile sprites
       const w = sprite.nx * 16;
       const h = sprite.ny * 16;
       if (div.offsetWidth !== w) {
@@ -187,16 +202,14 @@ export class GameScreen {
     }
   }
 
-  /** Resize to fill the given dimensions (call on fullscreen change). */
   resize(width: number, height: number): void {
     const scaleX = width / SCREEN_WIDTH;
     const scaleY = height / SCREEN_HEIGHT;
-    const s = Math.min(scaleX, scaleY); // no floor — fill 100%
+    const s = Math.min(scaleX, scaleY);
 
     this.root.style.width = width + 'px';
     this.root.style.height = height + 'px';
 
-    // Center the inner container
     const scaledW = SCREEN_WIDTH * s;
     const scaledH = SCREEN_HEIGHT * s;
     this.inner.style.transform = `scale(${s})`;
@@ -204,7 +217,6 @@ export class GameScreen {
     this.inner.style.top = Math.floor((height - scaledH) / 2) + 'px';
   }
 
-  /** Reset to default scale. */
   resetSize(scale: number = 2): void {
     this.scale = scale;
     this.root.style.width = SCREEN_WIDTH * scale + 'px';
@@ -214,7 +226,6 @@ export class GameScreen {
     this.inner.style.top = '0px';
   }
 
-  /** Remove from DOM. */
   destroy(): void {
     this.root.remove();
   }
