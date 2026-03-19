@@ -1,267 +1,337 @@
-# CPS1-Web — Master Plan
-
-> Émulateur CPS1 (Capcom Play System 1) from scratch dans le browser.
-> TypeScript + WebGPU + WebRTC. Zéro dépendance d'émulation.
+# open-arcade — MASTER PLAN
 
 ## Vision
 
-Un **Fightcade dans le browser** : tu ouvres une URL, tu drag & drop ta ROM, tu joues. Tu partages un lien, ton pote rejoint, vous jouez à Street Fighter II ensemble. Zéro installation.
+Réinterpréter le hardware graphique des bornes d'arcade à travers les primitives du web.
+Chaque sprite est un `<div>`, chaque tile un élément DOM, chaque layer un container CSS.
+Le jeu tourne dans les DevTools.
 
-## Architecture hardware CPS1
+Premier jeu cible : **Street Fighter II** (sf2).
+
+---
+
+## Architecture
 
 ```
-┌─────────────────────────────────────────────┐
-│                  CPS1 Board                 │
-│                                             │
-│  ┌──────────┐    ┌──────────┐               │
-│  │ M68000   │    │   Z80    │               │
-│  │ 10 MHz   │◄──►│ 3.58 MHz │  (son)        │
-│  │ (main)   │    └────┬─────┘               │
-│  └────┬─────┘         │                     │
-│       │           ┌───┴────┐  ┌──────────┐  │
-│       │           │ YM2151 │  │ OKI6295  │  │
-│       │           │ (FM)   │  │ (ADPCM)  │  │
-│       │           └────────┘  └──────────┘  │
-│  ┌────┴─────────────────────────┐           │
-│  │        CPS-A / CPS-B        │           │
-│  │   (custom graphics chips)    │           │
-│  │                              │           │
-│  │  3 scroll layers (tilemaps)  │           │
-│  │  1 sprite layer (objects)    │           │
-│  │  palette (32 palettes x 16)  │           │
-│  │  layer priority control      │           │
-│  └──────────────────────────────┘           │
-│                                             │
-│  ROM banks: program, graphics, audio        │
-└─────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────┐
+│                  Emulation Core                  │
+│  M68000 + Z80 + YM2151 + OKI6295 + Bus + VRAM  │
+│              (inchangé, existant)                │
+└──────────────────────┬──────────────────────────┘
+                       │ lit VRAM + registres CPS-A/B
+                       ▼
+┌─────────────────────────────────────────────────┐
+│              Video State Extractor              │
+│  Extrait les données structurées par frame :    │
+│  - ScrollLayer[] (tiles visibles + positions)   │
+│  - Sprite[] (code, x, y, palette, flip)         │
+│  - Palette[] (couleurs actives)                 │
+│  - LayerOrder (priorités CPS-B)                 │
+└──────────────────────┬──────────────────────────┘
+                       │ données structurées (pas de pixels)
+                       ▼
+┌─────────────────────────────────────────────────┐
+│              React DOM Renderer                  │
+│  Composants React rendus dans le DOM :          │
+│  <GameScreen>                                    │
+│    <ScrollLayer3 style={transform} />            │
+│    <ScrollLayer2 style={transform} />            │
+│    <SpriteLayer />                               │
+│    <ScrollLayer1 style={transform} />  (HUD)     │
+│  </GameScreen>                                   │
+└──────────────────────┬──────────────────────────┘
+                       │
+                       ▼
+              Browser DOM + CSS Compositor
+              (GPU-accelerated transforms)
 ```
 
-## Stack technique
+---
 
-| Composant | Technologie |
-|-----------|-------------|
-| Langage | TypeScript (strict) |
+## Phase 0 : Sprite Sheet Generator
+
+**But :** Convertir les tiles 4bpp du GFX ROM en sprite sheets utilisables en CSS `background-image`.
+
+### Fonctionnement
+
+1. Au chargement de la ROM, décoder les tiles du GFX ROM (existant : `decodeRow()`)
+2. Pour chaque **palette active**, générer un canvas contenant toutes les tiles de cette palette
+3. Convertir en blob URL (`canvas.toBlob()` → `URL.createObjectURL()`)
+4. Résultat : une map `{ [paletteIndex: number]: string }` de blob URLs
+
+### Structure d'une sprite sheet
+
+```
+Tile 0    Tile 1    Tile 2    ...
+┌────┐   ┌────┐   ┌────┐
+│8x8 │   │8x8 │   │8x8 │   ← Scroll1 tiles (8x8)
+└────┘   └────┘   └────┘
+
+┌────────┐┌────────┐
+│ 16x16  ││ 16x16  │              ← Scroll2 + Sprites (16x16)
+└────────┘└────────┘
+
+┌────────────────┐
+│    32x32       │                 ← Scroll3 (32x32)
+└────────────────┘
+```
+
+Organisées en grille, `background-position` sélectionne la tile.
+
+### Optimisation : génération lazy
+
+- Ne pas pré-render les 256 palettes x milliers de tiles
+- Générer à la demande : quand une combo tile+palette apparaît pour la première fois
+- Cache LRU pour limiter la mémoire
+
+---
+
+## Phase 1 : Video State Extractor
+
+**But :** Extraire les données structurées depuis VRAM/registres, sans rendre de pixels.
+
+### Interface de sortie
+
+```typescript
+interface TileInfo {
+  code: number;        // tile code (après bank mapping)
+  palette: number;     // palette index
+  flipX: boolean;
+  flipY: boolean;
+  screenX: number;
+  screenY: number;
+}
+
+interface SpriteInfo {
+  code: number;
+  palette: number;
+  flipX: boolean;
+  flipY: boolean;
+  screenX: number;
+  screenY: number;
+  width: number;       // en tiles (1 pour single, nx pour multi)
+  height: number;
+}
+
+interface ScrollLayerState {
+  scrollX: number;
+  scrollY: number;
+  tiles: TileInfo[];
+  enabled: boolean;
+}
+
+interface FrameState {
+  scroll1: ScrollLayerState;
+  scroll2: ScrollLayerState;
+  scroll3: ScrollLayerState;
+  sprites: SpriteInfo[];
+  layerOrder: number[];
+}
+```
+
+### Implémentation
+
+Refactorer `cps1-video.ts` : extraire la logique de parcours des tilemaps et sprites dans des méthodes qui retournent `FrameState` au lieu de rasteriser dans un framebuffer.
+
+Le code de parcours (tilemap scan, bank mapping, scroll registers) est réutilisé tel quel. On supprime juste la partie pixel-level (`decodeRow`, `fb32[idx] = ...`).
+
+---
+
+## Phase 2 : React DOM Renderer
+
+### Composants
+
+```
+<GameScreen>                    ← position: relative, 384x224, overflow: hidden
+  <Layer key={order[0]}>        ← z-index: 0
+  <Layer key={order[1]}>        ← z-index: 1
+  <Layer key={order[2]}>        ← z-index: 2
+  <Layer key={order[3]}>        ← z-index: 3
+</GameScreen>
+```
+
+#### `<Tile>` — le building block
+
+```tsx
+const Tile = React.memo(({ code, palette, x, y, size, flipX, flipY }) => (
+  <div style={{
+    position: 'absolute',
+    left: x,
+    top: y,
+    width: size,
+    height: size,
+    backgroundImage: `url(${spriteSheets[palette]})`,
+    backgroundPosition: tileToBackgroundPosition(code, size),
+    transform: getFlipTransform(flipX, flipY),
+    imageRendering: 'pixelated',
+  }} />
+));
+```
+
+#### `<ScrollLayer>` — scrolling = transform sur le container
+
+```tsx
+<div style={{
+  position: 'absolute',
+  inset: 0,
+  transform: `translate(${-scrollX}px, ${-scrollY}px)`,
+  willChange: 'transform',
+}}>
+  {tiles.map(tile => <Tile key={`${col}-${row}`} {...tile} />)}
+</div>
+```
+
+#### `<Sprite>` — positionnement absolu dans l'écran
+
+```tsx
+const Sprite = React.memo(({ sprite }) => (
+  <div style={{
+    position: 'absolute',
+    left: sprite.screenX,
+    top: sprite.screenY,
+    width: sprite.width * 16,
+    height: sprite.height * 16,
+    backgroundImage: `url(${spriteSheets[sprite.palette]})`,
+    backgroundPosition: tileToBackgroundPosition(sprite.code, 16),
+    transform: getFlipTransform(sprite.flipX, sprite.flipY),
+    imageRendering: 'pixelated',
+  }} />
+));
+```
+
+### Correspondances hardware → CSS
+
+| Hardware CPS1 | CSS |
+|---------------|-----|
+| Scroll layer X/Y offset | `transform: translate()` sur le container |
+| Tile index dans la VRAM | `background-position` |
+| Flip H/V | `transform: scaleX(-1) scaleY(-1)` |
+| Sprite priority | `z-index` |
+| Layer enable/disable | `display: none` |
+| Palette swap | Swap de sprite sheet blob URL |
+| Tile size 8/16/32 | `width` / `height` |
+| Sprite chaining (multi-tile) | Div parent avec children positionnés |
+| Transparent pen | PNG alpha dans la sprite sheet |
+| Screen shake | `transform: translate()` sur le root |
+
+---
+
+## Phase 3 : Intégration emulator loop
+
+```typescript
+// emulator.ts
+runOneFrame(): void {
+  this.runM68000();
+  this.runZ80Audio();
+
+  const frameState = this.videoExtractor.extractFrame();
+  this.onFrameReady(frameState);  // → React setState
+}
+
+// App.tsx
+const [frame, setFrame] = useState<FrameState | null>(null);
+emulator.onFrameReady = setFrame;
+return <GameScreen frame={frame} spriteSheets={sheets} />;
+```
+
+Option : garder le renderer Canvas/WebGL existant comme fallback. Switch DOM/Canvas via un toggle.
+
+---
+
+## Phase 4 : Multi-tile sprites
+
+Les sprites CPS1 chainent nx * ny tiles de 16x16. En DOM :
+
+```tsx
+<div style={{ position: 'absolute', left: x, top: y, width: nx*16, height: ny*16 }}>
+  {subTiles.map(sub => <div style={{
+    position: 'absolute',
+    left: sub.offsetX,
+    top: sub.offsetY,
+    width: 16, height: 16,
+    backgroundImage: ...,
+    backgroundPosition: ...,
+  }} />)}
+</div>
+```
+
+---
+
+## Phase 5 : Effets CSS bonus
+
+| Effet | CSS | Usage |
+|-------|-----|-------|
+| Hit flash | `filter: brightness(3)` + `@keyframes` | Impact visuel |
+| Pause | `filter: grayscale(1)` sur `<GameScreen>` | Mode pause stylisé |
+| Slow-mo | `transition: transform 0.1s` sur sprites | Ralenti |
+| Scanlines | `::after` + `repeating-linear-gradient` | Look CRT |
+| Sprite glow | `box-shadow` | Highlight persos |
+| Layer isolation | Toggle `visibility` par layer | Debug |
+| Sprite tooltip | `:hover::after` avec `content` | Affiche tile code, palette |
+| CSS transitions | `transition` sur position | Interpolation de mouvement |
+
+---
+
+## Contraintes et optimisations
+
+### Budget DOM
+
+| Element | Quantité max | Note |
+|---------|-------------|------|
+| Scroll1 (8x8) | ~1344 | HUD/texte, peu de changements par frame |
+| Scroll2 (16x16) | ~336 | Background principal |
+| Scroll3 (32x32) | ~84 | Arrière-plan lointain |
+| Sprites | ~256 | Persos, projectiles, effets |
+| **Total** | **~2000** | Faisable avec React.memo |
+
+### React
+
+- `React.memo` sur `<Tile>` et `<Sprite>`
+- Keys stables : `${layerId}-${col}-${row}` / `sprite-${index}`
+- Un seul `setState(frameState)` par frame via rAF
+- Pas de state par tile, tout est top-down
+
+### Palette hot-swap
+
+Quand le jeu change une palette (transitions, fades) :
+1. Détecter via comparaison VRAM palette vs cache
+2. Re-générer la sprite sheet blob URL
+3. React re-render automatique (prop change sur `backgroundImage`)
+
+---
+
+## Stack
+
+| Composant | Techno |
+|-----------|--------|
+| Renderer | React 19 + TypeScript |
 | Build | Vite |
-| CPU 68000 | Interpréteur cycle-accurate TS |
-| CPU Z80 | Interpréteur cycle-accurate TS |
-| Rendu | WebGPU (fallback WebGL2) |
-| Audio FM | YM2151 — synthèse logicielle via AudioWorklet |
-| Audio ADPCM | OKI6295 — décodage ADPCM via AudioWorklet |
-| Netplay | WebRTC DataChannels (peer-to-peer) |
-| Signaling | Petit serveur WebSocket (matchmaking) |
-| UI | HTML/CSS vanilla (pas de framework) |
+| State | `useState` + `useRef` |
+| Sprite sheets | Canvas API → blob URL |
+| Styling | Inline styles |
+| Core emulation | TypeScript existant |
+| Audio | AudioWorklet existant |
 
-## Modules
+---
 
-### 1. CPU Motorola 68000
+## Plan d'exécution
 
-- Jeu d'instructions complet (56 instructions, ~70 avec variantes d'adressage)
-- Modes d'adressage (8 modes, sous-modes)
-- Registres : D0-D7, A0-A7, SR, PC, SSP, USP
-- Exceptions : interrupts (7 niveaux), bus error, address error, traps
-- Timing cycle-accurate par instruction
-- **Source de référence** : Motorola 68000 Programmer's Reference Manual
+| Phase | Description |
+|-------|-------------|
+| 0 | Sprite Sheet Generator : GFX ROM + palette → blob URL |
+| 1 | Video State Extractor : refactor cps1-video.ts → `FrameState` |
+| 2 | React DOM Renderer : `<ScrollLayer>`, `<Tile>`, `<Sprite>` |
+| 3 | Intégration emulator loop : le jeu tourne en DOM |
+| 4 | Multi-tile sprites : SF2 complet |
+| 5 | Effets CSS + DevTools polish : le wow factor |
 
-### 2. CPU Zilog Z80
+---
 
-- Jeu d'instructions complet (~158 instructions de base + préfixes CB/DD/ED/FD)
-- Registres : AF, BC, DE, HL, IX, IY, SP, PC + shadow registers
-- Modes d'interruption IM0, IM1, IM2
-- Communication avec le 68000 via zone mémoire partagée (sound latch)
-- **Source de référence** : Z80 CPU User Manual
+## Le pitch
 
-### 3. CPS-A / CPS-B (GPU custom)
+Ouvrir SF2 dans Chrome. Ouvrir DevTools. Tab Elements.
+Voir chaque sprite de Ryu comme un `<div>` avec sa `background-position`.
+Hover le hadouken : highlight dans le jeu.
+Modifier le CSS d'un sprite en live : le voir bouger dans le jeu.
 
-- **3 scroll layers** : tilemaps 16x16 ou 32x32, scroll X/Y indépendant
-- **1 object layer** : sprites 16x16 avec chaînage multi-tile
-- **Palette** : 192 entrées de 16 couleurs (12-bit RGB → 4096 couleurs)
-- **Priorité** : contrôle par layer, par tile, par sprite
-- **Row scroll** : scroll horizontal par ligne (effets de déformation)
-- **Registres CPS-A** : contrôle scroll, base addresses des tilemaps
-- **Registres CPS-B** : priorité layers, multiplication ID (protection)
-- **Source de référence** : MAME `src/mame/capcom/cps1.cpp` + Jotego `jtcps1` (Verilog RTL)
-
-### 4. Audio — YM2151 (OPM)
-
-- Synthèse FM 4 opérateurs, 8 canaux
-- Enveloppes ADSR par opérateur
-- LFO (vibrato, tremolo)
-- Noise generator
-- Timer A/B avec interrupts vers Z80
-- Sample rate : 55.93 kHz (natif) → resample vers 44.1/48 kHz
-- **Implémentation** : AudioWorklet dédié, ring buffer vers main thread
-
-### 5. Audio — OKI MSM6295
-
-- Décodage ADPCM 4-bit → PCM
-- 4 voix simultanées
-- Sample rate : 7.575 kHz (variable par clock divider)
-- Mixage dans le même AudioWorklet que le YM2151
-
-### 6. Memory Map & Bus
-
-```
-68000 Memory Map:
-  0x000000-0x3FFFFF : Program ROM (banked)
-  0x800000-0x800xxx : CPS-A registers
-  0x800100-0x8001FF : CPS-B registers
-  0x900000-0x92FFFF : Graphics RAM (VRAM)
-  0xFF0000-0xFFFFFF : Work RAM (64KB)
-  0x800018          : Sound latch (→ Z80)
-
-Z80 Memory Map:
-  0x0000-0x7FFF : Audio ROM
-  0x8000-0xBFFF : Audio ROM (banked)
-  0xD000-0xD7FF : Work RAM
-  0xF000        : OKI6295 data
-  0xF002        : OKI6295 status
-  0xF004        : Sound latch (← 68000)
-  0xF006        : YM2151 address
-  0xF008        : YM2151 data
-```
-
-### 7. Rendu WebGPU
-
-- **Pipeline** : chaque frame, le CPS-A/B produit un framebuffer 384x224
-- **Upload** : texture GPU mise à jour chaque frame (writeTexture)
-- **Shader CRT** (fragment shader) :
-  - Scanlines
-  - Phosphor glow (bloom gaussien)
-  - Courbure écran (barrel distortion)
-  - Vignetting
-  - Sous-pixels RGB
-- **Fallback WebGL2** : même pipeline, shaders GLSL au lieu de WGSL
-
-### 8. Netplay — Rollback via WebRTC
-
-```
-┌──────────┐  WebRTC DataChannel  ┌──────────┐
-│ Player 1 │◄────────────────────►│ Player 2 │
-│          │   (peer-to-peer)     │          │
-│ Émulateur│                      │ Émulateur│
-│ local    │                      │ local    │
-└────┬─────┘                      └────┬─────┘
-     │         ┌──────────┐            │
-     └────────►│ Signaling│◄───────────┘
-               │ Server   │
-               │ (WS)     │
-               └──────────┘
-```
-
-- **Principe rollback** :
-  1. Chaque frame, envoyer ses inputs à l'autre joueur
-  2. Si les inputs distants n'arrivent pas à temps → prédire (répéter le dernier input)
-  3. Quand les vrais inputs arrivent → si différents de la prédiction :
-     - Restaurer le save state du frame concerné
-     - Rejouer les frames avec les bons inputs
-     - Ré-afficher le frame courant
-  4. Max rollback : 7 frames (~116ms à 60fps)
-- **Pré-requis** : save state / restore state instantané (<1ms) — avantage du from scratch
-- **Signaling server** : Deno ou Node, uniquement pour l'échange SDP/ICE (pas de relay)
-
-### 9. ROM Loader
-
-- Drag & drop de fichiers ZIP
-- Parsing des ROM sets (format MAME : multiple fichiers par jeu)
-- Identification par CRC32/SHA1 (table de correspondance)
-- Décodage graphique : désinterleaving des tiles CPS1
-- Stockage en mémoire (pas de persistance serveur)
-- Support des ROM sets parent/clone
-
-### 10. UI
-
-- Page unique, responsive
-- Zone drag & drop centrale
-- Canvas plein écran (ratio 4:3 maintenu)
-- Config clavier / gamepad (Gamepad API)
-- Toggle shaders CRT on/off
-- Netplay : bouton "Créer une partie" → génère un lien partageable
-- Pas de framework, HTML/CSS/TS vanilla
-
-## Phases de développement
-
-### Phase 1 — CPU 68000 + écran noir
-- Interpréteur 68000 complet
-- Tests unitaires par instruction (comparaison avec les timings Motorola)
-- Chargement ROM, exécution jusqu'au premier accès VRAM
-- **Livrable** : les tests passent, le CPU tourne
-
-### Phase 2 — Rendu tilemaps
-- Memory map complet
-- CPS-A registers (scroll, tile base)
-- Décodage des tiles depuis la ROM graphique
-- Rendu des 3 scroll layers dans un canvas 2D (pas encore WebGPU)
-- **Livrable** : on voit le background de SF2
-
-### Phase 3 — Sprites + palette
-- Object layer (sprites)
-- Palette complète (12-bit RGB)
-- Priorité layers/sprites
-- **Livrable** : les personnages apparaissent
-
-### Phase 4 — Input + gameplay
-- Lecture des ports d'entrée (joystick, boutons, coins)
-- Mapping clavier → ports CPS1
-- Gamepad API
-- **Livrable** : on peut jouer (sans son)
-
-### Phase 5 — Z80 + Audio
-- Interpréteur Z80
-- Communication 68000 ↔ Z80 (sound latch)
-- YM2151 FM synthesis (AudioWorklet)
-- OKI6295 ADPCM
-- **Livrable** : le son fonctionne, le jeu est complet en solo
-
-### Phase 6 — WebGPU
-- Migrer le rendu canvas 2D → WebGPU
-- Shaders CRT (scanlines, bloom, courbure)
-- Fallback WebGL2
-- **Livrable** : rendu arcade authentique
-
-### Phase 7 — Netplay rollback
-- Save state / restore state (<1ms)
-- WebRTC DataChannels
-- Algorithme de rollback (inspiré GGPO)
-- Signaling server minimal
-- UI : créer/rejoindre partie via lien
-- **Livrable** : deux joueurs à distance sur SF2
-
-### Phase 8 — Polish
-- Compatibilité élargie (tester les ~130 jeux CPS1)
-- Plein écran
-- Sauvegarde config (localStorage)
-- Save states manuels (IndexedDB)
-- Latence audio minimisée
-- Mobile : contrôles tactiles
-
-## Jeux CPS1 emblématiques (cibles prioritaires)
-
-| Jeu | Année | Intérêt |
-|-----|-------|---------|
-| Street Fighter II: The World Warrior | 1991 | Référence absolue |
-| Street Fighter II': Champion Edition | 1992 | Le plus joué en tournoi rétro |
-| Street Fighter II' Turbo: Hyper Fighting | 1992 | Version compétitive |
-| Final Fight | 1989 | Beat'em up iconique |
-| Ghouls'n Ghosts | 1988 | Platformer, bon test scroll |
-| Strider | 1989 | Multi-scroll complexe |
-| 1941: Counter Attack | 1990 | Shmup, bon test sprites |
-| Mercs | 1990 | Run & gun |
-
-## Sources de référence
-
-| Ressource | Usage |
-|-----------|-------|
-| Motorola 68000 PRM | Jeu d'instructions, timings |
-| Z80 CPU User Manual | Jeu d'instructions Z80 |
-| MAME `src/mame/capcom/cps1.cpp` | Comportement CPS-A/CPS-B |
-| Jotego `jtcps1` (GitHub) | RTL Verilog, description gate-level |
-| YM2151 Application Manual | Synthèse FM, registres |
-| OKI MSM6295 datasheet | ADPCM, registres |
-| GGPO SDK documentation | Algorithme rollback |
-
-## Contraintes
-
-- **Légalité** : aucune ROM incluse. L'utilisateur fournit ses propres fichiers.
-- **Performance** : budget 16ms par frame. Cible <5ms pour laisser de la marge au rollback.
-- **Navigateurs** : Chrome/Edge (WebGPU natif), Firefox/Safari (fallback WebGL2).
-- **Pas de backend** : tout tourne côté client sauf le signaling server pour le netplay.
+**Le premier émulateur arcade où le jeu EST le DOM.**

@@ -840,6 +840,14 @@ export class CPS1Video {
   // Full frame rendering
   // -------------------------------------------------------------------------
 
+  /** Render a single scroll layer into a framebuffer (for hybrid DOM/canvas mode). */
+  renderSingleLayer(layerIndex: number, framebuffer: Uint8Array): void {
+    this.paletteCacheValid = false;
+    // Clear to transparent (RGBA 0,0,0,0)
+    framebuffer.fill(0);
+    this.renderScrollLayer(layerIndex, framebuffer);
+  }
+
   renderFrame(framebuffer: Uint8Array): void {
     if (framebuffer.length < FRAMEBUFFER_SIZE) {
       throw new Error(

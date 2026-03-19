@@ -9,6 +9,7 @@
     "noImplicitOverride": true,
     "exactOptionalPropertyTypes": true,
     "useDefineForClassFields": true,
+    "jsx": "react-jsx",
     "skipLibCheck": true,
     "outDir": "dist",
     "rootDir": "src",
