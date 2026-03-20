@@ -62,6 +62,7 @@ document.querySelectorAll<HTMLInputElement>('input[name="renderer"]').forEach(ra
         gameScreen = new GameScreen(domScreen);
         gameScreen.setComponents(video, extractor, sheets, internals.bus.getVram());
         resizeDomScreen();
+        emulator.setVblankCallback(() => extractor.bufferSprites());
       }
       (emulator as unknown as { renderFrame: () => void }).renderFrame = () => {
         gameScreen?.updateFrame();
@@ -69,6 +70,7 @@ document.querySelectorAll<HTMLInputElement>('input[name="renderer"]').forEach(ra
     } else {
       domScreen.style.display = "none";
       canvas.style.visibility = "visible";
+      emulator.setVblankCallback(null);
       // Restore canvas renderFrame
       const orig = Emulator.prototype as unknown as { renderFrame: () => void };
       (emulator as unknown as { renderFrame: () => void }).renderFrame = orig.renderFrame.bind(emulator);
@@ -280,6 +282,7 @@ async function handleRomFile(file: File): Promise<void> {
       gameScreen = new GameScreen(domScreen);
       gameScreen.setComponents(video, extractor, sheets, internals.bus.getVram());
       resizeDomScreen();
+      emulator.setVblankCallback(() => extractor.bufferSprites());
       (emulator as unknown as { renderFrame: () => void }).renderFrame = () => {
         gameScreen?.updateFrame();
       };

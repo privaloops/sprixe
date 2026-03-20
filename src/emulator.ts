@@ -75,6 +75,7 @@ export class Emulator {
   private readonly renderer: Renderer | WebGLRenderer;
   private readonly input: InputManager;
   private video: CPS1Video | null = null;
+  private _vblankCallback: (() => void) | null = null;
 
   // Audio chips
   private ym2151!: NukedOPMWasm;
@@ -295,6 +296,11 @@ export class Emulator {
     }
   }
 
+  /** Register a callback invoked at VBlank (scanline 240), before IRQ. */
+  setVblankCallback(cb: (() => void) | null): void {
+    this._vblankCallback = cb;
+  }
+
   /** Debug: expose YM2151 for audio testing */
   getYm2151(): NukedOPMWasm { return this.ym2151; }
 
@@ -411,6 +417,9 @@ export class Emulator {
         if (scanline === CPS_VBLANK_LINE) {
           if (this.video) {
             this.video.bufferSprites();
+          }
+          if (this._vblankCallback) {
+            this._vblankCallback();
           }
           this.m68000.assertInterrupt(VBLANK_IRQ_LEVEL);
         }

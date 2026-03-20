@@ -131,13 +131,23 @@ function gfxromBankMapper(
     case GFXTYPE_SCROLL3: shift = 3; break;
   }
   const shiftedCode = code << shift;
+  let hasRangeForType = false;
   for (let i = 0; i < mapperTable.length; i++) {
     const range = mapperTable[i]!;
-    if (shiftedCode >= range.start && shiftedCode <= range.end) {
-      if (range.type & type) {
+    if (range.type & type) {
+      hasRangeForType = true;
+      if (shiftedCode >= range.start && shiftedCode <= range.end) {
         const bankSize = bankSizes[range.bank]!;
         return (bankBases[range.bank]! + (shiftedCode & (bankSize - 1))) >> shift;
       }
+    }
+  }
+  // Sprites always fall back to bank 0; scroll layers without any
+  // range for their type also fall back. Otherwise skip (-1).
+  if (!hasRangeForType || type === GFXTYPE_SPRITES) {
+    const bankSize0 = bankSizes[0]!;
+    if (bankSize0 > 0) {
+      return (bankBases[0]! + (shiftedCode & (bankSize0 - 1))) >> shift;
     }
   }
   return -1;
@@ -212,13 +222,27 @@ export class FrameStateExtractor {
    * Extract the full frame state from current VRAM + registers.
    * Call once per frame, after M68000 has run.
    */
-  extractFrame(): FrameState {
-    // Buffer sprites (like MAME's m_buffered_obj)
+  /**
+   * Buffer sprite data from VRAM. Called at VBlank (scanline 240) BEFORE
+   * the game's IRQ handler changes OBJ_BASE for the next frame.
+   */
+  bufferSprites(): void {
     const objBase = vramBaseOffset(this.cpsaRegs, CPSA_OBJ_BASE, OBJ_SIZE);
     const copyLen = Math.min(OBJ_SIZE, VRAM_SIZE - objBase);
     if (copyLen > 0) {
       this.objBuffer.set(this.vram.subarray(objBase, objBase + copyLen));
     }
+    this._spritesBuffered = true;
+  }
+
+  private _spritesBuffered = false;
+
+  extractFrame(): FrameState {
+    // Buffer sprites if not already done at VBlank
+    if (!this._spritesBuffered) {
+      this.bufferSprites();
+    }
+    this._spritesBuffered = false;
 
     const paletteBase = vramBaseOffset(this.cpsaRegs, CPSA_PALETTE_BASE, PALETTE_ALIGN);
 
