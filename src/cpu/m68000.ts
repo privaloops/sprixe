@@ -487,6 +487,16 @@ export class M68000 {
     this.stopped = false;
   }
 
+  /** Check if a branch/jump target is odd; raise address error if so. */
+  private checkOddPC(addr: number): boolean {
+    if (addr & 1) {
+      this.addressError = true;
+      this.raiseAddressError(addr);
+      return true;
+    }
+    return false;
+  }
+
   private processInterrupt(level: number): void {
     const oldSR = this.sr;
     this.setSupervisorMode(true);
@@ -686,6 +696,7 @@ export class M68000 {
 
   // Write a value to an effective address
   private writeEA(mode: number, reg: number, size: number, val: number): void {
+    if (this.addressError) return;
     if (mode === EA_DATA_REG) {
       switch (size) {
         case 1: this.d[reg] = (this.d[reg]! & 0xFFFFFF00) | (val & 0xFF); break;
@@ -722,27 +733,29 @@ export class M68000 {
   // Get the address for an EA (for LEA, PEA, JMP, JSR, etc.)
   // Only valid for control addressing modes.
   private getControlEA(mode: number, reg: number): number {
+    // NOTE: addresses are NOT masked to 24-bit here. LEA stores the full
+    // 32-bit address in An (used for comparisons like CMPA). The bus
+    // handles 24-bit masking when actually accessing memory.
     switch (mode) {
       case EA_ADDR_IND:
-        return this.a[reg]! & 0xFFFFFF;
+        return this.a[reg]!;
       case EA_ADDR_DISP: {
         const disp = signExtend16(this.readImm16());
-        return ((this.a[reg]! + disp) & 0xFFFFFF);
+        return (this.a[reg]! + disp) | 0;
       }
       case EA_ADDR_IDX:
         return this.computeIndexEA(this.a[reg]!);
       case EA_OTHER:
         switch (reg) {
           case EA_ABS_W: {
-            const addr = signExtend16(this.readImm16());
-            return addr & 0xFFFFFF;
+            return signExtend16(this.readImm16());
           }
           case EA_ABS_L:
-            return this.readImm32() & 0xFFFFFF;
+            return this.readImm32() | 0;
           case EA_PC_DISP: {
             const base = this.pc;
             const disp = signExtend16(this.readImm16());
-            return (base + disp) & 0xFFFFFF;
+            return (base + disp) | 0;
           }
           case EA_PC_IDX: {
             const base = this.pc;
@@ -763,6 +776,7 @@ export class M68000 {
   // =========================================================================
 
   private setLogicFlags(val: number, size: number): void {
+    if (this.addressError) return;
     this.flagV = false;
     this.flagC = false;
     switch (size) {
@@ -782,6 +796,7 @@ export class M68000 {
   }
 
   private setAddFlags(src: number, dst: number, result: number, size: number): void {
+    if (this.addressError) return;
     let s: number, d: number, r: number;
     switch (size) {
       case 1:
@@ -814,6 +829,7 @@ export class M68000 {
   }
 
   private setSubFlags(src: number, dst: number, result: number, size: number): void {
+    if (this.addressError) return;
     let s: number, d: number, r: number;
     switch (size) {
       case 1:
@@ -1544,6 +1560,7 @@ export class M68000 {
       this.cycles += (size === 4 ? 12 : 8);
     }
 
+    if (this.addressError) return;
     this.flagN = false;
     this.flagZ = true;
     this.flagV = false;
@@ -1818,6 +1835,7 @@ export class M68000 {
 
   private opRTS(): void {
     this.pc = this.popLong();
+    if (this.checkOddPC(this.pc)) return;
     this.prefetchFill();
     this.cycles += 16;
   }
@@ -1834,6 +1852,7 @@ export class M68000 {
     const mode = (this.opcode >> 3) & 7;
     const reg = this.opcode & 7;
     const addr = this.getControlEA(mode, reg);
+    if (this.addressError || this.checkOddPC(addr)) return;
     this.pushLong(this.pc);
     this.pc = addr;
     this.prefetchFill();
@@ -1844,6 +1863,7 @@ export class M68000 {
     const mode = (this.opcode >> 3) & 7;
     const reg = this.opcode & 7;
     const addr = this.getControlEA(mode, reg);
+    if (this.addressError || this.checkOddPC(addr)) return;
     this.pc = addr;
     this.prefetchFill();
     this.cycles += 8;
@@ -2039,18 +2059,21 @@ export class M68000 {
       if (cc === 0) {
         // BRA.W
         this.pc = target;
+        if (this.checkOddPC(target)) return;
         this.prefetchFill();
         this.cycles += 10;
       } else if (cc === 1) {
         // BSR.W
         this.pushLong(this.pc);
         this.pc = target;
+        if (this.checkOddPC(target)) return;
         this.prefetchFill();
         this.cycles += 18;
       } else {
         // Bcc.W
         if (this.testCondition(cc)) {
           this.pc = target;
+          if (this.checkOddPC(target)) return;
           this.prefetchFill();
           this.cycles += 10;
         } else {
@@ -2065,18 +2088,21 @@ export class M68000 {
       if (cc === 0) {
         // BRA.B
         this.pc = target;
+        if (this.checkOddPC(target)) return;
         this.prefetchFill();
         this.cycles += 10;
       } else if (cc === 1) {
         // BSR.B
         this.pushLong(this.pc);
         this.pc = target;
+        if (this.checkOddPC(target)) return;
         this.prefetchFill();
         this.cycles += 18;
       } else {
         // Bcc.B
         if (this.testCondition(cc)) {
           this.pc = target;
+          if (this.checkOddPC(target)) return;
           this.prefetchFill();
           this.cycles += 10;
         } else {

@@ -25,8 +25,12 @@ export class Z80Bus implements Z80BusInterface {
   private workRam: Uint8Array;       // 2KB at 0xC000
   private currentBank: number;       // current 16KB bank number for 0x8000-0xBFFF
 
-  // Sound latch byte written by 68000
+  // Sound latches: command queues emulate MAME's synchronize() behavior.
+  // The 68K can write multiple commands per frame; the Z80 consumes one per frame.
   private soundLatchValue: number;
+  private soundLatchQueue: number[];
+  private soundLatch2Value: number;
+  private soundLatch2Queue: number[];
 
   // YM2151 interface
   private ym2151Register: number;
@@ -47,7 +51,10 @@ export class Z80Bus implements Z80BusInterface {
     this.audioRom = new Uint8Array(0);
     this.workRam = new Uint8Array(0x800); // 2KB
     this.currentBank = 0;
-    this.soundLatchValue = 0;
+    this.soundLatchValue = 0xFF;
+    this.soundLatchQueue = [];
+    this.soundLatch2Value = 0xFF;
+    this.soundLatch2Queue = [];
     this.ym2151Register = 0;
     this.ym2151Data = 0;
     this.okiCommand = 0;
@@ -68,7 +75,37 @@ export class Z80Bus implements Z80BusInterface {
   }
 
   setSoundLatch(value: number): void {
-    this.soundLatchValue = value & 0xFF;
+    value = value & 0xFF;
+    if (value !== 0xFF && this.soundLatchQueue.length < 32) {
+      // Real command: queue it. The Z80 will consume one per frame.
+      this.soundLatchQueue.push(value);
+    }
+    // 0xFF (clear) is ignored — the queue handles ordering.
+    // The latch returns 0xFF when the queue is empty.
+  }
+
+  /**
+   * Called by the emulator after each Z80 frame to advance the command queue.
+   * The Z80 consumed the current command during this frame; move to the next.
+   */
+  advanceSoundLatch(): void {
+    if (this.soundLatchQueue.length > 0) {
+      this.soundLatchValue = this.soundLatchQueue.shift()!;
+    } else {
+      this.soundLatchValue = 0xFF;
+    }
+    if (this.soundLatch2Queue.length > 0) {
+      this.soundLatch2Value = this.soundLatch2Queue.shift()!;
+    } else {
+      this.soundLatch2Value = 0xFF;
+    }
+  }
+
+  setSoundLatch2(value: number): void {
+    value = value & 0xFF;
+    if (value !== 0xFF && this.soundLatch2Queue.length < 32) {
+      this.soundLatch2Queue.push(value);
+    }
   }
 
   setYm2151WriteCallback(callback: (register: number, data: number) => void): void {
@@ -162,7 +199,7 @@ export class Z80Bus implements Z80BusInterface {
 
     // 0xF00A : Sound latch 2
     if (address === 0xF00A) {
-      return 0; // sound latch 2 (unused in basic setup)
+      return this.soundLatch2Value;
     }
 
     // Unmapped
@@ -220,8 +257,13 @@ export class Z80Bus implements Z80BusInterface {
     }
 
     // 0xF004 : Bank switch
+    // MAME uses (data & mask) where mask = numBanks - 1.
+    // numBanks = (regionSize - 0x10000) / 0x4000.
+    // For standard 0x18000 ROMs: 2 banks, mask = 0x01.
+    // For larger 0x20000 ROMs (QSound): 4 banks, mask = 0x03.
     if (address === 0xF004) {
-      this.currentBank = value & 0x0F; // 4-bit bank number (max 16 banks)
+      const numBanks = Math.max(1, ((this.audioRom.length - 0x10000) / 0x4000) | 0);
+      this.currentBank = value % numBanks;
       return;
     }
 

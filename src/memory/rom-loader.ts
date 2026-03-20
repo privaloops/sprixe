@@ -84,6 +84,8 @@ export interface CpsBConfig {
   paletteControl: number;
   /** Layer enable masks: [scroll1, scroll2, scroll3, mask3, mask4] */
   layerEnableMask: [number, number, number, number, number];
+  /** Sprite code kludge: if set, sprite codes >= 0x1000 get +0x4000 added (early CPS1) */
+  spriteCodeOffset?: number;
 }
 
 interface GameDef {
@@ -606,6 +608,7 @@ const GAME_DEFS: GameDef[] = [
       priority: [0x28, 0x2a, 0x2c, 0x2e],
       paletteControl: 0x30,
       layerEnableMask: [0x02, 0x04, 0x08, 0x30, 0x30],
+      spriteCodeOffset: 0x4000,
     },
     gfxMapper: {
       bankSizes: [0x8000, 0x2000, 0x2000, 0],
@@ -1891,16 +1894,28 @@ function assembleGraphicsNew(
       f => fileMap.get(f.toLowerCase())
     );
 
-    // Each ROM is romSize bytes. It contributes 2 bytes per 8-byte group.
-    // So each ROM byte-pair at offset j maps to raw[bank.offset + (j/2)*8 + romIndex*2]
-    for (let j = 0; j < bank.romSize; j += 2) {
-      const destBase = bank.offset + (j / 2) * 8;
-      if (destBase + 7 >= def.size) break;
+    const numRoms = bank.files.length;
 
-      for (let r = 0; r < 4; r++) {
-        const rom = roms[r];
-        raw[destBase + r * 2] = rom !== undefined && j < rom.length ? rom[j]! : 0;
-        raw[destBase + r * 2 + 1] = rom !== undefined && j + 1 < rom.length ? rom[j + 1]! : 0;
+    if (numRoms === 8) {
+      // ROM_LOAD64_BYTE: 8 ROMs, each contributes 1 byte per 8-byte group
+      for (let j = 0; j < bank.romSize; j++) {
+        const destBase = bank.offset + j * 8;
+        if (destBase + 7 >= def.size) break;
+        for (let r = 0; r < 8; r++) {
+          const rom = roms[r];
+          raw[destBase + r] = rom !== undefined && j < rom.length ? rom[j]! : 0;
+        }
+      }
+    } else {
+      // ROM_LOAD64_WORD: 4 ROMs, each contributes 2 bytes per 8-byte group
+      for (let j = 0; j < bank.romSize; j += 2) {
+        const destBase = bank.offset + (j / 2) * 8;
+        if (destBase + 7 >= def.size) break;
+        for (let r = 0; r < 4; r++) {
+          const rom = roms[r];
+          raw[destBase + r * 2] = rom !== undefined && j < rom.length ? rom[j]! : 0;
+          raw[destBase + r * 2 + 1] = rom !== undefined && j + 1 < rom.length ? rom[j + 1]! : 0;
+        }
       }
     }
   }
@@ -1973,7 +1988,9 @@ export async function loadRomFromZip(file: File): Promise<RomSet> {
     // ROM_CONTINUE: remaining bytes at offset 0x10000
     if (audioFileData.length > 0x8000) {
       const remaining = audioFileData.subarray(0x8000);
-      audioRom.set(remaining, 0x10000);
+      const spaceAvailable = audioRom.length - 0x10000;
+      const toCopy = Math.min(remaining.length, spaceAvailable);
+      audioRom.set(remaining.subarray(0, toCopy), 0x10000);
     }
   }
   const okiRom = assembleLinear(gameDef.oki.files, fileMap, gameDef.oki.size);

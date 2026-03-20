@@ -5,6 +5,10 @@
  */
 
 import { Emulator } from "./emulator";
+import { FrameStateExtractor } from "./video/frame-state";
+import { SpriteSheetManager } from "./video/sprite-sheet";
+import { GameScreen } from "./video/GameScreen";
+import type { CPS1Video } from "./video/cps1-video";
 
 function getElement<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id);
@@ -13,13 +17,79 @@ function getElement<T extends HTMLElement>(id: string): T {
 }
 
 const canvas = getElement<HTMLCanvasElement>("screen");
+const domScreen = getElement<HTMLDivElement>("dom-screen");
 const dropZone = getElement<HTMLDivElement>("drop-zone");
 const statusEl = getElement<HTMLParagraphElement>("status");
 const fileInput = getElement<HTMLInputElement>("file-input");
+const controlsEl = getElement<HTMLDivElement>("controls");
+const gamepadStatusEl = getElement<HTMLSpanElement>("gamepad-status");
+
+function getRendererMode(): "canvas" | "dom" {
+  const checked = document.querySelector<HTMLInputElement>('input[name="renderer"]:checked');
+  return checked?.value === "dom" ? "dom" : "canvas";
+}
+
+// Listen for renderer toggle changes during gameplay
+document.querySelectorAll<HTMLInputElement>('input[name="renderer"]').forEach(radio => {
+  radio.addEventListener("change", () => {
+    if (!emulator.isRunning()) return;
+    const mode = getRendererMode();
+    if (mode === "dom") {
+      canvas.style.visibility = "hidden";
+      domScreen.style.display = "block";
+      // Set up DOM renderer if not already
+      if (!gameScreen) {
+        const internals = emulator as unknown as {
+          bus: { getVram(): Uint8Array; getCpsaRegisters(): Uint8Array; getCpsbRegisters(): Uint8Array };
+          video: import("./video/cps1-video").CPS1Video;
+        };
+        const video = internals.video;
+        const videoInt = video as unknown as {
+          graphicsRom: Uint8Array;
+          mapperTable: Array<{ type: number; start: number; end: number; bank: number }>;
+          bankSizes: number[];
+          layerCtrlOffset: number;
+          enableScroll1: number; enableScroll2: number; enableScroll3: number;
+        };
+        const sheets = new SpriteSheetManager(videoInt.graphicsRom);
+        const extractor = new FrameStateExtractor(
+          internals.bus.getVram(), internals.bus.getCpsaRegisters(), internals.bus.getCpsbRegisters(),
+          { layerControl: videoInt.layerCtrlOffset, paletteControl: 0x30, priority: [0,0,0,0],
+            layerEnableMask: [videoInt.enableScroll1, videoInt.enableScroll2, videoInt.enableScroll3, 0, 0],
+            idOffset: -1, idValue: 0 },
+          { ranges: videoInt.mapperTable, bankSizes: videoInt.bankSizes as [number, number, number, number] },
+        );
+        gameScreen = new GameScreen(domScreen);
+        gameScreen.setComponents(video, extractor, sheets, internals.bus.getVram());
+        resizeDomScreen();
+      }
+      (emulator as unknown as { renderFrame: () => void }).renderFrame = () => {
+        gameScreen?.updateFrame();
+      };
+    } else {
+      domScreen.style.display = "none";
+      canvas.style.visibility = "visible";
+      // Restore canvas renderFrame
+      const orig = Emulator.prototype as unknown as { renderFrame: () => void };
+      (emulator as unknown as { renderFrame: () => void }).renderFrame = orig.renderFrame.bind(emulator);
+    }
+    setStatus(`Renderer: ${mode}`);
+  });
+});
+
+// Resize DOM renderer to fit container
+function resizeDomScreen(): void {
+  if (!gameScreen) return;
+  const { width, height } = domScreen.getBoundingClientRect();
+  if (width > 0 && height > 0) gameScreen.resize(width, height);
+}
+
+new ResizeObserver(resizeDomScreen).observe(domScreen);
 
 // ── Emulator instance ────────────────────────────────────────────────────────
 
 const emulator = new Emulator(canvas);
+let gameScreen: GameScreen | null = null;
 // Debug: expose for console access
 (window as unknown as Record<string, unknown>).__emu = emulator;
 
@@ -56,10 +126,42 @@ const initAudio = (): void => {
 window.addEventListener("click", initAudio);
 window.addEventListener("keydown", initAudio);
 
+// ── Gamepad status ──────────────────────────────────────────────────────────
+
+window.addEventListener("gamepadconnected", (e) => {
+  gamepadStatusEl.textContent = `Gamepad: ${e.gamepad.id.split("(")[0]!.trim()}`;
+});
+
+window.addEventListener("gamepaddisconnected", () => {
+  const any = navigator.getGamepads().some(gp => gp !== null);
+  if (!any) gamepadStatusEl.textContent = "";
+});
+
 // ── Keyboard shortcuts ──────────────────────────────────────────────────────
 
+// Detect AZERTY and update control labels
+window.addEventListener("keydown", function detectLayout(e) {
+  // On AZERTY, physical KeyQ produces "a", physical KeyA produces "q"
+  if (e.code === "KeyQ" && e.key === "a") {
+    const labels = document.getElementById("btn-labels");
+    if (labels) {
+      labels.innerHTML = '<kbd>Q</kbd><kbd>S</kbd><kbd>D</kbd> LP/MP/HP ' +
+        '<kbd>W</kbd><kbd>X</kbd><kbd>C</kbd> LK/MK/HK';
+    }
+  }
+  window.removeEventListener("keydown", detectLayout);
+}, { once: true });
+
+let muted = false;
+
 window.addEventListener("keydown", (e) => {
-  if (e.code === "KeyP") {
+  const key = e.key.toLowerCase();
+  if (key === "m") {
+    // M = Mute / Unmute
+    muted = !muted;
+    if (muted) { emulator.suspendAudio(); setStatus("Muted"); }
+    else { emulator.resumeAudio(); setStatus("Running"); }
+  } else if (key === "p") {
     // P = Pause / Resume
     if (emulator.isRunning()) {
       emulator.pause();
@@ -67,7 +169,7 @@ window.addEventListener("keydown", (e) => {
       setStatus("Paused (P to resume)");
     } else {
       emulator.resume();
-      emulator.resumeAudio();
+      if (!muted) emulator.resumeAudio();
       setStatus("Running");
     }
   } else if (e.code === "Escape") {
@@ -79,35 +181,43 @@ window.addEventListener("keydown", (e) => {
     emulator.suspendAudio();
     dropZone.classList.remove("hidden");
     canvas.style.visibility = "hidden";
-    setStatus("Ready. P=Pause F=Fullscreen Esc=Quit");
-  } else if (e.code === "KeyF") {
-    // F = Toggle fullscreen on canvas itself
-    if (document.fullscreenElement) {
-      void document.exitFullscreen();
-    } else {
-      void canvas.requestFullscreen();
-    }
+    domScreen.style.display = "none";
+    gameScreen = null;
+    controlsEl.classList.remove("visible");
+    setStatus("");
+  } else if (key === "f") {
+    // F = Toggle fullscreen
+    toggleFullscreen();
   }
 });
 
-// ── Double-tap fullscreen (mobile — iOS has no Fullscreen API on canvas) ─────
+// ── Double-click / double-tap fullscreen ─────────────────────────────────────
+
+const canvasWrapper = getElement<HTMLDivElement>("canvas-wrapper");
+
+function toggleFullscreen(): void {
+  if (document.fullscreenElement) {
+    void document.exitFullscreen();
+  } else if (canvasWrapper.requestFullscreen) {
+    canvasWrapper.requestFullscreen().catch(() => {
+      document.body.classList.toggle("pseudo-fullscreen");
+    });
+  } else {
+    document.body.classList.toggle("pseudo-fullscreen");
+  }
+}
+
+canvasWrapper.addEventListener("dblclick", (e) => {
+  e.preventDefault();
+  toggleFullscreen();
+});
 
 let lastTapTime = 0;
-canvas.addEventListener("touchend", (e) => {
+canvasWrapper.addEventListener("touchend", (e) => {
   const now = Date.now();
   if (now - lastTapTime < 300) {
     e.preventDefault();
-    // Toggle pseudo-fullscreen (or native if supported)
-    if (document.fullscreenElement) {
-      void document.exitFullscreen();
-    } else if (canvas.requestFullscreen) {
-      canvas.requestFullscreen().catch(() => {
-        // Fullscreen API failed (iOS) — use pseudo-fullscreen
-        document.body.classList.toggle("pseudo-fullscreen");
-      });
-    } else {
-      document.body.classList.toggle("pseudo-fullscreen");
-    }
+    toggleFullscreen();
   }
   lastTapTime = now;
 });
@@ -138,9 +248,49 @@ async function handleRomFile(file: File): Promise<void> {
     await emulator.loadRom(file);
     emulator.resumeAudio();
     dropZone.classList.add("hidden");
-    canvas.style.visibility = "visible";
+    controlsEl.classList.add("visible");
+
+    const mode = getRendererMode();
+    if (mode === "dom") {
+      // DOM renderer: hook into emulator internals
+      canvas.style.visibility = "hidden";
+      domScreen.style.display = "block";
+      const internals = emulator as unknown as {
+        bus: { getVram(): Uint8Array; getCpsaRegisters(): Uint8Array; getCpsbRegisters(): Uint8Array };
+        video: CPS1Video;
+      };
+      const video = internals.video;
+      const videoInt = video as unknown as {
+        graphicsRom: Uint8Array;
+        mapperTable: Array<{ type: number; start: number; end: number; bank: number }>;
+        bankSizes: number[];
+        layerCtrlOffset: number;
+        enableScroll1: number;
+        enableScroll2: number;
+        enableScroll3: number;
+      };
+      const sheets = new SpriteSheetManager(videoInt.graphicsRom);
+      const extractor = new FrameStateExtractor(
+        internals.bus.getVram(), internals.bus.getCpsaRegisters(), internals.bus.getCpsbRegisters(),
+        { layerControl: videoInt.layerCtrlOffset, paletteControl: 0x30, priority: [0,0,0,0],
+          layerEnableMask: [videoInt.enableScroll1, videoInt.enableScroll2, videoInt.enableScroll3, 0, 0],
+          idOffset: -1, idValue: 0 },
+        { ranges: videoInt.mapperTable, bankSizes: videoInt.bankSizes as [number, number, number, number] },
+      );
+      gameScreen = new GameScreen(domScreen);
+      gameScreen.setComponents(video, extractor, sheets, internals.bus.getVram());
+      resizeDomScreen();
+      (emulator as unknown as { renderFrame: () => void }).renderFrame = () => {
+        gameScreen?.updateFrame();
+      };
+    } else {
+      // Canvas renderer (default)
+      canvas.style.visibility = "visible";
+      domScreen.style.display = "none";
+    }
+
     emulator.start();
-    setStatus(`Running: ${file.name}`);
+    setStatus(`Running: ${file.name} (${mode})`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     setStatus(`Error: ${msg}`);
@@ -151,7 +301,9 @@ async function handleRomFile(file: File): Promise<void> {
 // ── File picker ──────────────────────────────────────────────────────────────
 
 dropZone.addEventListener("click", () => {
-  fileInput.click();
+  if (!dropZone.classList.contains("hidden")) {
+    fileInput.click();
+  }
 });
 
 fileInput.addEventListener("change", () => {

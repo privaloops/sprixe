@@ -57,9 +57,29 @@
 
       header p {
         font-size: 0.7rem;
-        color: #555;
+        color: #aaa;
         letter-spacing: 0.15em;
         margin-top: 4px;
+      }
+
+      #renderer-toggle {
+        margin-top: 6px;
+        font-size: 0.65rem;
+        color: #888;
+        display: flex;
+        gap: 12px;
+        justify-content: center;
+      }
+
+      #renderer-toggle label {
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 3px;
+      }
+
+      #renderer-toggle input[type="radio"] {
+        accent-color: #e8003c;
       }
 
       /* Canvas wrapper — responsive with CPS1 aspect ratio */
@@ -72,19 +92,39 @@
         border: 1px solid #1a1a1a;
       }
 
-      #screen {
+      #screen, #dom-screen {
         width: 100%;
         height: 100%;
         display: block;
         image-rendering: pixelated;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+
+      #dom-screen {
+        display: none;
+        position: absolute;
+        inset: 0;
+        overflow: hidden;
       }
 
       /* Native fullscreen (desktop) */
-      #screen:fullscreen {
+      #canvas-wrapper:fullscreen {
+        background: #000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      #canvas-wrapper:fullscreen #screen {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+      }
+
+      #canvas-wrapper:fullscreen #dom-screen {
         width: 100vw;
         height: 100vh;
-        object-fit: contain;
-        background: #000;
       }
 
       /* Pseudo-fullscreen for mobile (iOS has no Fullscreen API on canvas) */
@@ -100,7 +140,9 @@
         height: 100dvh;
       }
       body.pseudo-fullscreen header,
-      body.pseudo-fullscreen #status {
+      body.pseudo-fullscreen #status,
+      body.pseudo-fullscreen #controls,
+      body.pseudo-fullscreen #legal {
         display: none;
       }
       body.pseudo-fullscreen #canvas-wrapper {
@@ -109,7 +151,8 @@
         width: 100%;
         height: 100%;
       }
-      body.pseudo-fullscreen #screen {
+      body.pseudo-fullscreen #screen,
+      body.pseudo-fullscreen #dom-screen {
         width: 100%;
         height: 100%;
         object-fit: contain;
@@ -148,14 +191,29 @@
       #drop-zone .label {
         font-size: 0.85rem;
         letter-spacing: 0.15em;
-        color: #888;
+        color: #ccc;
         text-transform: uppercase;
       }
 
       #drop-zone .sublabel {
         font-size: 0.65rem;
-        color: #444;
+        color: #aaa;
         letter-spacing: 0.1em;
+      }
+
+      #drop-zone .format {
+        font-size: 0.6rem;
+        color: #e8003c;
+        letter-spacing: 0.1em;
+        margin-top: 4px;
+      }
+
+      #drop-zone .games {
+        font-size: 0.55rem;
+        color: #999;
+        max-width: 80%;
+        text-align: center;
+        line-height: 1.6;
       }
 
       #file-input {
@@ -164,9 +222,55 @@
 
       #status {
         font-size: 0.7rem;
-        color: #444;
+        color: #aaa;
         letter-spacing: 0.1em;
         min-height: 1em;
+        text-align: center;
+      }
+
+      #gamepad-status {
+        color: #0c0;
+        margin-left: 8px;
+      }
+
+      /* Controls reference — shown when game is running */
+      #controls {
+        display: none;
+        font-size: 0.65rem;
+        color: #bbb;
+        text-align: center;
+        line-height: 1.8;
+        letter-spacing: 0.05em;
+      }
+
+      #controls.visible {
+        display: block;
+      }
+
+      #controls kbd {
+        display: inline-block;
+        border: 1px solid #666;
+        border-radius: 3px;
+        padding: 0 4px;
+        color: #eee;
+        font-family: inherit;
+        font-size: inherit;
+        line-height: 1.6;
+      }
+
+      /* Legal disclaimer */
+      #legal {
+        position: fixed;
+        bottom: 6px;
+        width: 100%;
+        text-align: center;
+        font-size: 0.5rem;
+        color: #777;
+        letter-spacing: 0.05em;
+      }
+
+      #legal a {
+        color: #888;
       }
 
       /* Mobile: smaller controls */
@@ -174,12 +278,14 @@
         #app { padding: 8px; gap: 10px; }
         header h1 { font-size: 1.1rem; }
         header p { font-size: 0.6rem; }
+        #controls { font-size: 0.55rem; }
+        #legal { display: none; }
       }
 
       /* Landscape mobile: maximize canvas height */
       @media (max-height: 500px) and (orientation: landscape) {
         #app { padding: 4px; gap: 4px; }
-        header { display: none; }
+        header, #controls, #legal { display: none; }
         #canvas-wrapper {
           max-width: none;
           height: calc(100dvh - 40px);
@@ -195,20 +301,43 @@
       <header>
         <h1>CPS1-Web</h1>
         <p>Capcom Play System 1 — Browser Emulator</p>
+        <div id="renderer-toggle">
+          <label><input type="radio" name="renderer" value="canvas" checked /> Canvas</label>
+          <label><input type="radio" name="renderer" value="dom" /> DOM</label>
+        </div>
       </header>
 
       <div id="canvas-wrapper">
         <canvas id="screen" width="384" height="224"></canvas>
+        <div id="dom-screen"></div>
 
         <div id="drop-zone">
           <span class="label">Drop ROM ZIP here</span>
           <span class="sublabel">or tap to browse</span>
+          <span class="format">MAME ROM sets (.zip)</span>
+          <span class="games">Street Fighter II &middot; Final Fight &middot; Strider &middot; Ghouls'n Ghosts &middot; Cadillacs &amp; Dinosaurs &middot; Knights of the Round &middot; Captain Commando &middot; The Punisher</span>
         </div>
         <input type="file" id="file-input" accept=".zip" />
       </div>
 
-      <p id="status">P=Pause F=Fullscreen Esc=Quit</p>
+      <div id="controls">
+        <kbd>Arrows</kbd> Move
+        <span id="btn-labels"><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> LP/MP/HP
+        <kbd>Z</kbd><kbd>X</kbd><kbd>C</kbd> LK/MK/HK</span>
+        <kbd>5</kbd> Coin
+        <kbd>1</kbd> Start
+        <kbd>P</kbd> Pause
+        <kbd>M</kbd> Mute
+        <kbd>F</kbd> Fullscreen
+        <kbd>Esc</kbd> Quit
+      </div>
+
+      <p id="status"><span id="gamepad-status"></span></p>
     </div>
+
+    <footer id="legal">
+      This emulator does not include any ROMs. You must provide your own legally obtained ROM files.
+    </footer>
 
     <script type="module" src="/src/index.ts"></script>
   </body>

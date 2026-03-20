@@ -29,7 +29,7 @@ export class Bus implements BusInterface {
   private vram: Uint8Array;          // 0x900000-0x92FFFF (192KB)
   private workRam: Uint8Array;       // 0xFF0000-0xFFFFFF (64KB)
   private _soundLatchCallback: ((value: number) => void) | null = null;
-
+  private _soundLatch2Callback: ((value: number) => void) | null = null;
   // Callback for IRQ acknowledge — set by the emulator to clear interrupt lines
   private irqAckCallback: (() => void) | null = null;
 
@@ -86,6 +86,10 @@ export class Bus implements BusInterface {
     this._soundLatchCallback = cb;
   }
 
+  setSoundLatch2Callback(cb: (value: number) => void): void {
+    this._soundLatch2Callback = cb;
+  }
+
   getWorkRam(): Uint8Array {
     return this.workRam;
   }
@@ -130,10 +134,8 @@ export class Bus implements BusInterface {
       return this.cpsbRegisters[address - 0x800140]!;
     }
 
-    // Sound latch: 0x800180-0x80018F
-    if (address >= 0x800180 && address <= 0x80018F) {
-      return this.soundLatch[address - 0x800180]!;
-    }
+    // Sound latch: 0x800180-0x80018F — WRITE ONLY (MAME: .w() only)
+    // Reads fall through to unmapped (0xFF)
 
     // VRAM: 0x900000-0x92FFFF
     if (address >= 0x900000 && address <= 0x92FFFF) {
@@ -145,8 +147,8 @@ export class Bus implements BusInterface {
       return this.workRam[address - 0xFF0000]!;
     }
 
-    // Unmapped
-    return 0x00;
+    // Unmapped — return 0xFF (open bus, matches MAME)
+    return 0xFF;
   }
 
   read16(address: number): number {
@@ -186,15 +188,39 @@ export class Bus implements BusInterface {
     // CPS-B registers: 0x800140-0x80017F
     if (address >= 0x800140 && address <= 0x80017F) {
       this.cpsbRegisters[address - 0x800140] = value;
+      // CPS-B multiplication hardware (used by SF2CE, SF2HF, etc.)
+      // Two 16-bit factors at offsets 0-1 and 2-3, result at offsets 4-7.
+      // Recompute on any write to the factor registers.
+      const offset = address - 0x800140;
+      if (offset < 4) {
+        const regs = this.cpsbRegisters;
+        const factor1 = (regs[0]! << 8) | regs[1]!;
+        const factor2 = (regs[2]! << 8) | regs[3]!;
+        const result = (factor1 * factor2) >>> 0;
+        // result_lo (lower 16 bits) at offsets 4-5, big-endian
+        regs[4] = (result >> 8) & 0xFF;
+        regs[5] = result & 0xFF;
+        // result_hi (upper 16 bits) at offsets 6-7, big-endian
+        regs[6] = (result >> 24) & 0xFF;
+        regs[7] = (result >> 16) & 0xFF;
+      }
       return;
     }
 
-    // Sound latch: 0x800180-0x80018F
-    if (address >= 0x800180 && address <= 0x80018F) {
+    // Sound latch 1: 0x800180-0x800187
+    if (address >= 0x800180 && address <= 0x800187) {
       this.soundLatch[address - 0x800180] = value;
-      // Immediately forward to Z80 bus (real-time, not frame-synced)
-      if (value !== 0 && this._soundLatchCallback !== null) {
+      if ((address & 1) === 1 && this._soundLatchCallback !== null) {
         this._soundLatchCallback(value);
+      }
+      return;
+    }
+
+    // Sound latch 2: 0x800188-0x80018F
+    if (address >= 0x800188 && address <= 0x80018F) {
+      this.soundLatch[address - 0x800180] = value;
+      if ((address & 1) === 1 && this._soundLatch2Callback !== null) {
+        this._soundLatch2Callback(value);
       }
       return;
     }

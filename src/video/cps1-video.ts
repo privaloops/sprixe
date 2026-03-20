@@ -141,13 +141,28 @@ function gfxromBankMapper(type: number, code: number, mapperTable: GfxRange[], b
 
   const shiftedCode = code << shift;
 
+  let hasRangeForType = false;
+
   for (let i = 0; i < mapperTable.length; i++) {
     const range = mapperTable[i]!;
-    if (shiftedCode >= range.start && shiftedCode <= range.end) {
-      if (range.type & type) {
+    if (range.type & type) {
+      hasRangeForType = true;
+      if (shiftedCode >= range.start && shiftedCode <= range.end) {
         const bankSize = bankSizes[range.bank]!;
         return (bankBases[range.bank]! + (shiftedCode & (bankSize - 1))) >> shift;
       }
+    }
+  }
+
+  // No range matched. If there are NO ranges at all for this tile type,
+  // fall back to bank 0 (default). This is needed for early CPS1 games
+  // (ghouls) whose mappers only define ranges for banked tiles.
+  // If there ARE ranges for this type but the code didn't match, return -1
+  // to skip the tile (prevents garbage rendering in games like Strider).
+  if (!hasRangeForType) {
+    const bankSize = bankSizes[0]!;
+    if (bankSize > 0) {
+      return (bankBases[0]! + (shiftedCode & (bankSize - 1))) >> shift;
     }
   }
 
@@ -216,6 +231,7 @@ export class CPS1Video {
   private mapperTable: GfxRange[];
   private bankSizes: number[];
   private bankBases: number[];
+  private spriteCodeOffset: number;
 
   // Internal priority buffer
   private readonly priorityBuf: Uint8Array;
@@ -257,6 +273,7 @@ export class CPS1Video {
     this.enableScroll1 = cpsBConfig?.layerEnableMask[0] ?? DEFAULT_ENABLE_SCROLL1;
     this.enableScroll2 = cpsBConfig?.layerEnableMask[1] ?? DEFAULT_ENABLE_SCROLL2;
     this.enableScroll3 = cpsBConfig?.layerEnableMask[2] ?? DEFAULT_ENABLE_SCROLL3;
+    this.spriteCodeOffset = cpsBConfig?.spriteCodeOffset ?? 0;
 
     // GFX mapper
     this.mapperTable = gfxMapper?.ranges.map(r => ({
@@ -331,22 +348,37 @@ export class CPS1Video {
     const vram = this.vram;
     const cache = this.paletteCache;
 
-    // Decode up to 256 palettes * 16 colors
-    for (let pal = 0; pal < 256; pal++) {
-      const palOffset = paletteBase + pal * 32;
-      const cacheBase = pal * 16;
+    // CPS1 palette page copy — matches MAME's cps1_build_palette.
+    // The palette control register (CPS-B) determines which of the 6 pages
+    // are active. VRAM is read sequentially; disabled pages are skipped
+    // EXCEPT if no page has been copied yet (the first enabled page always
+    // reads from VRAM offset 0).
+    const ctrl = this.readCpsbReg(this.paletteCtrlOffset);
+    let vramReadPos = paletteBase;
+    let firstCopied = false;
 
-      if (palOffset + 31 >= VRAM_SIZE) {
-        // Fill remaining with transparent black
-        for (let c = 0; c < 16; c++) {
-          cache[cacheBase + c] = 0;
+    for (let page = 0; page < 6; page++) {
+      const cachePageBase = page * 0x200; // 512 colors per page (32 palettes × 16)
+
+      if (ctrl & (1 << page)) {
+        // Page enabled — copy 512 colors from VRAM
+        for (let i = 0; i < 0x200; i++) {
+          const byteOff = vramReadPos + i * 2;
+          if (byteOff + 1 < VRAM_SIZE) {
+            const colorWord = (vram[byteOff]! << 8) | vram[byteOff + 1]!;
+            cache[cachePageBase + i] = this.decodeColorPacked(colorWord);
+          } else {
+            cache[cachePageBase + i] = 0;
+          }
         }
-        continue;
-      }
-
-      for (let c = 0; c < 16; c++) {
-        const colorWord = (vram[palOffset + c * 2]! << 8) | vram[palOffset + c * 2 + 1]!;
-        cache[cacheBase + c] = this.decodeColorPacked(colorWord);
+        vramReadPos += 0x200 * 2; // advance by 512 colors = 1024 bytes
+        firstCopied = true;
+      } else {
+        // Page disabled — skip VRAM data only if we've already copied at least one page
+        if (firstCopied) {
+          vramReadPos += 0x200 * 2;
+        }
+        // Don't clear the cache page — keep previous frame's data
       }
     }
 
@@ -690,8 +722,14 @@ export class CPS1Video {
       const flipX = (colour >> 5) & 1;
       const flipY = (colour >> 6) & 1;
 
+      // Early CPS1 kludge: sprite codes >= 0x1000 need an offset (e.g., ghouls: +0x4000)
+      let adjustedCode = code;
+      if (this.spriteCodeOffset > 0 && code >= 0x1000) {
+        adjustedCode += this.spriteCodeOffset;
+      }
+
       // MAME bank-maps the base code ONCE, then computes sub-tiles from the mapped code.
-      const mappedBaseCode = gfxromBankMapper(GFXTYPE_SPRITES, code, this.mapperTable, this.bankSizes, this.bankBases);
+      const mappedBaseCode = gfxromBankMapper(GFXTYPE_SPRITES, adjustedCode, this.mapperTable, this.bankSizes, this.bankBases);
       if (mappedBaseCode === -1) continue;
 
       if (colour & 0xFF00) {

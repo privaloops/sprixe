@@ -140,6 +140,9 @@ export class Emulator {
     this.bus.setSoundLatchCallback((value: number) => {
       this.z80Bus.setSoundLatch(value);
     });
+    this.bus.setSoundLatch2Callback((value: number) => {
+      this.z80Bus.setSoundLatch2(value);
+    });
 
     // Wire up IRQ acknowledge: when the 68000 processes an interrupt,
     // it performs an IACK cycle that clears all interrupt lines.
@@ -378,7 +381,12 @@ export class Emulator {
       }
     }
 
-    // 4. Run Z80 with interleaved YM2151 clocking.
+    // 4. Advance sound latch queue: feed the next queued command to the Z80.
+    //    This emulates MAME's synchronize() which ensures the Z80 sees each
+    //    command the 68K wrote, even when multiple are written per frame.
+    this.z80Bus.advanceSoundLatch();
+
+    // 5. Run Z80 with interleaved YM2151 clocking.
     //
     // Nuked OPM WASM: clockCycles() clocks the chip and collects samples.
     // Prescale of 2: one OPM_Clock = 2 Z80 T-states.
