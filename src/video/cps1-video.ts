@@ -155,18 +155,15 @@ function gfxromBankMapper(type: number, code: number, mapperTable: GfxRange[], b
   }
 
   // No range matched. If there are NO ranges at all for this tile type,
-  // fall back to bank 0 (default). This is needed for early CPS1 games
-  // (ghouls) whose mappers only define ranges for banked tiles.
-  // If there ARE ranges for this type but the code didn't match, return -1
-  // to skip the tile (prevents garbage rendering in games like Strider).
-  if (!hasRangeForType) {
-    const bankSize = bankSizes[0]!;
-    if (bankSize > 0) {
-      return (bankBases[0]! + (shiftedCode & (bankSize - 1))) >> shift;
-    }
+  // fall back to bank 0 (default). If there ARE ranges but the code
+  // didn't match any, also fall back to bank 0 — MAME's mapper always
+  // returns a valid code (never -1), wrapping into bank 0 for unmapped codes.
+  const bankSize0 = bankSizes[0]!;
+  if (bankSize0 > 0) {
+    return (bankBases[0]! + (shiftedCode & (bankSize0 - 1))) >> shift;
   }
 
-  return -1; // Out of range
+  return -1; // No bank 0 configured
 }
 
 // ---------------------------------------------------------------------------
@@ -722,14 +719,15 @@ export class CPS1Video {
       const flipX = (colour >> 5) & 1;
       const flipY = (colour >> 6) & 1;
 
-      // Early CPS1 kludge: sprite codes >= 0x1000 need an offset (e.g., ghouls: +0x4000)
+      // Early CPS1 kludge: sprite codes >= 0x1000 need an offset (e.g., ghouls: +0x4000).
+      // Applied BEFORE bank mapping (matches MAME's m_sprite_base).
       let adjustedCode = code;
       if (this.spriteCodeOffset > 0 && code >= 0x1000) {
         adjustedCode += this.spriteCodeOffset;
       }
 
-      // MAME bank-maps the base code ONCE, then computes sub-tiles from the mapped code.
       const mappedBaseCode = gfxromBankMapper(GFXTYPE_SPRITES, adjustedCode, this.mapperTable, this.bankSizes, this.bankBases);
+      if (mappedBaseCode === -1) continue;
       if (mappedBaseCode === -1) continue;
 
       if (colour & 0xFF00) {
