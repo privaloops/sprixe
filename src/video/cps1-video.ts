@@ -724,14 +724,10 @@ export class CPS1Video {
       const flipX = (colour >> 5) & 1;
       const flipY = (colour >> 6) & 1;
 
-      // Early CPS1 kludge: sprite codes >= 0x1000 need an offset (e.g., ghouls: +0x4000).
-      // Applied BEFORE bank mapping (matches MAME's m_sprite_base).
-      let adjustedCode = code;
-      if (this.spriteCodeOffset > 0 && code >= 0x1000) {
-        adjustedCode += this.spriteCodeOffset;
-      }
-
-      const mappedBaseCode = gfxromBankMapper(GFXTYPE_SPRITES, adjustedCode, this.mapperTable, this.bankSizes, this.bankBases);
+      // Bank-map the raw sprite code. The mapper's bank ranges + bankBases
+      // handle the mapping to the correct GFX ROM region. No spriteCodeOffset
+      // is needed here — the bank mapper resolves codes via bank 2 for sprites.
+      const mappedBaseCode = gfxromBankMapper(GFXTYPE_SPRITES, code, this.mapperTable, this.bankSizes, this.bankBases);
       if (mappedBaseCode === -1) continue;
       if (mappedBaseCode === -1) continue;
 
