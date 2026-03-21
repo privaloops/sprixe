@@ -77,6 +77,12 @@ document.querySelectorAll<HTMLInputElement>('input[name="renderer"]').forEach(ra
 // Resize DOM renderer to fit container
 function resizeDomScreen(): void {
   if (!gameScreen) return;
+  // In TATE mode, getBoundingClientRect returns post-rotation dimensions.
+  // Use the CSS width/height directly (384x224) instead.
+  if (canvasWrapper.classList.contains("tate")) {
+    gameScreen.resize(384, 224);
+    return;
+  }
   const { width, height } = domScreen.getBoundingClientRect();
   if (width > 0 && height > 0) gameScreen.resize(width, height);
 }

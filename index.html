@@ -95,17 +95,27 @@
 
       #canvas-wrapper.tate {
         aspect-ratio: 224 / 384;
-        max-width: 448px;
+        max-width: 224px;
       }
 
-      #canvas-wrapper.tate #screen,
-      #canvas-wrapper.tate #dom-screen {
+      #canvas-wrapper.tate #screen {
         position: absolute;
-        width: calc(384 / 224 * 100%);
-        height: calc(224 / 384 * 100%);
         top: 50%;
         left: 50%;
+        width: 384px;
+        height: 224px;
         transform: translate(-50%, -50%) rotate(-90deg);
+        image-rendering: pixelated;
+      }
+
+      #canvas-wrapper.tate #dom-screen {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 384px;
+        height: 224px;
+        transform: translate(-50%, -50%) rotate(-90deg);
+        overflow: hidden;
       }
 
       #screen, #dom-screen {
@@ -146,6 +156,7 @@
       /* TATE fullscreen */
       #canvas-wrapper.tate:fullscreen {
         aspect-ratio: auto;
+        max-width: none;
         width: 100vw;
         height: 100vh;
       }
@@ -153,11 +164,13 @@
       #canvas-wrapper.tate:fullscreen #screen,
       #canvas-wrapper.tate:fullscreen #dom-screen {
         position: absolute;
-        transform: translate(-50%, -50%) rotate(-90deg);
         top: 50%;
         left: 50%;
-        width: min(100vh, 100vw * 384 / 224);
-        height: min(100vh * 384 / 224, 100vw);
+        transform: translate(-50%, -50%) rotate(-90deg);
+        /* After -90deg rotation, width becomes visual height and vice versa.
+           We want the rotated image to fit within the viewport. */
+        width: min(100vh, 100vw * (384 / 224));
+        height: min(100vw, 100vh * (224 / 384));
       }
 
       /* Pseudo-fullscreen for mobile (iOS has no Fullscreen API on canvas) */
