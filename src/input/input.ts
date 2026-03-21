@@ -100,6 +100,12 @@ export interface GamepadMapping {
   coin: number;
 }
 
+export type AutofireKey = "button1" | "button2" | "button3" | "button4" | "button5" | "button6";
+const AUTOFIRE_KEYS: AutofireKey[] = ["button1", "button2", "button3", "button4", "button5", "button6"];
+const AUTOFIRE_STORAGE_P1 = "cps1-autofire-p1";
+const AUTOFIRE_STORAGE_P2 = "cps1-autofire-p2";
+const AUTOFIRE_PERIOD = 2; // toggle every N frames (~30Hz at 60fps)
+
 export const DEFAULT_GP_MAPPING: GamepadMapping = {
   up: 12,       // D-pad Up
   down: 13,     // D-pad Down
@@ -127,6 +133,8 @@ export class InputManager {
   private keyState: Set<string> = new Set();
   private mappings: [KeyMapping, KeyMapping];
   private gamepadMappings: [GamepadMapping, GamepadMapping];
+  private autofireFlags: [Set<AutofireKey>, Set<AutofireKey>];
+  private autofireCounter = 0;
   private gamepadIndices: [number | null, number | null] = [null, null];
 
   private boundKeyDown: (e: KeyboardEvent) => void;
@@ -144,6 +152,11 @@ export class InputManager {
     this.gamepadMappings = [
       this.loadGamepadMapping(GP_STORAGE_KEY_P1),
       this.loadGamepadMapping(GP_STORAGE_KEY_P2),
+    ];
+
+    this.autofireFlags = [
+      this.loadAutofire(AUTOFIRE_STORAGE_P1),
+      this.loadAutofire(AUTOFIRE_STORAGE_P2),
     ];
 
     this.boundKeyDown = this.onKeyDown.bind(this);
@@ -221,10 +234,32 @@ export class InputManager {
   }
 
   /**
+   * Set autofire state for a button.
+   */
+  setAutofire(player: number, key: AutofireKey, enabled: boolean): void {
+    const idx = player === 1 ? 1 : 0;
+    if (enabled) {
+      this.autofireFlags[idx].add(key);
+    } else {
+      this.autofireFlags[idx].delete(key);
+    }
+    const storageKey = idx === 0 ? AUTOFIRE_STORAGE_P1 : AUTOFIRE_STORAGE_P2;
+    try { localStorage.setItem(storageKey, JSON.stringify([...this.autofireFlags[idx]])); } catch { /* quota */ }
+  }
+
+  /**
+   * Get autofire flags for a player.
+   */
+  getAutofireFlags(player: number): Set<AutofireKey> {
+    return new Set(this.autofireFlags[player === 1 ? 1 : 0]);
+  }
+
+  /**
    * Update all I/O port bytes on the bus in one call.
    * Call this once per frame before the 68000 runs.
    */
   updateBusPorts(ioPorts: Uint8Array, cpsbRegs?: Uint8Array): void {
+    this.autofireCounter++;
     // IN1 at 0x800000-0x800007 (MAME: map(0x800000, 0x800007).portr("IN1"))
     // 16-bit port: P2 = high byte (even addr), P1 = low byte (odd addr)
     // Mirrored across 4 word positions.
@@ -346,6 +381,15 @@ export class InputManager {
 
   // ── Private: read port logic ──────────────────────────────────────────────
 
+  /** Returns true if a button should register as pressed (respects autofire). */
+  private isPressed(player: number, key: AutofireKey, raw: boolean): boolean {
+    if (!raw) return false;
+    if (this.autofireFlags[player === 1 ? 1 : 0].has(key)) {
+      return Math.floor(this.autofireCounter / AUTOFIRE_PERIOD) % 2 === 0;
+    }
+    return true;
+  }
+
   /**
    * Read the low byte of INx (directions + buttons 1-3).
    * Active-LOW: start with 0xFF, clear bits for pressed buttons.
@@ -357,35 +401,22 @@ export class InputManager {
     const gm = this.gamepadMappings[idx];
     const gp = this.getGamepad(player);
 
-    // Bit 0: Right
-    if (this.keyState.has(m.right) || this.isGamepadRight(gp, gm)) {
-      value &= ~(1 << 0);
-    }
-    // Bit 1: Left
-    if (this.keyState.has(m.left) || this.isGamepadLeft(gp, gm)) {
-      value &= ~(1 << 1);
-    }
-    // Bit 2: Down
-    if (this.keyState.has(m.down) || this.isGamepadDown(gp, gm)) {
-      value &= ~(1 << 2);
-    }
-    // Bit 3: Up
-    if (this.keyState.has(m.up) || this.isGamepadUp(gp, gm)) {
-      value &= ~(1 << 3);
-    }
-    // Bit 4: Button 1 (LP)
-    if (this.keyState.has(m.button1) || this.isGamepadButton(gp, gm.button1)) {
+    // Directions (no autofire)
+    if (this.keyState.has(m.right) || this.isGamepadRight(gp, gm)) value &= ~(1 << 0);
+    if (this.keyState.has(m.left) || this.isGamepadLeft(gp, gm))   value &= ~(1 << 1);
+    if (this.keyState.has(m.down) || this.isGamepadDown(gp, gm))   value &= ~(1 << 2);
+    if (this.keyState.has(m.up) || this.isGamepadUp(gp, gm))       value &= ~(1 << 3);
+
+    // Buttons 1-3 (autofire-aware)
+    if (this.isPressed(player, "button1", this.keyState.has(m.button1) || this.isGamepadButton(gp, gm.button1))) {
       value &= ~(1 << 4);
     }
-    // Bit 5: Button 2 (MP)
-    if (this.keyState.has(m.button2) || this.isGamepadButton(gp, gm.button2)) {
+    if (this.isPressed(player, "button2", this.keyState.has(m.button2) || this.isGamepadButton(gp, gm.button2))) {
       value &= ~(1 << 5);
     }
-    // Bit 6: Button 3 (HP)
-    if (this.keyState.has(m.button3) || this.isGamepadButton(gp, gm.button3)) {
+    if (this.isPressed(player, "button3", this.keyState.has(m.button3) || this.isGamepadButton(gp, gm.button3))) {
       value &= ~(1 << 6);
     }
-    // Bit 7: unused — stays 1
 
     return value;
   }
@@ -401,19 +432,15 @@ export class InputManager {
     const gm = this.gamepadMappings[idx];
     const gp = this.getGamepad(player);
 
-    // Bit 0: Button 4 (LK)
-    if (this.keyState.has(m.button4) || this.isGamepadButton(gp, gm.button4)) {
+    if (this.isPressed(player, "button4", this.keyState.has(m.button4) || this.isGamepadButton(gp, gm.button4))) {
       value &= ~(1 << 0);
     }
-    // Bit 1: Button 5 (MK)
-    if (this.keyState.has(m.button5) || this.isGamepadButton(gp, gm.button5)) {
+    if (this.isPressed(player, "button5", this.keyState.has(m.button5) || this.isGamepadButton(gp, gm.button5))) {
       value &= ~(1 << 1);
     }
-    // Bit 2: Button 6 (HK)
-    if (this.keyState.has(m.button6) || this.isGamepadButton(gp, gm.button6)) {
+    if (this.isPressed(player, "button6", this.keyState.has(m.button6) || this.isGamepadButton(gp, gm.button6))) {
       value &= ~(1 << 2);
     }
-    // Bits 3-7: unused — stay 1
 
     return value;
   }
@@ -476,6 +503,21 @@ export class InputManager {
       }
     } catch { /* corrupted data */ }
     return { ...DEFAULT_GP_MAPPING };
+  }
+
+  private loadAutofire(key: string): Set<AutofireKey> {
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw) {
+        const arr = JSON.parse(raw) as unknown[];
+        const valid = new Set<AutofireKey>();
+        for (const v of arr) {
+          if (AUTOFIRE_KEYS.includes(v as AutofireKey)) valid.add(v as AutofireKey);
+        }
+        return valid;
+      }
+    } catch { /* corrupted data */ }
+    return new Set();
   }
 
   // ── Private: gamepad helpers ──────────────────────────────────────────────

@@ -9,7 +9,7 @@ import { CPS1_PARENT_GAMES, ROT270_GAMES } from "./game-catalog";
 import { FrameStateExtractor } from "./video/frame-state";
 import { SpriteSheetManager } from "./video/sprite-sheet";
 import { GameScreen } from "./video/GameScreen";
-import { DEFAULT_GP_MAPPING, type GamepadMapping } from "./input/input";
+import { DEFAULT_GP_MAPPING, type GamepadMapping, type AutofireKey } from "./input/input";
 
 function getElement<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id);
@@ -369,9 +369,14 @@ let listeningKey: MappingKey | null = null;
 let listeningBtn: HTMLButtonElement | null = null;
 let listenRafId = 0;
 
+const AUTOFIRE_ELIGIBLE: Set<string> = new Set(["button1", "button2", "button3", "button4", "button5", "button6"]);
+
 function renderGpModal(): void {
-  const mapping = emulator.getInputManager().getGamepadMapping(0);
+  const input = emulator.getInputManager();
+  const mapping = input.getGamepadMapping(0);
+  const autofireFlags = input.getAutofireFlags(0);
   gpMappingList.innerHTML = "";
+
   for (const row of GP_CONFIG_ROWS) {
     const div = document.createElement("div");
     div.className = "gp-row";
@@ -380,14 +385,36 @@ function renderGpModal(): void {
     label.className = "gp-label";
     label.textContent = row.label;
 
+    const right = document.createElement("div");
+    right.className = "gp-right";
+
     const btn = document.createElement("button");
     btn.className = "gp-btn";
     btn.textContent = gpBtnName(mapping[row.key]);
-    btn.dataset["mappingKey"] = row.key;
     btn.addEventListener("click", () => startListening(row.key, btn));
+    right.appendChild(btn);
+
+    // Autofire checkbox (only for action buttons)
+    if (AUTOFIRE_ELIGIBLE.has(row.key)) {
+      const afKey = row.key as AutofireKey;
+      const afLabel = document.createElement("label");
+      afLabel.className = "gp-autofire" + (autofireFlags.has(afKey) ? " active" : "");
+
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = autofireFlags.has(afKey);
+      cb.addEventListener("change", () => {
+        input.setAutofire(0, afKey, cb.checked);
+        afLabel.classList.toggle("active", cb.checked);
+      });
+
+      afLabel.appendChild(cb);
+      afLabel.appendChild(document.createTextNode("AUTO"));
+      right.appendChild(afLabel);
+    }
 
     div.appendChild(label);
-    div.appendChild(btn);
+    div.appendChild(right);
     gpMappingList.appendChild(div);
   }
 }
@@ -462,7 +489,12 @@ gpOverlay.addEventListener("click", (e) => {
 });
 
 gpResetBtn.addEventListener("click", () => {
-  emulator.getInputManager().setGamepadMapping(0, { ...DEFAULT_GP_MAPPING });
+  const input = emulator.getInputManager();
+  input.setGamepadMapping(0, { ...DEFAULT_GP_MAPPING });
+  // Clear all autofire flags
+  for (const key of AUTOFIRE_ELIGIBLE) {
+    input.setAutofire(0, key as AutofireKey, false);
+  }
   renderGpModal();
 });
 
