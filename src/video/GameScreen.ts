@@ -44,8 +44,8 @@ export class GameScreen {
 
     this.root = document.createElement('div');
     this.root.style.cssText = `
-      width: ${SCREEN_WIDTH * scale}px;
-      height: ${SCREEN_HEIGHT * scale}px;
+      width: 100%;
+      height: 100%;
       position: relative;
       overflow: hidden;
       background: #000;
@@ -211,21 +211,9 @@ export class GameScreen {
     const s = Math.min(scaleX, scaleY);
 
     this.scale = s;
-    this.root.style.width = width + 'px';
-    this.root.style.height = height + 'px';
-
     this.inner.style.transform = `scale(${s})`;
     this.inner.style.left = Math.floor((width - SCREEN_WIDTH * s) / 2) + 'px';
     this.inner.style.top = Math.floor((height - SCREEN_HEIGHT * s) / 2) + 'px';
-  }
-
-  resetSize(scale: number = 2): void {
-    this.scale = scale;
-    this.root.style.width = SCREEN_WIDTH * scale + 'px';
-    this.root.style.height = SCREEN_HEIGHT * scale + 'px';
-    this.inner.style.transform = `scale(${scale})`;
-    this.inner.style.left = '0px';
-    this.inner.style.top = '0px';
   }
 
   destroy(): void {
