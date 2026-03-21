@@ -327,6 +327,101 @@
         }
         #status { font-size: 0.6rem; }
       }
+      /* Gamepad config modal */
+      #gamepad-modal-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.85);
+        z-index: 10000;
+        align-items: center;
+        justify-content: center;
+      }
+
+      #gamepad-modal-overlay.open {
+        display: flex;
+      }
+
+      #gamepad-modal {
+        background: #111;
+        border: 1px solid #333;
+        padding: 20px 24px;
+        max-width: 360px;
+        width: 90%;
+        font-family: "Courier New", Courier, monospace;
+        color: #ccc;
+      }
+
+      #gamepad-modal h2 {
+        font-size: 0.9rem;
+        color: #e8003c;
+        text-transform: uppercase;
+        letter-spacing: 0.15em;
+        margin-bottom: 14px;
+        text-align: center;
+      }
+
+      #gamepad-modal .gp-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 5px 0;
+        border-bottom: 1px solid #222;
+      }
+
+      #gamepad-modal .gp-label {
+        font-size: 0.7rem;
+        color: #aaa;
+      }
+
+      #gamepad-modal .gp-btn {
+        background: #1a1a1a;
+        border: 1px solid #444;
+        color: #e8003c;
+        font-family: inherit;
+        font-size: 0.7rem;
+        padding: 3px 10px;
+        cursor: pointer;
+        min-width: 60px;
+        text-align: center;
+      }
+
+      #gamepad-modal .gp-btn:hover {
+        border-color: #e8003c;
+      }
+
+      #gamepad-modal .gp-btn.listening {
+        color: #ff0;
+        border-color: #ff0;
+        animation: blink 0.6s infinite;
+      }
+
+      @keyframes blink {
+        50% { opacity: 0.4; }
+      }
+
+      #gamepad-modal .gp-actions {
+        display: flex;
+        gap: 8px;
+        justify-content: center;
+        margin-top: 14px;
+      }
+
+      #gamepad-modal .gp-actions button {
+        background: #1a1a1a;
+        border: 1px solid #333;
+        color: #ccc;
+        font-family: inherit;
+        font-size: 0.7rem;
+        padding: 5px 14px;
+        cursor: pointer;
+        letter-spacing: 0.05em;
+      }
+
+      #gamepad-modal .gp-actions button:hover {
+        border-color: #e8003c;
+        color: #e8003c;
+      }
     </style>
   </head>
   <body>
@@ -371,6 +466,18 @@
         <kbd>M</kbd> Mute
         <kbd>F</kbd> Fullscreen
         <kbd>Esc</kbd> Quit
+        <button id="config-btn" style="margin-left:8px;background:#1a1a1a;border:1px solid #444;color:#e8003c;font-family:inherit;font-size:0.65rem;padding:2px 8px;cursor:pointer;vertical-align:middle;">CONFIG</button>
+      </div>
+
+      <div id="gamepad-modal-overlay">
+        <div id="gamepad-modal">
+          <h2>Gamepad Config (P1)</h2>
+          <div id="gp-mapping-list"></div>
+          <div class="gp-actions">
+            <button id="gp-reset-btn">RESET</button>
+            <button id="gp-close-btn">CLOSE</button>
+          </div>
+        </div>
       </div>
 
       <p id="status"><span id="gamepad-status"></span></p>
