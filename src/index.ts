@@ -93,7 +93,10 @@ function resizeDomScreen(): void {
 }
 
 new ResizeObserver(resizeDomScreen).observe(domScreen);
-document.addEventListener("fullscreenchange", () => setTimeout(resizeDomScreen, 50));
+document.addEventListener("fullscreenchange", () => {
+  setTimeout(resizeDomScreen, 100);
+  setTimeout(resizeDomScreen, 300);
+});
 
 // ── Emulator instance ────────────────────────────────────────────────────────
 
