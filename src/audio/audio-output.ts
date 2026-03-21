@@ -24,6 +24,9 @@ const YM2151_SAMPLE_RATE = 55930;
 /** Native OKI6295 sample rate */
 const OKI6295_SAMPLE_RATE = 7575;
 
+/** QSound sample rate: 60 MHz / 2 / 1248 */
+const QSOUND_SAMPLE_RATE = 24038;
+
 /** Ring buffer capacity in stereo sample pairs */
 const RING_BUFFER_SAMPLES = 4096;
 
@@ -311,6 +314,8 @@ export class AudioOutput {
   private ymResamplerL: LinearResampler | null = null;
   private ymResamplerR: LinearResampler | null = null;
   private okiResampler: LinearResampler | null = null;
+  private qsResamplerL: LinearResampler | null = null;
+  private qsResamplerR: LinearResampler | null = null;
 
   /** Scratch buffers (allocated once, reused every frame — zero GC pressure) */
   private ymResampledL: Float32Array = new Float32Array(8192);
@@ -352,6 +357,8 @@ export class AudioOutput {
     this.ymResamplerL = new LinearResampler(YM2151_SAMPLE_RATE, rate);
     this.ymResamplerR = new LinearResampler(YM2151_SAMPLE_RATE, rate);
     this.okiResampler = new LinearResampler(OKI6295_SAMPLE_RATE, rate);
+    this.qsResamplerL = new LinearResampler(QSOUND_SAMPLE_RATE, rate);
+    this.qsResamplerR = new LinearResampler(QSOUND_SAMPLE_RATE, rate);
 
     if (this.context.audioWorklet && typeof SharedArrayBuffer !== 'undefined') {
       await this._initWorklet();
@@ -451,6 +458,44 @@ export class AudioOutput {
       this.ringBuffer.write(mixedL, mixedR, nOut);
     } else if (this.scriptProcessorOutput) {
       this.scriptProcessorOutput.write(mixedL, mixedR, nOut);
+    }
+  }
+
+  /**
+   * Push QSound stereo samples (at 24038 Hz).
+   * Resamples to AudioContext rate and writes to output buffer.
+   */
+  pushQSoundSamples(
+    left: Float32Array,
+    right: Float32Array,
+    count: number,
+  ): void {
+    if (!this._initialized || count <= 0) return;
+
+    // Resample QSound 24038 Hz → context sample rate
+    if (this.ymResampledL.length < count * 4) {
+      this.ymResampledL = new Float32Array(count * 8);
+      this.ymResampledR = new Float32Array(count * 8);
+    }
+    const nL = this.qsResamplerL!.resample(left, count, this.ymResampledL);
+    const nR = this.qsResamplerR!.resample(right, count, this.ymResampledR);
+    const nOut = Math.min(nL, nR);
+
+    if (this._mixedL.length < nOut) {
+      this._mixedL = new Float32Array(nOut * 2);
+      this._mixedR = new Float32Array(nOut * 2);
+    }
+
+    // QSound is stereo — apply volume and soft limiter
+    for (let i = 0; i < nOut; i++) {
+      this._mixedL[i] = this._clip((this.ymResampledL[i] ?? 0) * this._volume);
+      this._mixedR[i] = this._clip((this.ymResampledR[i] ?? 0) * this._volume);
+    }
+
+    if (this.ringBuffer) {
+      this.ringBuffer.write(this._mixedL, this._mixedR, nOut);
+    } else if (this.scriptProcessorOutput) {
+      this.scriptProcessorOutput.write(this._mixedL, this._mixedR, nOut);
     }
   }
 

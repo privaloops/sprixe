@@ -18,4 +18,6 @@ export interface Z80BusInterface {
   write(address: number, value: number): void;
   ioRead(port: number): number;
   ioWrite(port: number, value: number): void;
+  /** Read opcode byte (for Kabuki-encrypted ROMs). Defaults to read() if not implemented. */
+  readOpcode?(address: number): number;
 }

@@ -251,3 +251,6 @@ export const CPS1_GAME_CATALOG: CPS1GameEntry[] = [
 
 /** Parent (non-clone) games only */
 export const CPS1_PARENT_GAMES = CPS1_GAME_CATALOG.filter(g => !g.parent);
+
+/** Games that use ROT270 (vertical screen) — from MAME */
+export const ROT270_GAMES = new Set(['1941', '1941j', '1941r1', '1941u', 'mercs', 'mercsj', 'mercsu', 'mercsur1', 'varth', 'varthb2', 'varthb3', 'varthj', 'varthjr', 'varthr1', 'varthu']);

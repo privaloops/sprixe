@@ -90,6 +90,22 @@
         aspect-ratio: 384 / 224;
         background: #0a0a0a;
         border: 1px solid #1a1a1a;
+        transition: transform 0.3s ease;
+      }
+
+      #canvas-wrapper.tate {
+        aspect-ratio: 224 / 384;
+        max-width: 448px;
+      }
+
+      #canvas-wrapper.tate #screen,
+      #canvas-wrapper.tate #dom-screen {
+        position: absolute;
+        width: calc(384 / 224 * 100%);
+        height: calc(224 / 384 * 100%);
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%) rotate(-90deg);
       }
 
       #screen, #dom-screen {
@@ -125,6 +141,23 @@
       #canvas-wrapper:fullscreen #dom-screen {
         width: 100vw;
         height: 100vh;
+      }
+
+      /* TATE fullscreen */
+      #canvas-wrapper.tate:fullscreen {
+        aspect-ratio: auto;
+        width: 100vw;
+        height: 100vh;
+      }
+
+      #canvas-wrapper.tate:fullscreen #screen,
+      #canvas-wrapper.tate:fullscreen #dom-screen {
+        position: absolute;
+        transform: translate(-50%, -50%) rotate(-90deg);
+        top: 50%;
+        left: 50%;
+        width: min(100vh, 100vw * 384 / 224);
+        height: min(100vh * 384 / 224, 100vw);
       }
 
       /* Pseudo-fullscreen for mobile (iOS has no Fullscreen API on canvas) */
@@ -304,6 +337,7 @@
         <div id="renderer-toggle">
           <label><input type="radio" name="renderer" value="canvas" checked /> Canvas</label>
           <label><input type="radio" name="renderer" value="dom" /> DOM</label>
+          <label><input type="checkbox" id="tate-toggle" /> TATE</label>
         </div>
       </header>
 
@@ -318,6 +352,13 @@
           <span class="games">Street Fighter II &middot; Final Fight &middot; Strider &middot; Ghouls'n Ghosts &middot; Cadillacs &amp; Dinosaurs &middot; Knights of the Round &middot; Captain Commando &middot; The Punisher</span>
         </div>
         <input type="file" id="file-input" accept=".zip" />
+      </div>
+
+      <div id="rom-controls" style="display:flex;gap:8px;align-items:center;justify-content:center;flex-wrap:wrap;">
+        <select id="game-select" style="padding:6px 10px;background:#1a1a1a;color:#e8003c;border:1px solid #333;font-family:inherit;font-size:0.75rem;">
+          <option value="">-- Select a CPS1 game --</option>
+        </select>
+        <button id="load-btn" style="padding:6px 16px;background:#1a1a1a;color:#e8003c;border:1px solid #333;cursor:pointer;font-family:inherit;font-size:0.8rem;letter-spacing:0.1em;" disabled>LOAD</button>
       </div>
 
       <div id="controls">

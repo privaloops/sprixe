@@ -5,6 +5,7 @@
  */
 
 import { Emulator } from "./emulator";
+import { CPS1_PARENT_GAMES, ROT270_GAMES } from "./game-catalog";
 import { FrameStateExtractor } from "./video/frame-state";
 import { SpriteSheetManager } from "./video/sprite-sheet";
 import { GameScreen } from "./video/GameScreen";
@@ -193,9 +194,16 @@ window.addEventListener("keydown", (e) => {
   }
 });
 
-// ── Double-click / double-tap fullscreen ─────────────────────────────────────
+// ── TATE mode ────────────────────────────────────────────────────────────────
 
+const tateToggle = getElement<HTMLInputElement>("tate-toggle");
 const canvasWrapper = getElement<HTMLDivElement>("canvas-wrapper");
+
+tateToggle.addEventListener("change", () => {
+  canvasWrapper.classList.toggle("tate", tateToggle.checked);
+});
+
+// ── Double-click / double-tap fullscreen ─────────────────────────────────────
 
 function toggleFullscreen(): void {
   if (document.fullscreenElement) {
@@ -292,8 +300,14 @@ async function handleRomFile(file: File): Promise<void> {
       domScreen.style.display = "none";
     }
 
+    // Auto-detect TATE (ROT270) games
+    const romName = file.name.replace('.zip', '');
+    const isTate = ROT270_GAMES.has(romName);
+    canvasWrapper.classList.toggle("tate", isTate);
+    tateToggle.checked = isTate;
+
     emulator.start();
-    setStatus(`Running: ${file.name} (${mode})`);
+    setStatus(`Running: ${file.name} (${mode}${isTate ? ', TATE' : ''})`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     setStatus(`Error: ${msg}`);
@@ -316,5 +330,43 @@ fileInput.addEventListener("change", () => {
     void handleRomFile(file);
   }
   fileInput.value = ""; // allow re-selecting the same file
+});
+
+// ── Game selector (dropdown + archive.org download) ──────────────────────────
+
+const gameSelect = getElement<HTMLSelectElement>("game-select");
+const loadBtn = getElement<HTMLButtonElement>("load-btn");
+
+for (const game of CPS1_PARENT_GAMES) {
+  const opt = document.createElement("option");
+  opt.value = game.name;
+  opt.textContent = game.description;
+  gameSelect.appendChild(opt);
+}
+
+gameSelect.addEventListener("change", () => {
+  loadBtn.disabled = !gameSelect.value;
+});
+
+loadBtn.addEventListener("click", async () => {
+  const gameName = gameSelect.value;
+  if (!gameName) return;
+
+  loadBtn.disabled = true;
+  void emulator.initAudio();
+  setStatus(`Downloading ${gameName} from archive.org…`);
+
+  try {
+    const proxyUrl = `/api/rom/${gameName}.zip`;
+    const resp = await fetch(proxyUrl);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const blob = await resp.blob();
+    const file = new File([blob], `${gameName}.zip`, { type: "application/zip" });
+    await handleRomFile(file);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    setStatus(`Download failed: ${msg}`);
+    loadBtn.disabled = false;
+  }
 });
 

@@ -16,6 +16,10 @@ export interface RomSet {
   okiRom: Uint8Array;
   cpsBConfig: CpsBConfig;
   gfxMapper: GfxMapperConfig;
+  /** True for CPS1.5 QSound games (no YM2151/OKI, uses QSound DSP instead) */
+  qsound: boolean;
+  /** QSound DSP ROM (dl-1425.bin), first 8KB as Uint8Array. Null for non-QSound games. */
+  qsoundDspRom: Uint8Array | null;
 }
 
 interface RomFileEntry {
@@ -96,6 +100,8 @@ interface GameDef {
   oki: RomRegionDef;
   cpsBConfig: CpsBConfig;
   gfxMapper: GfxMapperConfig;
+  /** CPS1.5 QSound game (replaces YM2151+OKI with QSound DSP) */
+  qsound?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -439,6 +445,7 @@ const GAME_DEFS: GameDef[] = [
     },
     audio: { files: ['cd_q.5k'], size: 0x20000 },
     oki: { files: ['cd-q1.1k', 'cd-q2.2k', 'cd-q3.3k', 'cd-q4.4k'], size: 0x200000 },  // QSound
+    qsound: true,
     cpsBConfig: {
       idOffset: -1, idValue: -1,
       layerControl: 0x0a,
@@ -760,6 +767,7 @@ const GAME_DEFS: GameDef[] = [
     },
     audio: { files: ['mb_q.5k'], size: 0x20000 },
     oki: { files: ['mb-q1.1k', 'mb-q2.2k', 'mb-q3.3k', 'mb-q4.4k', 'mb-q5.1m', 'mb-q6.2m', 'mb-q7.3m', 'mb-q8.4m'], size: 0x400000 },  // QSound
+    qsound: true,
     cpsBConfig: {
       idOffset: 0x1e, idValue: 0x0c02,
       layerControl: 0x2a,
@@ -796,6 +804,7 @@ const GAME_DEFS: GameDef[] = [
     },
     audio: { files: ['mb_qa.5k'], size: 0x20000 },
     oki: { files: ['mb-q1.1k', 'mb-q2.2k', 'mb-q3.3k', 'mb-q4.4k', 'mb-q5.1m', 'mb-q6.2m', 'mb-q7.3m', 'mb-q8.4m'], size: 0x400000 },  // QSound
+    qsound: true,
     cpsBConfig: {
       idOffset: 0x2e, idValue: 0x0c01,
       layerControl: 0x16,
@@ -1204,6 +1213,7 @@ const GAME_DEFS: GameDef[] = [
     },
     audio: { files: ['ps_q.5k'], size: 0x20000 },
     oki: { files: ['ps-q1.1k', 'ps-q2.2k', 'ps-q3.3k', 'ps-q4.4k'], size: 0x200000 },  // QSound
+    qsound: true,
     cpsBConfig: {
       idOffset: 0x0e, idValue: 0x0c00,
       layerControl: 0x12,
@@ -1465,6 +1475,7 @@ const GAME_DEFS: GameDef[] = [
     },
     audio: { files: ['mb_qa.5k'], size: 0x20000 },
     oki: { files: ['mb-q1.1k', 'mb-q2.2k', 'mb-q3.3k', 'mb-q4.4k', 'mb-q5.1m', 'mb-q6.2m', 'mb-q7.3m', 'mb-q8.4m'], size: 0x400000 },  // QSound
+    qsound: true,
     cpsBConfig: {
       idOffset: 0x2e, idValue: 0x0c01,
       layerControl: 0x16,
@@ -1651,6 +1662,7 @@ const GAME_DEFS: GameDef[] = [
     },
     audio: { files: ['tk2_qa.5k'], size: 0x20000 },
     oki: { files: ['tk2-q1.1k', 'tk2-q2.2k', 'tk2-q3.3k', 'tk2-q4.4k'], size: 0x200000 },  // QSound
+    qsound: true,
     cpsBConfig: {
       idOffset: -1, idValue: -1,
       layerControl: 0x22,
@@ -1684,6 +1696,7 @@ const GAME_DEFS: GameDef[] = [
     },
     audio: { files: ['tk2_qa.5k'], size: 0x20000 },
     oki: { files: ['tk2-q1.1k', 'tk2-q2.2k', 'tk2-q3.3k', 'tk2-q4.4k'], size: 0x200000 },  // QSound
+    qsound: true,
     cpsBConfig: {
       idOffset: 0x32, idValue: -1,
       layerControl: 0x26,
@@ -2001,22 +2014,36 @@ export async function loadRomFromZip(file: File): Promise<RomSet> {
   const programRom = assembleProgram(gameDef.program, fileMap);
   const graphicsRom = assembleGraphicsNew(gameDef.graphics, fileMap);
   // Audio ROM uses ROM_LOAD + ROM_CONTINUE format:
-  // First 0x8000 bytes → offset 0x0000, next 0x8000 bytes → offset 0x10000
+  // First 0x8000 bytes → offset 0x0000 (fixed ROM)
+  // Remaining bytes → offset 0x10000 (banked ROM)
+  // MAME allocates regionSize = 0x10000 + continuedSize for the full banked area.
   const audioFileData = fileMap.get(gameDef.audio.files[0]!.toLowerCase());
-  const audioRom = new Uint8Array(gameDef.audio.size);
+  const continuedSize = audioFileData ? Math.max(0, audioFileData.length - 0x8000) : 0;
+  const audioRegionSize = Math.max(gameDef.audio.size, 0x10000 + continuedSize);
+  const audioRom = new Uint8Array(audioRegionSize);
   if (audioFileData !== undefined) {
     // ROM_LOAD: first 0x8000 bytes at offset 0x0000
     const firstChunk = Math.min(0x8000, audioFileData.length);
     audioRom.set(audioFileData.subarray(0, firstChunk), 0x0000);
     // ROM_CONTINUE: remaining bytes at offset 0x10000
-    if (audioFileData.length > 0x8000) {
-      const remaining = audioFileData.subarray(0x8000);
-      const spaceAvailable = audioRom.length - 0x10000;
-      const toCopy = Math.min(remaining.length, spaceAvailable);
-      audioRom.set(remaining.subarray(0, toCopy), 0x10000);
+    if (continuedSize > 0) {
+      audioRom.set(audioFileData.subarray(0x8000), 0x10000);
     }
   }
   const okiRom = assembleLinear(gameDef.oki.files, fileMap, gameDef.oki.size);
+
+  // Load QSound DSP ROM (dl-1425.bin) if present in the ZIP
+  let qsoundDspRom: Uint8Array | null = null;
+  if (gameDef.qsound) {
+    const dspFile = fileMap.get('dl-1425.bin');
+    if (dspFile) {
+      // File is 24KB but only first 8KB (4096 x 16-bit words) is used
+      qsoundDspRom = dspFile.subarray(0, 0x2000);
+      console.log(`[ROM] Loaded QSound DSP ROM (${qsoundDspRom.length} bytes)`);
+    } else {
+      console.warn('[ROM] QSound game but dl-1425.bin not found in ZIP');
+    }
+  }
 
   return {
     name: gameDef.name,
@@ -2026,6 +2053,8 @@ export async function loadRomFromZip(file: File): Promise<RomSet> {
     okiRom,
     cpsBConfig: gameDef.cpsBConfig,
     gfxMapper: gameDef.gfxMapper,
+    qsound: gameDef.qsound === true,
+    qsoundDspRom,
   };
 }
 

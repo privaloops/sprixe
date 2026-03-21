@@ -137,7 +137,7 @@ export class Z80 {
   // the Z80 accepts it. Survives timer auto-clear unlike irqLineAsserted.
   private pendingIrq = false;
 
-  private readonly bus: Z80BusInterface;
+  private bus: Z80BusInterface;
 
   constructor(bus: Z80BusInterface) {
     this.bus = bus;
@@ -146,6 +146,11 @@ export class Z80 {
   // -------------------------------------------------------------------------
   // Public API
   // -------------------------------------------------------------------------
+
+  /** Switch the bus (e.g. standard CPS1 ↔ QSound) */
+  setBus(bus: Z80BusInterface): void {
+    this.bus = bus;
+  }
 
   reset(): void {
     this.a = 0xFF; this.f = 0xFF;
@@ -184,7 +189,7 @@ export class Z80 {
       return 4;
     }
 
-    const opcode = this.fetchByte();
+    const opcode = this.fetchOpcode();
     this.incR();
     const cycles = this.execMain(opcode);
 
@@ -301,6 +306,13 @@ export class Z80 {
 
   private fetchByte(): number {
     const v = this.bus.read(this.pc);
+    this.pc = (this.pc + 1) & 0xFFFF;
+    return v;
+  }
+
+  /** Fetch opcode byte — uses readOpcode if available (Kabuki decryption) */
+  private fetchOpcode(): number {
+    const v = this.bus.readOpcode ? this.bus.readOpcode(this.pc) : this.bus.read(this.pc);
     this.pc = (this.pc + 1) & 0xFFFF;
     return v;
   }
@@ -1356,7 +1368,7 @@ export class Z80 {
   // -------------------------------------------------------------------------
 
   private execCB(): number {
-    const op = this.fetchByte();
+    const op = this.fetchOpcode();
     this.incR();
 
     const r = op & 0x07;
@@ -1476,7 +1488,7 @@ export class Z80 {
   // -------------------------------------------------------------------------
 
   private execDDFD(isIX: boolean): number {
-    const op = this.fetchByte();
+    const op = this.fetchOpcode();
     this.incR();
 
     const ixiy = isIX ? this.ix : this.iy;
@@ -1802,7 +1814,7 @@ export class Z80 {
   // -------------------------------------------------------------------------
 
   private execED(): number {
-    const op = this.fetchByte();
+    const op = this.fetchOpcode();
     this.incR();
 
     switch (op) {

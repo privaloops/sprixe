@@ -17,6 +17,7 @@
  */
 
 import type { BusInterface } from '../types';
+import { EEPROM93C46 } from './eeprom-93c46';
 export type { BusInterface };
 
 export class Bus implements BusInterface {
@@ -34,6 +35,11 @@ export class Bus implements BusInterface {
   private irqAckCallback: (() => void) | null = null;
   // Debug: VRAM write watchpoint callback (address, value)
   private _vramWatchCallback: ((addr: number, value: number, isWord: boolean) => void) | null = null;
+  // QSound shared RAM (set by emulator for QSound games)
+  private _qsoundSharedRam1: Uint8Array | null = null; // 68K: 0xF18000-0xF19FFF
+  private _qsoundSharedRam2: Uint8Array | null = null; // 68K: 0xF1E000-0xF1FFFF
+  private _eeprom: EEPROM93C46 | null = null;
+  private _qsoundDirect: ((cmd: number) => void) | null = null;
 
   constructor() {
     this.programRom = new Uint8Array(0);
@@ -97,6 +103,22 @@ export class Bus implements BusInterface {
     this._vramWatchCallback = cb;
   }
 
+  /** Set direct QSound callback (bypass Z80 for testing) */
+  setQsoundDirect(cb: ((cmd: number) => void) | null): void {
+    this._qsoundDirect = cb;
+  }
+
+  /** Set EEPROM for QSound games */
+  setEeprom(eeprom: EEPROM93C46 | null): void {
+    this._eeprom = eeprom;
+  }
+
+  /** Set QSound shared RAM references (from Z80BusQSound), or null to clear */
+  setQsoundSharedRam(ram1: Uint8Array | null, ram2: Uint8Array | null): void {
+    this._qsoundSharedRam1 = ram1;
+    this._qsoundSharedRam2 = ram2;
+  }
+
   getWorkRam(): Uint8Array {
     return this.workRam;
   }
@@ -147,6 +169,29 @@ export class Bus implements BusInterface {
     // VRAM: 0x900000-0x92FFFF
     if (address >= 0x900000 && address <= 0x92FFFF) {
       return this.vram[address - 0x900000]!;
+    }
+
+    // QSound I/O: 0xF1C000-0xF1C007 (player 3/4 + EEPROM)
+    if (this._qsoundSharedRam1 !== null && address >= 0xF1C000 && address <= 0xF1C007) {
+      // 0xF1C000-0xF1C001: IN2 (player 3), 0xF1C002-0xF1C003: IN3 (player 4)
+      if (address <= 0xF1C003) return 0xFF; // no buttons pressed
+      // 0xF1C006-0xF1C007: EEPROM read — bit 0 = DO (data out)
+      if (address >= 0xF1C006 && this._eeprom) {
+        return (address & 1) ? this._eeprom.read() : 0xFF;
+      }
+      return 0xFF;
+    }
+
+    // QSound shared RAM 1: 0xF18000-0xF19FFF (4KB, only low byte)
+    if (this._qsoundSharedRam1 !== null && address >= 0xF18000 && address <= 0xF19FFF) {
+      if (address & 1) return this._qsoundSharedRam1[(address - 0xF18000) >> 1]!;
+      return 0xFF;
+    }
+
+    // QSound shared RAM 2: 0xF1E000-0xF1FFFF (4KB, only low byte)
+    if (this._qsoundSharedRam2 !== null && address >= 0xF1E000 && address <= 0xF1FFFF) {
+      if (address & 1) return this._qsoundSharedRam2[(address - 0xF1E000) >> 1]!;
+      return 0xFF;
     }
 
     // Work RAM: 0xFF0000-0xFFFFFF
@@ -238,6 +283,29 @@ export class Bus implements BusInterface {
       if (this._vramWatchCallback !== null) {
         this._vramWatchCallback(address, value, false);
       }
+      return;
+    }
+
+    // QSound shared RAM 1: 0xF18000-0xF19FFF (only low byte writable)
+    if (this._qsoundSharedRam1 !== null && address >= 0xF18000 && address <= 0xF19FFF) {
+      if (address & 1) {
+        this._qsoundSharedRam1[(address - 0xF18000) >> 1] = value;
+      }
+      return;
+    }
+
+    // QSound I/O writes: 0xF1C004-0xF1C007 (coin control 2, EEPROM)
+    if (this._qsoundSharedRam1 !== null && address >= 0xF1C004 && address <= 0xF1C007) {
+      // 0xF1C006-0xF1C007: EEPROM write — bit 0=DI, bit 6=CLK, bit 7=CS
+      if (address >= 0xF1C006 && (address & 1) && this._eeprom) {
+        this._eeprom.write(value);
+      }
+      return;
+    }
+
+    // QSound shared RAM 2: 0xF1E000-0xF1FFFF (only low byte writable)
+    if (this._qsoundSharedRam2 !== null && address >= 0xF1E000 && address <= 0xF1FFFF) {
+      if (address & 1) this._qsoundSharedRam2[(address - 0xF1E000) >> 1] = value;
       return;
     }
 

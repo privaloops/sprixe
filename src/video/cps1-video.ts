@@ -278,10 +278,25 @@ export class CPS1Video {
     this.spriteCodeOffset = cpsBConfig?.spriteCodeOffset ?? 0;
 
     // GFX mapper
-    this.mapperTable = gfxMapper?.ranges.map(r => ({
-      type: r.type, start: r.start, end: r.end, bank: r.bank,
-    })) ?? [];
     this.bankSizes = gfxMapper ? [...gfxMapper.bankSizes] : [0, 0, 0, 0];
+    if (gfxMapper && gfxMapper.ranges.length > 0) {
+      this.mapperTable = gfxMapper.ranges.map(r => ({
+        type: r.type, start: r.start, end: r.end, bank: r.bank,
+      }));
+    } else {
+      // Auto-generate ranges: each non-zero bank gets a full-range entry
+      // covering all layer types (sprites + scroll1-3 = 0x0F).
+      // This is the default for QSound games and many later CPS1 boards.
+      this.mapperTable = [];
+      let offset = 0;
+      for (let b = 0; b < 4; b++) {
+        const size = this.bankSizes[b]!;
+        if (size > 0) {
+          this.mapperTable.push({ type: 0x0F, start: offset, end: offset + size - 1, bank: b });
+          offset += size;
+        }
+      }
+    }
     this.bankBases = [];
     let bankBase = 0;
     for (const size of this.bankSizes) {
