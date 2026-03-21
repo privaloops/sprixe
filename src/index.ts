@@ -835,11 +835,10 @@ function renderDipModal(): void {
   const ioPorts = emulator.getIoPorts();
   dipList.innerHTML = "";
 
-  // Info message (hidden until a change is made)
+  // Info message (hidden until a change is made) — appended at the end
   const info = document.createElement("div");
-  info.style.cssText = "font-size:0.85rem;color:#ff1a50;text-align:center;margin-bottom:12px;display:none;";
+  info.style.cssText = "font-size:0.85rem;color:#ff1a50;text-align:center;margin-top:14px;display:none;";
   info.textContent = "Reload the game for changes to take effect.";
-  dipList.appendChild(info);
 
   if (def.switches.length === 0) {
     const empty = document.createElement("div");
@@ -883,6 +882,8 @@ function renderDipModal(): void {
     div.appendChild(select);
     dipList.appendChild(div);
   }
+
+  dipList.appendChild(info);
 }
 
 function openDipModal(): void {
