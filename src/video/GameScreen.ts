@@ -57,9 +57,9 @@ export class GameScreen {
       width: ${SCREEN_WIDTH}px;
       height: ${SCREEN_HEIGHT}px;
       position: absolute;
-      top: 0; left: 0;
-      transform: scale(${scale});
-      transform-origin: top left;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%) scale(${scale});
+      transform-origin: center;
     `;
 
     // Canvas for scroll layers BEHIND sprites
@@ -208,12 +208,8 @@ export class GameScreen {
   resize(width: number, height: number): void {
     const scaleX = width / SCREEN_WIDTH;
     const scaleY = height / SCREEN_HEIGHT;
-    const s = Math.min(scaleX, scaleY);
-
-    this.scale = s;
-    this.inner.style.transform = `scale(${s})`;
-    this.inner.style.left = Math.floor((width - SCREEN_WIDTH * s) / 2) + 'px';
-    this.inner.style.top = Math.floor((height - SCREEN_HEIGHT * s) / 2) + 'px';
+    this.scale = Math.min(scaleX, scaleY);
+    this.inner.style.transform = `translate(-50%, -50%) scale(${this.scale})`;
   }
 
   destroy(): void {
