@@ -210,14 +210,13 @@ export class GameScreen {
     const scaleY = height / SCREEN_HEIGHT;
     const s = Math.min(scaleX, scaleY);
 
+    this.scale = s;
     this.root.style.width = width + 'px';
     this.root.style.height = height + 'px';
 
-    const scaledW = SCREEN_WIDTH * s;
-    const scaledH = SCREEN_HEIGHT * s;
     this.inner.style.transform = `scale(${s})`;
-    this.inner.style.left = Math.floor((width - scaledW) / 2) + 'px';
-    this.inner.style.top = Math.floor((height - scaledH) / 2) + 'px';
+    this.inner.style.left = Math.floor((width - SCREEN_WIDTH * s) / 2) + 'px';
+    this.inner.style.top = Math.floor((height - SCREEN_HEIGHT * s) / 2) + 'px';
   }
 
   resetSize(scale: number = 2): void {

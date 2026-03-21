@@ -82,10 +82,10 @@ function resizeDomScreen(): void {
     gameScreen.resize(384, 224);
     return;
   }
-  // In fullscreen, use the wrapper's client dimensions (not getBoundingClientRect)
+  // In fullscreen, use viewport dimensions directly
   if (document.fullscreenElement || document.body.classList.contains("pseudo-fullscreen")) {
-    const w = canvasWrapper.clientWidth;
-    const h = canvasWrapper.clientHeight;
+    const w = window.innerWidth;
+    const h = window.innerHeight;
     if (w > 0 && h > 0) { gameScreen.resize(w, h); return; }
   }
   const { width, height } = domScreen.getBoundingClientRect();
