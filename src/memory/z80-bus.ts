@@ -20,6 +20,15 @@
 import type { Z80BusInterface } from '../types';
 export type { Z80BusInterface };
 
+export interface Z80BusState {
+  currentBank: number;
+  soundLatchValue: number;
+  soundLatchQueue: number[];
+  soundLatch2Value: number;
+  soundLatch2Queue: number[];
+  ym2151Register: number;
+}
+
 export class Z80Bus implements Z80BusInterface {
   private audioRom: Uint8Array;
   private workRam: Uint8Array;       // 2KB at 0xC000
@@ -68,6 +77,26 @@ export class Z80Bus implements Z80BusInterface {
 
   getWorkRam(): Uint8Array {
     return this.workRam;
+  }
+
+  getSerialState(): Z80BusState {
+    return {
+      currentBank: this.currentBank,
+      soundLatchValue: this.soundLatchValue,
+      soundLatchQueue: [...this.soundLatchQueue],
+      soundLatch2Value: this.soundLatch2Value,
+      soundLatch2Queue: [...this.soundLatch2Queue],
+      ym2151Register: this.ym2151Register,
+    };
+  }
+
+  setSerialState(s: Z80BusState): void {
+    this.currentBank = s.currentBank;
+    this.soundLatchValue = s.soundLatchValue;
+    this.soundLatchQueue = [...s.soundLatchQueue];
+    this.soundLatch2Value = s.soundLatch2Value;
+    this.soundLatch2Queue = [...s.soundLatch2Queue];
+    this.ym2151Register = s.ym2151Register;
   }
 
   setSoundLatch(value: number): void {

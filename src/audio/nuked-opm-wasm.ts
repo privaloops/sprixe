@@ -150,4 +150,24 @@ export class NukedOPMWasm {
   reset(): void {
     wasmModule!._opm_reset();
   }
+
+  /** Snapshot the entire WASM linear memory for save state (base64). */
+  getHeapSnapshot(): string {
+    const bytes = new Uint8Array(wasmModule!.HEAPF32.buffer);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) {
+      binary += String.fromCharCode(bytes[i]!);
+    }
+    return btoa(binary);
+  }
+
+  /** Restore WASM linear memory from a base64 save state snapshot. */
+  setHeapSnapshot(data: string): void {
+    const binary = atob(data);
+    const bytes = new Uint8Array(wasmModule!.HEAPF32.buffer);
+    const len = Math.min(binary.length, bytes.length);
+    for (let i = 0; i < len; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+  }
 }

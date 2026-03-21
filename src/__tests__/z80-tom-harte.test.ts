@@ -123,10 +123,10 @@ function setupCPU(cpu: Z80, bus: TestBus, test: TestVector): void {
     im: init.im,
     halted: false,
     tStates: 0,
+    irqLineAsserted: false,
+    pendingIrq: false,
+    enableInterruptsNext: false,
   });
-
-  // Reset internal state not exposed in Z80State
-  (cpu as unknown as { enableInterruptsNext: boolean }).enableInterruptsNext = false;
   (cpu as unknown as { irqLineAsserted: boolean }).irqLineAsserted = false;
 
   // Extract I/O read values from bus cycles (flags contain 'i' for I/O)

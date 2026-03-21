@@ -83,6 +83,10 @@ export class Bus implements BusInterface {
     return this.soundLatch;
   }
 
+  getCoinCtrl(): Uint8Array {
+    return this.coinCtrl;
+  }
+
   setSoundLatchCallback(cb: (value: number) => void): void {
     this._soundLatchCallback = cb;
   }

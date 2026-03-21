@@ -980,4 +980,12 @@ export class CPS1Video {
       }
     }
   }
+
+  getObjBuffer(): Uint8Array {
+    return this.objBuffer;
+  }
+
+  setObjBuffer(data: Uint8Array): void {
+    this.objBuffer.set(data.subarray(0, this.objBuffer.length));
+  }
 }

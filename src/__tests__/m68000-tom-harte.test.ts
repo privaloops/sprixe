@@ -117,6 +117,7 @@ function setupCPU(cpu: M68000, bus: TestBus, test: TestVector): void {
     ssp: init.ssp,
     stopped: false,
     pendingInterrupt: 0,
+    irqLines: 0,
   });
 
   // Set prefetch queue

@@ -15,6 +15,7 @@ export interface CpuState {
   ssp: number;
   stopped: boolean;
   pendingInterrupt: number;
+  irqLines: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -308,6 +309,7 @@ export class M68000 {
       ssp: this.ssp,
       stopped: this.stopped,
       pendingInterrupt: this.pendingInterrupt,
+      irqLines: this.irqLines,
     };
   }
 
@@ -320,6 +322,7 @@ export class M68000 {
     this.ssp = state.ssp;
     this.stopped = state.stopped;
     this.pendingInterrupt = state.pendingInterrupt;
+    this.irqLines = state.irqLines ?? 0;
     this.prefetchFill();
   }
 

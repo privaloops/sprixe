@@ -31,6 +31,7 @@ import { OKI6295 } from "./audio/oki6295";
 import { AudioOutput } from "./audio/audio-output";
 import { decodeKabuki } from "./memory/kabuki";
 import { EEPROM93C46 } from "./memory/eeprom-93c46";
+import { type SaveState, saveToSlot, loadFromSlot, bufToB64, b64ToBuf, SAVE_STATE_VERSION } from "./save-state";
 
 // ── Timing constants (from MAME cps1.h) ─────────────────────────────────────
 //
@@ -65,18 +66,6 @@ const YM_SAMPLES_PER_FRAME = Math.ceil(YM2151_SAMPLE_RATE / FRAME_RATE);
 const OKI_SAMPLES_PER_FRAME = Math.ceil(OKI6295_SAMPLE_RATE / FRAME_RATE);
 
 // ── Emulator state snapshot (for save state / rollback) ─────────────────────
-
-export interface EmulatorState {
-  m68kState: CpuState;
-  z80State: Z80State;
-  workRam: Uint8Array;       // 64KB
-  vram: Uint8Array;          // 192KB
-  z80WorkRam: Uint8Array;    // 2KB
-  soundLatch: Uint8Array;    // 8 bytes
-  cpsaRegisters: Uint8Array; // 42 bytes
-  cpsbRegisters: Uint8Array; // 64 bytes
-  ioPorts: Uint8Array;       // 64 bytes
-}
 
 // ── Emulator ────────────────────────────────────────────────────────────────
 
@@ -122,6 +111,7 @@ export class Emulator {
   private paused: boolean = false;
   private animFrameId: number = 0;
   private romLoaded: boolean = false;
+  private gameName: string = '';
 
   constructor(canvas: HTMLCanvasElement) {
     this.bus = new Bus();
@@ -207,6 +197,7 @@ export class Emulator {
     const romSet: RomSet = await loadRomFromZip(file);
 
     this.isQSound = romSet.qsound;
+    this.gameName = romSet.name;
     this.bus.loadProgramRom(romSet.programRom);
 
     // Apply CPS-B ID for this game
@@ -353,45 +344,15 @@ export class Emulator {
     return this.running && !this.paused;
   }
 
+  isPaused(): boolean {
+    return this.running && this.paused;
+  }
+
   // ── Frame stepping (debug) ────────────────────────────────────────────────
 
   stepFrame(): void {
     if (!this.romLoaded) return;
     this.runOneFrame();
-  }
-
-  // ── Save state / restore ──────────────────────────────────────────────────
-
-  saveState(): EmulatorState {
-    const z80WorkRam = this.z80BusQSound
-      ? this.z80BusQSound.getWorkRam()
-      : this.z80Bus.getWorkRam();
-    return {
-      m68kState: this.m68000.getState(),
-      z80State: this.z80.getState(),
-      workRam: new Uint8Array(this.bus.getWorkRam()),
-      vram: new Uint8Array(this.bus.getVram()),
-      z80WorkRam: new Uint8Array(z80WorkRam),
-      soundLatch: new Uint8Array(this.bus.getSoundLatch()),
-      cpsaRegisters: new Uint8Array(this.bus.getCpsaRegisters()),
-      cpsbRegisters: new Uint8Array(this.bus.getCpsbRegisters()),
-      ioPorts: new Uint8Array(this.bus.getIoPorts()),
-    };
-  }
-
-  loadState(state: EmulatorState): void {
-    this.m68000.setState(state.m68kState);
-    this.z80.setState(state.z80State);
-    this.bus.getWorkRam().set(state.workRam);
-    this.bus.getVram().set(state.vram);
-    const z80WorkRam = this.z80BusQSound
-      ? this.z80BusQSound.getWorkRam()
-      : this.z80Bus.getWorkRam();
-    z80WorkRam.set(state.z80WorkRam);
-    this.bus.getSoundLatch().set(state.soundLatch);
-    this.bus.getCpsaRegisters().set(state.cpsaRegisters);
-    this.bus.getCpsbRegisters().set(state.cpsbRegisters);
-    this.bus.getIoPorts().set(state.ioPorts);
   }
 
   // ── Audio ────────────────────────────────────────────────────────────────
@@ -442,6 +403,106 @@ export class Emulator {
 
   /** Expose InputManager for gamepad config UI. */
   getInputManager(): InputManager { return this.input; }
+
+  /** Get the current game name (set at ROM load time). */
+  getGameName(): string { return this.gameName; }
+
+  // ── Save State ──────────────────────────────────────────────────────────
+
+  /** Save complete emulator state to a localStorage slot. */
+  async saveState(slot: number): Promise<boolean> {
+    if (!this.romLoaded) return false;
+
+    // Get audio worker state (Z80 + Z80Bus + OKI)
+    let workerState: Record<string, unknown> | null = null;
+    if (this.audioWorkerReady && this.audioWorker) {
+      workerState = await this.getWorkerState();
+    }
+
+    const state: SaveState = {
+      version: SAVE_STATE_VERSION,
+      gameName: this.gameName,
+      timestamp: Date.now(),
+      m68k: this.m68000.getState(),
+      z80: this.z80.getState(),
+      workRam: bufToB64(this.bus.getWorkRam()),
+      vram: bufToB64(this.bus.getVram()),
+      cpsaRegs: bufToB64(this.bus.getCpsaRegisters()),
+      cpsbRegs: bufToB64(this.bus.getCpsbRegisters()),
+      ioPorts: bufToB64(this.bus.getIoPorts()),
+      coinCtrl: bufToB64(this.bus.getCoinCtrl()),
+      z80WorkRam: bufToB64(this.z80Bus.getWorkRam()),
+      z80Bus: this.z80Bus.getSerialState(),
+      oki: this.oki6295?.getState() ?? null,
+      objBuffer: this.video ? bufToB64(this.video.getObjBuffer()) : '',
+      frameCount: this.frameCount,
+      audioWorkerState: workerState,
+    };
+
+    return saveToSlot(slot, state);
+  }
+
+  /** Request the audio worker's internal state. */
+  private getWorkerState(): Promise<Record<string, unknown>> {
+    return new Promise((resolve) => {
+      const prev = this.audioWorker!.onmessage;
+      this.audioWorker!.onmessage = (e) => {
+        if (e.data.type === 'state') {
+          this.audioWorker!.onmessage = prev;
+          resolve(e.data.state as Record<string, unknown>);
+        }
+      };
+      this.audioWorker!.postMessage({ type: 'getState' });
+    });
+  }
+
+  /** Load emulator state from a localStorage slot. */
+  loadState(slot: number): boolean {
+    const state = loadFromSlot(slot);
+    if (!state) return false;
+    if (state.gameName !== this.gameName) {
+      console.warn(`Save state is for ${state.gameName}, current game is ${this.gameName}`);
+      return false;
+    }
+
+    // Restore CPUs
+    this.m68000.setState(state.m68k);
+    this.z80.setState(state.z80);
+
+    // Restore memory
+    this.bus.getWorkRam().set(b64ToBuf(state.workRam));
+    this.bus.getVram().set(b64ToBuf(state.vram));
+    this.bus.getCpsaRegisters().set(b64ToBuf(state.cpsaRegs));
+    this.bus.getCpsbRegisters().set(b64ToBuf(state.cpsbRegs));
+    this.bus.getIoPorts().set(b64ToBuf(state.ioPorts));
+    this.bus.getCoinCtrl().set(b64ToBuf(state.coinCtrl));
+    this.z80Bus.getWorkRam().set(b64ToBuf(state.z80WorkRam));
+    this.z80Bus.setSerialState(state.z80Bus);
+
+    // Restore OKI
+    if (state.oki && this.oki6295) {
+      this.oki6295.setState(state.oki);
+    }
+
+    // Restore video sprite buffer
+    if (state.objBuffer && this.video) {
+      this.video.setObjBuffer(b64ToBuf(state.objBuffer));
+    }
+
+    // Restore frame count
+    this.frameCount = state.frameCount;
+
+    // Restore audio worker state (Z80 + Z80Bus RAM + OKI)
+    if (this.audioWorkerReady && this.audioWorker) {
+      if (state.audioWorkerState) {
+        this.audioWorker.postMessage({ type: 'setState', state: state.audioWorkerState });
+      } else {
+        this.audioWorker.postMessage({ type: 'reset' });
+      }
+    }
+
+    return true;
+  }
 
   /** Debug: expose YM2151 for audio testing */
   getYm2151(): NukedOPMWasm { return this.ym2151; }

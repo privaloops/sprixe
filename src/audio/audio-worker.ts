@@ -6,10 +6,10 @@
  * independently and writes directly into the SharedArrayBuffer ring buffer.
  */
 
-import { Z80 } from '../cpu/z80';
-import { Z80Bus } from '../memory/z80-bus';
+import { Z80, type Z80State } from '../cpu/z80';
+import { Z80Bus, type Z80BusState } from '../memory/z80-bus';
 import { initOPMWasm, NukedOPMWasm } from './nuked-opm-wasm';
-import { OKI6295 } from './oki6295';
+import { OKI6295, type OKI6295State } from './oki6295';
 import { LinearResampler } from './resampler';
 import { YM2151_SAMPLE_RATE, OKI6295_SAMPLE_RATE } from '../constants';
 import { RING_BUFFER_SAMPLES, SAB_DATA_OFFSET } from './audio-output';
@@ -248,6 +248,40 @@ self.onmessage = async (e: MessageEvent) => {
     case 'reset': {
       z80?.reset();
       ym2151?.reset();
+      break;
+    }
+
+    case 'getState': {
+      // Return Z80 + Z80Bus + OKI + YM2151 state for save state
+      const state: Record<string, unknown> = {};
+      if (z80) state["z80"] = z80.getState();
+      if (z80Bus) {
+        state["z80Bus"] = z80Bus.getSerialState();
+        state["z80WorkRam"] = Array.from(z80Bus.getWorkRam());
+      }
+      if (oki6295) state["oki"] = oki6295.getState();
+      if (ym2151) state["opmHeap"] = ym2151.getHeapSnapshot();
+      self.postMessage({ type: 'state', state });
+      break;
+    }
+
+    case 'setState': {
+      // Restore Z80 + Z80Bus + OKI state from save state
+      const s = msg.state as Record<string, unknown>;
+      if (s["z80"] && z80) z80.setState(s["z80"] as Z80State);
+      if (s["z80Bus"] && z80Bus) {
+        z80Bus.setSerialState(s["z80Bus"] as Z80BusState);
+      }
+      if (s["z80WorkRam"] && z80Bus) {
+        z80Bus.getWorkRam().set(new Uint8Array(s["z80WorkRam"] as number[]));
+      }
+      if (s["oki"] && oki6295) {
+        oki6295.setState(s["oki"] as OKI6295State);
+      }
+      // Restore YM2151 WASM heap if available
+      if (s["opmHeap"] && ym2151) {
+        ym2151.setHeapSnapshot(s["opmHeap"] as string);
+      }
       break;
     }
 
