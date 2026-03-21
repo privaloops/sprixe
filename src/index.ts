@@ -28,6 +28,24 @@ const controlsEl = getElement<HTMLDivElement>("controls");
 const canvasWrapper = getElement<HTMLDivElement>("canvas-wrapper");
 const gamepadStatusEl = getElement<HTMLSpanElement>("gamepad-status");
 
+const appEl = getElement<HTMLDivElement>("app");
+
+/** Move a modal overlay into canvasWrapper (for fullscreen) or back to #app */
+function showOverlay(overlay: HTMLElement): void {
+  if (document.fullscreenElement === canvasWrapper) {
+    canvasWrapper.appendChild(overlay);
+  }
+  overlay.classList.add("open");
+}
+
+function hideOverlay(overlay: HTMLElement): void {
+  overlay.classList.remove("open");
+  // Move back to #app if it was moved to canvasWrapper
+  if (overlay.parentElement === canvasWrapper) {
+    appEl.appendChild(overlay);
+  }
+}
+
 function getRendererMode(): "canvas" | "dom" {
   const checked = document.querySelector<HTMLInputElement>('input[name="renderer"]:checked');
   return checked?.value === "dom" ? "dom" : "canvas";
@@ -38,6 +56,13 @@ function setupDomRenderer(): void {
   const videoConfig = emulator.getVideoConfig();
   const video = emulator.getVideo();
   if (!videoConfig || !video) return;
+
+  // Destroy previous DOM renderer if any
+  if (gameScreen) {
+    gameScreen.destroy();
+    gameScreen = null;
+  }
+  domScreen.innerHTML = "";
 
   const bufs = emulator.getBusBuffers();
   const sheets = new SpriteSheetManager(videoConfig.graphicsRom);
@@ -207,13 +232,13 @@ window.addEventListener("keydown", (e) => {
       setStatus("Running");
     }
   } else if (e.code === "Escape") {
-    // Escape = close modals or exit fullscreen
+    // Escape = close modals first, then exit fullscreen
     if (ssOverlay.classList.contains("open")) { closeSsModal(); }
     else if (gpOverlay.classList.contains("open")) { closeGpModal(); }
     else if (kbOverlay.classList.contains("open")) { closeKbModal(); }
     else if (dipOverlay.classList.contains("open")) { closeDipModal(); }
-    else if (document.fullscreenElement) { void document.exitFullscreen(); }
     else if (document.body.classList.contains("pseudo-fullscreen")) { document.body.classList.remove("pseudo-fullscreen"); }
+    // Note: browser handles Escape→exit fullscreen automatically, we can't prevent it
   } else if (key === "f") {
     // F = Toggle fullscreen
     toggleFullscreen();
@@ -355,13 +380,28 @@ loadBtn.addEventListener("click", async () => {
 
   loadBtn.disabled = true;
   void emulator.initAudio();
-  setStatus(`Downloading ${gameName} from archive.org…`);
 
   try {
-    const proxyUrl = `/api/rom/${gameName}.zip`;
-    const resp = await fetch(proxyUrl);
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const blob = await resp.blob();
+    let blob: Blob | null = null;
+
+    // Try local public/roms/ folder first
+    try {
+      const localResp = await fetch(`/roms/${gameName}.zip`);
+      const ct = localResp.headers.get("content-type") ?? "";
+      if (localResp.ok && !ct.includes("text/html")) {
+        blob = await localResp.blob();
+        setStatus(`Loading ${gameName} from local files…`);
+      }
+    } catch { /* not found */ }
+
+    // Fall back to archive.org proxy
+    if (!blob) {
+      setStatus(`Downloading ${gameName} from archive.org…`);
+      const resp = await fetch(`/api/rom/${gameName}.zip`);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      blob = await resp.blob();
+    }
+
     const file = new File([blob], `${gameName}.zip`, { type: "application/zip" });
     await handleRomFile(file);
   } catch (err) {
@@ -516,7 +556,7 @@ function captureButton(index: number): void {
 
 function openGpModal(): void {
   renderGpModal();
-  gpOverlay.classList.add("open");
+  showOverlay(gpOverlay);
 }
 
 function closeGpModal(): void {
@@ -524,7 +564,7 @@ function closeGpModal(): void {
   cancelAnimationFrame(listenRafId);
   listeningKey = null;
   listeningBtn = null;
-  gpOverlay.classList.remove("open");
+  hideOverlay(gpOverlay);
 }
 
 configBtn.addEventListener("click", openGpModal);
@@ -632,11 +672,11 @@ function openSsModal(mode: "save" | "load"): void {
   }
 
   renderSsModal();
-  ssOverlay.classList.add("open");
+  showOverlay(ssOverlay);
 }
 
 function closeSsModal(): void {
-  ssOverlay.classList.remove("open");
+  hideOverlay(ssOverlay);
 
   // Resume if we paused it
   if (!ssWasPaused) {
@@ -780,14 +820,14 @@ window.addEventListener("keydown", (e) => {
 
 function openKbModal(): void {
   renderKbModal();
-  kbOverlay.classList.add("open");
+  showOverlay(kbOverlay);
 }
 
 function closeKbModal(): void {
   if (kbListeningBtn) kbListeningBtn.classList.remove("listening");
   kbListeningKey = null;
   kbListeningBtn = null;
-  kbOverlay.classList.remove("open");
+  hideOverlay(kbOverlay);
 }
 
 keyboardBtn.addEventListener("click", openKbModal);
@@ -889,11 +929,11 @@ function renderDipModal(): void {
 
 function openDipModal(): void {
   renderDipModal();
-  dipOverlay.classList.add("open");
+  showOverlay(dipOverlay);
 }
 
 function closeDipModal(): void {
-  dipOverlay.classList.remove("open");
+  hideOverlay(dipOverlay);
 }
 
 dipBtn.addEventListener("click", openDipModal);

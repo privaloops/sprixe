@@ -355,7 +355,7 @@
         #status { font-size: 0.85rem; }
       }
       /* Gamepad config modal */
-      #gamepad-modal-overlay, #keyboard-modal-overlay, #dip-modal-overlay {
+      #gamepad-modal-overlay, #keyboard-modal-overlay, #dip-modal-overlay, #savestate-modal-overlay {
         display: none;
         position: fixed;
         inset: 0;
@@ -365,7 +365,7 @@
         justify-content: center;
       }
 
-      #gamepad-modal-overlay.open, #keyboard-modal-overlay.open, #dip-modal-overlay.open {
+      #gamepad-modal-overlay.open, #keyboard-modal-overlay.open, #dip-modal-overlay.open, #savestate-modal-overlay.open {
         display: flex;
       }
 
@@ -375,9 +375,11 @@
         border-radius: 8px;
         padding: 28px 32px;
         max-width: 500px;
+        max-height: 90%;
         width: 94%;
         font-family: "Courier New", Courier, monospace;
         color: #f0f0f0;
+        overflow-y: auto;
       }
 
       .modal-wide {
@@ -509,20 +511,6 @@
       }
 
       /* Save state modal — reuses gamepad modal overlay styles */
-      #savestate-modal-overlay {
-        display: none;
-        position: fixed;
-        inset: 0;
-        background: rgba(0,0,0,0.9);
-        z-index: 10000;
-        align-items: center;
-        justify-content: center;
-      }
-
-      #savestate-modal-overlay.open {
-        display: flex;
-      }
-
       #savestate-modal {
         background: #181818;
         border: 1px solid #444;
@@ -634,25 +622,6 @@
         <input type="file" id="file-input" accept=".zip" />
       </div>
 
-      <div id="rom-controls" style="display:flex;gap:12px;align-items:center;justify-content:center;flex-wrap:wrap;">
-        <select id="game-select" style="padding:10px 14px;background:#1a1a1a;color:#ff1a50;border:1px solid #555;font-family:inherit;font-size:1rem;border-radius:4px;">
-          <option value="">-- Select a CPS1 game --</option>
-        </select>
-        <button id="load-btn" style="padding:10px 22px;background:#1a1a1a;color:#ff1a50;border:1px solid #555;cursor:pointer;font-family:inherit;font-size:1.1rem;font-weight:bold;letter-spacing:0.1em;border-radius:4px;" disabled>LOAD</button>
-      </div>
-
-      <div id="controls">
-        <button id="config-btn" class="ctrl-btn">JOYPAD</button>
-        <button id="keyboard-btn" class="ctrl-btn">KEYBOARD</button>
-        <button id="save-btn" class="ctrl-btn">SAVE</button>
-        <button id="load-btn-ss" class="ctrl-btn">LOAD</button>
-        <button id="pause-btn" class="ctrl-btn">PAUSE</button>
-        <button id="mute-btn" class="ctrl-btn">MUTE</button>
-        <button id="fullscreen-btn" class="ctrl-btn">FULL</button>
-        <button id="dip-btn" class="ctrl-btn">DIP SW</button>
-        <button id="quit-btn" class="ctrl-btn" style="color:#ff1a50;">QUIT</button>
-      </div>
-
       <div id="savestate-modal-overlay">
         <div id="savestate-modal">
           <h2 id="savestate-title">SAVE STATE</h2>
@@ -711,6 +680,25 @@
             <button id="kb-close-btn">CLOSE</button>
           </div>
         </div>
+      </div>
+
+      <div id="rom-controls" style="display:flex;gap:12px;align-items:center;justify-content:center;flex-wrap:wrap;">
+        <select id="game-select" style="padding:10px 14px;background:#1a1a1a;color:#ff1a50;border:1px solid #555;font-family:inherit;font-size:1rem;border-radius:4px;">
+          <option value="">-- Select a CPS1 game --</option>
+        </select>
+        <button id="load-btn" style="padding:10px 22px;background:#1a1a1a;color:#ff1a50;border:1px solid #555;cursor:pointer;font-family:inherit;font-size:1.1rem;font-weight:bold;letter-spacing:0.1em;border-radius:4px;" disabled>LOAD</button>
+      </div>
+
+      <div id="controls">
+        <button id="config-btn" class="ctrl-btn">JOYPAD</button>
+        <button id="keyboard-btn" class="ctrl-btn">KEYBOARD</button>
+        <button id="save-btn" class="ctrl-btn">SAVE</button>
+        <button id="load-btn-ss" class="ctrl-btn">LOAD</button>
+        <button id="pause-btn" class="ctrl-btn">PAUSE</button>
+        <button id="mute-btn" class="ctrl-btn">MUTE</button>
+        <button id="fullscreen-btn" class="ctrl-btn">FULL</button>
+        <button id="dip-btn" class="ctrl-btn">DIP SW</button>
+        <button id="quit-btn" class="ctrl-btn" style="color:#ff1a50;">QUIT</button>
       </div>
 
       <p id="status"><span id="gamepad-status"></span></p>

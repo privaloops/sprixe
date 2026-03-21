@@ -9,3 +9,4 @@ cfg/
 
 # ROM files — never commit copyrighted material
 public/*.zip
+public/roms/*.zip
