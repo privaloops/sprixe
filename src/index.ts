@@ -277,12 +277,15 @@ function setStatus(message: string): void {
   statusEl.textContent = message;
 }
 
+let lastRomFile: File | null = null;
+
 async function handleRomFile(file: File): Promise<void> {
   if (!file.name.endsWith(".zip")) {
     setStatus("Error: expected a .zip file.");
     return;
   }
 
+  lastRomFile = file;
   setStatus(`Loading: ${file.name}…`);
 
   try {
@@ -835,10 +838,15 @@ function renderDipModal(): void {
   const ioPorts = emulator.getIoPorts();
   dipList.innerHTML = "";
 
-  // Info message (hidden until a change is made) — appended at the end
-  const info = document.createElement("div");
-  info.style.cssText = "font-size:0.85rem;color:#ff1a50;text-align:center;margin-top:14px;display:none;";
-  info.textContent = "Reload the game for changes to take effect.";
+  // Reload button (hidden until a change is made) — appended at the end
+  const reloadBtn = document.createElement("button");
+  reloadBtn.className = "ctrl-btn";
+  reloadBtn.style.cssText = "display:none;margin:14px auto 0;color:#ff1a50;border-color:#ff1a50;";
+  reloadBtn.textContent = "RELOAD GAME";
+  reloadBtn.addEventListener("click", () => {
+    closeDipModal();
+    if (lastRomFile) void handleRomFile(lastRomFile);
+  });
 
   if (def.switches.length === 0) {
     const empty = document.createElement("div");
@@ -875,7 +883,7 @@ function renderDipModal(): void {
       const newVal = parseInt(select.value, 10);
       ioPorts[ioIdx] = (ioPorts[ioIdx]! & ~sw.mask) | newVal;
       saveDipToStorage(gameName, ioPorts);
-      info.style.display = "block";
+      reloadBtn.style.display = "block";
     });
 
     div.appendChild(label);
@@ -883,7 +891,7 @@ function renderDipModal(): void {
     dipList.appendChild(div);
   }
 
-  dipList.appendChild(info);
+  dipList.appendChild(reloadBtn);
 }
 
 function openDipModal(): void {
