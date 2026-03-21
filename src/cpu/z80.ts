@@ -42,6 +42,11 @@ export interface Z80State {
 
   halted: boolean;
   tStates: number;
+
+  // Interrupt line state (for save/restore)
+  irqLineAsserted: boolean;
+  pendingIrq: boolean;
+  enableInterruptsNext: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -267,6 +272,9 @@ export class Z80 {
       i: this.i, r: this.r,
       iff1: this.iff1, iff2: this.iff2, im: this.im,
       halted: this.halted, tStates: 0,
+      irqLineAsserted: this.irqLineAsserted,
+      pendingIrq: this.pendingIrq,
+      enableInterruptsNext: this.enableInterruptsNext,
     };
   }
 
@@ -279,6 +287,9 @@ export class Z80 {
     this.i = s.i; this.r = s.r;
     this.iff1 = s.iff1; this.iff2 = s.iff2; this.im = s.im;
     this.halted = s.halted;
+    this.irqLineAsserted = s.irqLineAsserted ?? false;
+    this.pendingIrq = s.pendingIrq ?? false;
+    this.enableInterruptsNext = s.enableInterruptsNext ?? false;
   }
 
   // -------------------------------------------------------------------------

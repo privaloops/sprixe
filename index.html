@@ -459,6 +459,106 @@
         border-color: #ff1a50;
         color: #ff1a50;
       }
+
+      /* Save state modal — reuses gamepad modal overlay styles */
+      #savestate-modal-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.9);
+        z-index: 10000;
+        align-items: center;
+        justify-content: center;
+      }
+
+      #savestate-modal-overlay.open {
+        display: flex;
+      }
+
+      #savestate-modal {
+        background: #181818;
+        border: 1px solid #444;
+        border-radius: 8px;
+        padding: 28px 32px;
+        max-width: 500px;
+        width: 94%;
+        font-family: "Courier New", Courier, monospace;
+        color: #f0f0f0;
+      }
+
+      #savestate-modal h2 {
+        font-size: 1.4rem;
+        color: #ff1a50;
+        text-transform: uppercase;
+        letter-spacing: 0.15em;
+        margin-bottom: 20px;
+        text-align: center;
+      }
+
+      .ss-slot {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 12px 14px;
+        margin-bottom: 8px;
+        background: #222;
+        border: 1px solid #444;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+
+      .ss-slot:hover {
+        border-color: #ff1a50;
+        background: #2a2a2a;
+      }
+
+      .ss-slot-num {
+        font-size: 1.1rem;
+        font-weight: bold;
+        color: #ff1a50;
+        min-width: 30px;
+      }
+
+      .ss-slot-info {
+        flex: 1;
+        margin-left: 14px;
+        font-size: 0.95rem;
+        color: #ccc;
+      }
+
+      .ss-slot-empty {
+        color: #666;
+        font-style: italic;
+      }
+
+      .ss-slot-date {
+        font-size: 0.8rem;
+        color: #888;
+      }
+
+      #savestate-modal .gp-actions {
+        display: flex;
+        gap: 12px;
+        justify-content: center;
+        margin-top: 18px;
+      }
+
+      #savestate-modal .gp-actions button {
+        background: #222;
+        border: 1px solid #555;
+        color: #f0f0f0;
+        font-family: inherit;
+        font-size: 1rem;
+        font-weight: bold;
+        padding: 10px 22px;
+        cursor: pointer;
+        border-radius: 4px;
+      }
+
+      #savestate-modal .gp-actions button:hover {
+        border-color: #ff1a50;
+        color: #ff1a50;
+      }
     </style>
   </head>
   <body>
@@ -504,6 +604,18 @@
         <kbd>F</kbd> Fullscreen
         <kbd>Esc</kbd> Quit
         <button id="config-btn" style="margin-left:10px;background:#1a1a1a;border:1px solid #555;color:#ff1a50;font-family:inherit;font-size:0.95rem;font-weight:bold;padding:4px 12px;cursor:pointer;vertical-align:middle;border-radius:3px;">CONFIG</button>
+        <kbd>S</kbd> Save
+        <kbd>L</kbd> Load
+      </div>
+
+      <div id="savestate-modal-overlay">
+        <div id="savestate-modal">
+          <h2 id="savestate-title">SAVE STATE</h2>
+          <div id="savestate-slots"></div>
+          <div class="gp-actions">
+            <button id="ss-close-btn">CLOSE</button>
+          </div>
+        </div>
       </div>
 
       <div id="gamepad-modal-overlay">

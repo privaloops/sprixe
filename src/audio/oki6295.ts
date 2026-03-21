@@ -292,4 +292,32 @@ export class OKI6295 {
   getSampleRate(): number {
     return OKI_SAMPLE_RATE;
   }
+
+  getState(): OKI6295State {
+    return {
+      pendingPhrase: this.pendingPhrase,
+      channels: this.channels.map(ch => ({ ...ch })),
+    };
+  }
+
+  setState(s: OKI6295State): void {
+    this.pendingPhrase = s.pendingPhrase;
+    for (let i = 0; i < NUM_CHANNELS; i++) {
+      const src = s.channels[i];
+      if (src) Object.assign(this.channels[i]!, src);
+    }
+  }
+}
+
+export interface OKI6295State {
+  pendingPhrase: number;
+  channels: Array<{
+    playing: boolean;
+    address: number;
+    endAddress: number;
+    nibbleToggle: boolean;
+    signal: number;
+    stepIndex: number;
+    volume: number;
+  }>;
 }
