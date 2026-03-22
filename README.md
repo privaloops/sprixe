@@ -4,8 +4,7 @@
 
 > Street Fighter II, Final Fight, Cadillacs & Dinosaurs, Ghouls'n Ghosts, and 35+ more Capcom classics playable in your browser.
 
-<!-- TODO: Replace with actual screenshot or GIF -->
-<!-- ![Arcade.ts screenshot](docs/screenshot.png) -->
+![Arcade.ts — DOM renderer with DevTools](docs/demo.gif)
 
 ## Try it
 
