@@ -51,7 +51,7 @@ export class SpriteSheetManager {
   private readonly gfxRom: Uint8Array;
 
   // Cache: key = `${tileSize}:${tileCode}:${paletteIndex}`, value = data URL
-  private readonly cache = new Map<string, string>();
+  private readonly cache = new Map<string, ImageData>();
 
   // Reusable canvas + context for rendering tiles
   private canvas: HTMLCanvasElement;
@@ -72,17 +72,16 @@ export class SpriteSheetManager {
   }
 
   /**
-   * Get a data URL for a single tile rendered with a specific palette.
+   * Get ImageData for a single tile rendered with a specific palette.
    * Cached — only generated once per unique tile+palette+size combo.
    */
-  getTileUrl(
+  getTileImageData(
     tileCode: number,
     tileSize: TileSize,
     paletteIndex: number,
     vram: Uint8Array,
     paletteBase: number,
-  ): string {
-    // Check palette hash FIRST — invalidate stale cache before lookup
+  ): ImageData | null {
     this.checkPaletteChanged(vram, paletteBase);
 
     const key = `${tileSize}:${tileCode}:${paletteIndex}`;
@@ -95,9 +94,9 @@ export class SpriteSheetManager {
       this.paletteCache.set(paletteIndex, palette);
     }
 
-    const url = this.renderTile(tileCode, tileSize, palette);
-    this.cache.set(key, url);
-    return url;
+    const imageData = this.renderTileImageData(tileCode, tileSize, palette);
+    if (imageData) this.cache.set(key, imageData);
+    return imageData;
   }
 
   /** Check if palette VRAM changed since last call; invalidate caches if so. */
@@ -122,15 +121,14 @@ export class SpriteSheetManager {
    * Get a data URL for a multi-tile sprite (nx * ny tiles of 16x16).
    * Composes sub-tiles using MAME formula: (code & ~0xF) + ((code + nxs) & 0xF) + 0x10 * nys
    */
-  getMultiTileUrl(
+  getMultiTileImageData(
     baseCode: number,
     nx: number,
     ny: number,
     paletteIndex: number,
     vram: Uint8Array,
     paletteBase: number,
-  ): string {
-    // Check palette hash FIRST
+  ): ImageData | null {
     this.checkPaletteChanged(vram, paletteBase);
 
     const key = `multi:${baseCode}:${nx}x${ny}:${paletteIndex}`;
@@ -145,9 +143,7 @@ export class SpriteSheetManager {
 
     const w = nx * 16;
     const h = ny * 16;
-    this.canvas.width = w;
-    this.canvas.height = h;
-    const imageData = this.ctx.createImageData(w, h);
+    const imageData = new ImageData(w, h);
     const pixels = imageData.data;
     const gfx = this.gfxRom;
     const gfxLen = gfx.length;
@@ -156,7 +152,7 @@ export class SpriteSheetManager {
     for (let nys = 0; nys < ny; nys++) {
       for (let nxs = 0; nxs < nx; nxs++) {
         const subCode = (baseCode & ~0x0F) + ((baseCode + nxs) & 0x0F) + 0x10 * nys;
-        const charBase = subCode * 128; // CHAR_SIZE_16
+        const charBase = subCode * 128;
         const offsetX = nxs * 16;
         const offsetY = nys * 16;
 
@@ -181,10 +177,8 @@ export class SpriteSheetManager {
       }
     }
 
-    this.ctx.putImageData(imageData, 0, 0);
-    const url = this.canvas.toDataURL();
-    this.cache.set(key, url);
-    return url;
+    this.cache.set(key, imageData);
+    return imageData;
   }
 
   /** For compatibility with GameScreen — not used in per-tile mode. */
@@ -242,17 +236,12 @@ export class SpriteSheetManager {
     return palette;
   }
 
-  private renderTile(
+  private renderTileImageData(
     tileCode: number,
     tileSize: TileSize,
     palette: Array<[number, number, number, number]>,
-  ): string {
-    const canvas = this.canvas;
-    const ctx = this.ctx;
-    canvas.width = tileSize;
-    canvas.height = tileSize;
-
-    const imageData = ctx.createImageData(tileSize, tileSize);
+  ): ImageData {
+    const imageData = new ImageData(tileSize, tileSize);
     const pixels = imageData.data;
     const gfx = this.gfxRom;
     const gfxLen = gfx.length;
@@ -287,7 +276,6 @@ export class SpriteSheetManager {
       }
     }
 
-    ctx.putImageData(imageData, 0, 0);
-    return canvas.toDataURL();
+    return imageData;
   }
 }

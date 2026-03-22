@@ -26,6 +26,8 @@ export class GameScreen {
   private readonly canvasFront: HTMLCanvasElement;
   private readonly ctxFront: CanvasRenderingContext2D;
   private readonly spritePool: HTMLDivElement[] = [];
+  private readonly spriteCanvases: HTMLCanvasElement[] = [];
+  private readonly spriteCtxs: CanvasRenderingContext2D[] = [];
   private readonly fbBehind: Uint8Array;
   private readonly fbFront: Uint8Array;
   private readonly imgBehind: ImageData;
@@ -81,9 +83,16 @@ export class GameScreen {
 
     for (let i = 0; i < MAX_SPRITES; i++) {
       const div = document.createElement('div');
-      div.style.cssText = 'position:absolute;width:16px;height:16px;background-size:16px 16px;image-rendering:pixelated;display:none;';
+      div.style.cssText = 'position:absolute;display:none;image-rendering:pixelated;';
+      const cvs = document.createElement('canvas');
+      cvs.width = 16;
+      cvs.height = 16;
+      cvs.style.cssText = 'width:100%;height:100%;image-rendering:pixelated;';
+      div.appendChild(cvs);
       spriteContainer.appendChild(div);
       this.spritePool.push(div);
+      this.spriteCanvases.push(cvs);
+      this.spriteCtxs.push(cvs.getContext('2d')!);
     }
 
     // Canvas for scroll layers IN FRONT of sprites
@@ -168,32 +177,32 @@ export class GameScreen {
       const sprite = sprites[i]!;
       const isMulti = sprite.nx > 1 || sprite.ny > 1;
 
-      const tileUrl = isMulti
-        ? sheets.getMultiTileUrl(sprite.code, sprite.nx, sprite.ny, sprite.palette, vram, paletteBase)
-        : sheets.getTileUrl(sprite.code, 16, sprite.palette, vram, paletteBase);
+      const imgData = isMulti
+        ? sheets.getMultiTileImageData(sprite.code, sprite.nx, sprite.ny, sprite.palette, vram, paletteBase)
+        : sheets.getTileImageData(sprite.code, 16, sprite.palette, vram, paletteBase);
 
-      if (!tileUrl) {
+      if (!imgData) {
         if (div.style.display !== 'none') div.style.display = 'none';
         continue;
       }
 
       const w = sprite.nx * 16;
       const h = sprite.ny * 16;
-      if (div.offsetWidth !== w) {
+      const cvs = this.spriteCanvases[i]!;
+      const ctx = this.spriteCtxs[i]!;
+
+      // Resize canvas if sprite dimensions changed
+      if (cvs.width !== w || cvs.height !== h) {
+        cvs.width = w;
+        cvs.height = h;
         div.style.width = w + 'px';
-        div.style.backgroundSize = w + 'px ' + h + 'px';
-      }
-      if (div.offsetHeight !== h) {
         div.style.height = h + 'px';
       }
 
+      ctx.putImageData(imgData, 0, 0);
+
       div.style.left = sprite.screenX + 'px';
       div.style.top = sprite.screenY + 'px';
-
-      const bgUrl = `url(${tileUrl})`;
-      if (div.style.backgroundImage !== bgUrl) {
-        div.style.backgroundImage = bgUrl;
-      }
 
       let transform = '';
       if (sprite.flipX && sprite.flipY) transform = 'scaleX(-1) scaleY(-1)';
@@ -202,8 +211,6 @@ export class GameScreen {
       if (div.style.transform !== transform) {
         div.style.transform = transform;
       }
-
-      div.dataset['sprite'] = `code:${sprite.code} pal:${sprite.palette}${isMulti ? ` ${sprite.nx}x${sprite.ny}` : ''}`;
 
       if (div.style.display === 'none') div.style.display = '';
     }
