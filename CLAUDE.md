@@ -36,7 +36,7 @@ src/
     rom-loader.ts   # ROM loader ZIP/MAME + 41 GameDefs + CPS-B configs + GFX mappers
   input/
     input.ts        # Keyboard + Gamepad API → CPS1 I/O ports
-  game-catalog.ts   # 245 jeux CPS1 (source MAME 0.286) + liens archive.org
+  game-catalog.ts   # 245 jeux CPS1 (source MAME 0.286)
   types.ts          # Interfaces partagées (BusInterface, Z80BusInterface)
   index.ts          # Entry point — UI, game selector, shortcuts
   emulator.ts       # Main loop — frame scheduling, CPU/audio/video orchestration
@@ -95,7 +95,7 @@ tests/
 
 41 GameDefs (parent sets) avec ROM layout, CPS-B config, et GFX mapper.
 245 jeux listés dans le dropdown (source MAME 0.286).
-ROMs téléchargeables depuis archive.org via proxy Vite.
+ROMs chargées depuis public/roms/ (non incluses dans le repo).
 
 ## Raccourcis clavier
 

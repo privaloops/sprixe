@@ -6,7 +6,7 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <link rel="manifest" href="/manifest.json" />
-    <title>CPS1-Web</title>
+    <title>Arcade.ts</title>
     <style>
       *, *::before, *::after {
         box-sizing: border-box;
@@ -380,7 +380,7 @@
         #status { font-size: 0.85rem; }
       }
       /* Gamepad config modal */
-      #gamepad-modal-overlay, #keyboard-modal-overlay, #dip-modal-overlay, #savestate-modal-overlay {
+      #controls-modal-overlay, #dip-modal-overlay, #savestate-modal-overlay {
         display: none;
         position: fixed;
         inset: 0;
@@ -390,11 +390,11 @@
         justify-content: center;
       }
 
-      #gamepad-modal-overlay.open, #keyboard-modal-overlay.open, #dip-modal-overlay.open, #savestate-modal-overlay.open {
+      #controls-modal-overlay.open, #dip-modal-overlay.open, #savestate-modal-overlay.open {
         display: flex;
       }
 
-      #gamepad-modal, #keyboard-modal, #dip-modal {
+      #controls-modal, #dip-modal {
         background: #181818;
         border: 1px solid #444;
         border-radius: 8px;
@@ -411,7 +411,7 @@
         max-width: 750px !important;
       }
 
-      #gamepad-modal h2, #keyboard-modal h2, #dip-modal h2 {
+      #controls-modal h2, #dip-modal h2 {
         font-size: 1.4rem;
         color: #ff1a50;
         text-transform: uppercase;
@@ -625,8 +625,8 @@
   <body>
     <div id="app">
       <header>
-        <h1>CPS1-Web</h1>
-        <p>Capcom Play System 1 — Browser Emulator</p>
+        <h1>Arcade.ts</h1>
+        <p>Arcade Machine Emulator</p>
         <div id="renderer-toggle">
           <label><input type="radio" name="renderer" value="canvas" checked /> Canvas</label>
           <label><input type="radio" name="renderer" value="dom" /> DOM</label>
@@ -657,22 +657,40 @@
         </div>
       </div>
 
-      <div id="gamepad-modal-overlay">
-        <div id="gamepad-modal" class="modal-wide">
-          <h2>Joypad Config</h2>
-          <div class="modal-2col">
-            <div class="modal-col">
-              <h3 class="modal-col-title">Player 1</h3>
-              <div id="gp-mapping-list-p1"></div>
+      <div id="controls-modal-overlay">
+        <div id="controls-modal" class="modal-wide">
+          <h2>Controls</h2>
+          <div style="display:flex;justify-content:center;gap:8px;margin-bottom:16px;">
+            <button id="tab-joypad" class="ctrl-btn active">JOYPAD</button>
+            <button id="tab-keyboard" class="ctrl-btn">KEYBOARD</button>
+          </div>
+          <div id="tab-joypad-content">
+            <div class="modal-2col">
+              <div class="modal-col">
+                <h3 class="modal-col-title">Player 1</h3>
+                <div id="gp-mapping-list-p1"></div>
+              </div>
+              <div class="modal-col">
+                <h3 class="modal-col-title">Player 2</h3>
+                <div id="gp-mapping-list-p2"></div>
+              </div>
             </div>
-            <div class="modal-col">
-              <h3 class="modal-col-title">Player 2</h3>
-              <div id="gp-mapping-list-p2"></div>
+          </div>
+          <div id="tab-keyboard-content" style="display:none;">
+            <div class="modal-2col">
+              <div class="modal-col">
+                <h3 class="modal-col-title">Player 1</h3>
+                <div id="kb-mapping-list-p1"></div>
+              </div>
+              <div class="modal-col">
+                <h3 class="modal-col-title">Player 2</h3>
+                <div id="kb-mapping-list-p2"></div>
+              </div>
             </div>
           </div>
           <div class="gp-actions">
-            <button id="gp-reset-btn">RESET ALL</button>
-            <button id="gp-close-btn">CLOSE</button>
+            <button id="controls-reset-btn">RESET ALL</button>
+            <button id="controls-close-btn">CLOSE</button>
           </div>
         </div>
       </div>
@@ -687,26 +705,6 @@
         </div>
       </div>
 
-      <div id="keyboard-modal-overlay">
-        <div id="keyboard-modal" class="modal-wide">
-          <h2>Keyboard Config</h2>
-          <div class="modal-2col">
-            <div class="modal-col">
-              <h3 class="modal-col-title">Player 1</h3>
-              <div id="kb-mapping-list-p1"></div>
-            </div>
-            <div class="modal-col">
-              <h3 class="modal-col-title">Player 2</h3>
-              <div id="kb-mapping-list-p2"></div>
-            </div>
-          </div>
-          <div class="gp-actions">
-            <button id="kb-reset-btn">RESET ALL</button>
-            <button id="kb-close-btn">CLOSE</button>
-          </div>
-        </div>
-      </div>
-
       <div id="rom-controls" style="display:flex;gap:12px;align-items:center;justify-content:center;flex-wrap:wrap;">
         <select id="game-select" style="padding:10px 14px;background:#1a1a1a;color:#ff1a50;border:1px solid #555;font-family:inherit;font-size:1rem;border-radius:4px;">
           <option value="">-- Select a CPS1 game --</option>
@@ -715,13 +713,11 @@
       </div>
 
       <div id="controls">
-        <button id="config-btn" class="ctrl-btn">JOYPAD</button>
-        <button id="keyboard-btn" class="ctrl-btn">KEYBOARD</button>
-        <button id="save-btn" class="ctrl-btn">SAVE</button>
-        <button id="load-btn-ss" class="ctrl-btn">LOAD</button>
+        <button id="controls-btn" class="ctrl-btn">CONTROLS</button>
+        <button id="save-btn" class="ctrl-btn">SAVE (F5)</button>
+        <button id="load-btn-ss" class="ctrl-btn">LOAD (F8)</button>
         <button id="pause-btn" class="ctrl-btn">PAUSE</button>
         <button id="mute-btn" class="ctrl-btn">MUTE</button>
-        <button id="fullscreen-btn" class="ctrl-btn">FULL</button>
         <button id="crt-btn" class="ctrl-btn">CRT</button>
         <button id="dip-btn" class="ctrl-btn">DIP SW</button>
         <button id="quit-btn" class="ctrl-btn" style="color:#ff1a50;">QUIT</button>

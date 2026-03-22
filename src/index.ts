@@ -1,5 +1,5 @@
 /**
- * CPS1-Web — Entry point
+ * Arcade.ts — Entry point
  *
  * Bootstraps the emulator with drag & drop ROM loading.
  */
@@ -159,10 +159,8 @@ window.addEventListener("gamepaddisconnected", () => {
 
 const pauseBtn = getElement<HTMLButtonElement>("pause-btn");
 const muteBtn = getElement<HTMLButtonElement>("mute-btn");
-const fullscreenBtn = getElement<HTMLButtonElement>("fullscreen-btn");
 const saveBtnCtrl = getElement<HTMLButtonElement>("save-btn");
 const loadBtnCtrl = getElement<HTMLButtonElement>("load-btn-ss");
-const keyboardBtn = getElement<HTMLButtonElement>("keyboard-btn");
 
 pauseBtn.addEventListener("click", () => {
   if (emulator.isRunning()) {
@@ -186,7 +184,6 @@ muteBtn.addEventListener("click", () => {
   else { emulator.resumeAudio(); muteBtn.classList.remove("active"); setStatus("Running"); }
 });
 
-fullscreenBtn.addEventListener("click", toggleFullscreen);
 saveBtnCtrl.addEventListener("click", () => openSsModal("save"));
 loadBtnCtrl.addEventListener("click", () => openSsModal("load"));
 
@@ -246,8 +243,7 @@ window.addEventListener("keydown", (e) => {
   } else if (e.code === "Escape") {
     // Escape = close modals first, then exit fullscreen
     if (ssOverlay.classList.contains("open")) { closeSsModal(); }
-    else if (gpOverlay.classList.contains("open")) { closeGpModal(); }
-    else if (kbOverlay.classList.contains("open")) { closeKbModal(); }
+    else if (ctrlOverlay.classList.contains("open")) { closeControlsModal(); }
     else if (dipOverlay.classList.contains("open")) { closeDipModal(); }
     else if (document.body.classList.contains("pseudo-fullscreen")) { document.body.classList.remove("pseudo-fullscreen"); }
     // Note: browser handles Escape→exit fullscreen automatically, we can't prevent it
@@ -370,17 +366,35 @@ fileInput.addEventListener("change", () => {
   fileInput.value = ""; // allow re-selecting the same file
 });
 
-// ── Game selector (dropdown + archive.org download) ──────────────────────────
+// ── Game selector (loads from public/roms/) ──────────────────────────────────
 
 const gameSelect = getElement<HTMLSelectElement>("game-select");
 const loadBtn = getElement<HTMLButtonElement>("load-btn");
+const romControls = getElement<HTMLDivElement>("rom-controls");
 
-for (const game of CPS1_PARENT_GAMES) {
-  const opt = document.createElement("option");
-  opt.value = game.name;
-  opt.textContent = game.description;
-  gameSelect.appendChild(opt);
-}
+// Build game selector from available ROMs in public/roms/
+const gameDescriptions = new Map(CPS1_PARENT_GAMES.map(g => [g.name, g.description]));
+
+fetch("/api/roms").then(r => r.json()).then((roms: string[]) => {
+  if (roms.length === 0) {
+    romControls.style.display = "none";
+    return;
+  }
+  for (const name of roms) {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = gameDescriptions.get(name) ?? name;
+    gameSelect.appendChild(opt);
+  }
+}).catch(() => {
+  // Fallback: show full catalog
+  for (const game of CPS1_PARENT_GAMES) {
+    const opt = document.createElement("option");
+    opt.value = game.name;
+    opt.textContent = game.description;
+    gameSelect.appendChild(opt);
+  }
+});
 
 gameSelect.addEventListener("change", () => {
   loadBtn.disabled = !gameSelect.value;
@@ -394,26 +408,10 @@ loadBtn.addEventListener("click", async () => {
   void emulator.initAudio();
 
   try {
-    let blob: Blob | null = null;
-
-    // Try local public/roms/ folder first
-    try {
-      const localResp = await fetch(`/roms/${gameName}.zip`);
-      const ct = localResp.headers.get("content-type") ?? "";
-      if (localResp.ok && !ct.includes("text/html")) {
-        blob = await localResp.blob();
-        setStatus(`Loading ${gameName} from local files…`);
-      }
-    } catch { /* not found */ }
-
-    // Fall back to archive.org proxy
-    if (!blob) {
-      setStatus(`Downloading ${gameName} from archive.org…`);
-      const resp = await fetch(`/api/rom/${gameName}.zip`);
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      blob = await resp.blob();
-    }
-
+    setStatus(`Loading ${gameName}…`);
+    const resp = await fetch(`/roms/${gameName}.zip`);
+    if (!resp.ok) throw new Error(`ROM not found: ${gameName}.zip`);
+    const blob = await resp.blob();
     const file = new File([blob], `${gameName}.zip`, { type: "application/zip" });
     await handleRomFile(file);
   } catch (err) {
@@ -423,14 +421,18 @@ loadBtn.addEventListener("click", async () => {
   }
 });
 
-// ── Gamepad config modal ──────────────────────────────────────────────────────
+// ── Controls modal (Joypad + Keyboard tabs) ──────────────────────────────────
 
-const configBtn = getElement<HTMLButtonElement>("config-btn");
-const gpOverlay = getElement<HTMLDivElement>("gamepad-modal-overlay");
+const controlsBtn = getElement<HTMLButtonElement>("controls-btn");
+const ctrlOverlay = getElement<HTMLDivElement>("controls-modal-overlay");
 const gpMappingListP1 = getElement<HTMLDivElement>("gp-mapping-list-p1");
 const gpMappingListP2 = getElement<HTMLDivElement>("gp-mapping-list-p2");
-const gpResetBtn = getElement<HTMLButtonElement>("gp-reset-btn");
-const gpCloseBtn = getElement<HTMLButtonElement>("gp-close-btn");
+const ctrlResetBtn = getElement<HTMLButtonElement>("controls-reset-btn");
+const ctrlCloseBtn = getElement<HTMLButtonElement>("controls-close-btn");
+const tabJoypad = getElement<HTMLButtonElement>("tab-joypad");
+const tabKeyboard = getElement<HTMLButtonElement>("tab-keyboard");
+const tabJoypadContent = getElement<HTMLDivElement>("tab-joypad-content");
+const tabKeyboardContent = getElement<HTMLDivElement>("tab-keyboard-content");
 
 const GP_BUTTON_NAMES: Record<number, string> = {
   0: "A", 1: "B", 2: "X", 3: "Y",
@@ -566,34 +568,50 @@ function captureButton(index: number): void {
   listeningBtn = null;
 }
 
-function openGpModal(): void {
-  renderGpModal();
-  showOverlay(gpOverlay);
+function switchTab(tab: "joypad" | "keyboard"): void {
+  tabJoypadContent.style.display = tab === "joypad" ? "" : "none";
+  tabKeyboardContent.style.display = tab === "keyboard" ? "" : "none";
+  tabJoypad.classList.toggle("active", tab === "joypad");
+  tabKeyboard.classList.toggle("active", tab === "keyboard");
 }
 
-function closeGpModal(): void {
+tabJoypad.addEventListener("click", () => switchTab("joypad"));
+tabKeyboard.addEventListener("click", () => switchTab("keyboard"));
+
+function openControlsModal(): void {
+  renderGpModal();
+  renderKbModal();
+  showOverlay(ctrlOverlay);
+}
+
+function closeControlsModal(): void {
   if (listeningBtn) listeningBtn.classList.remove("listening");
   cancelAnimationFrame(listenRafId);
   listeningKey = null;
   listeningBtn = null;
-  hideOverlay(gpOverlay);
+  if (kbListeningBtn) kbListeningBtn.classList.remove("listening");
+  kbListeningKey = null;
+  kbListeningBtn = null;
+  hideOverlay(ctrlOverlay);
 }
 
-configBtn.addEventListener("click", openGpModal);
-gpCloseBtn.addEventListener("click", closeGpModal);
-gpOverlay.addEventListener("click", (e) => {
-  if (e.target === gpOverlay) closeGpModal();
+controlsBtn.addEventListener("click", openControlsModal);
+ctrlCloseBtn.addEventListener("click", closeControlsModal);
+ctrlOverlay.addEventListener("click", (e) => {
+  if (e.target === ctrlOverlay) closeControlsModal();
 });
 
-gpResetBtn.addEventListener("click", () => {
+ctrlResetBtn.addEventListener("click", () => {
   const input = emulator.getInputManager();
   for (const p of [0, 1]) {
     input.setGamepadMapping(p, { ...DEFAULT_GP_MAPPING });
     for (const key of AUTOFIRE_ELIGIBLE) {
       input.setAutofire(p, key as AutofireKey, false);
     }
+    input.setKeyMapping(p, p === 0 ? { ...DEFAULT_P1_MAPPING } : { ...DEFAULT_P2_MAPPING });
   }
   renderGpModal();
+  renderKbModal();
 });
 
 // ── Save state modal ──────────────────────────────────────────────────────
@@ -724,22 +742,21 @@ window.addEventListener("keydown", (e) => {
 window.addEventListener("keydown", (e) => {
   if (!emulator.isRunning() && !emulator.isPaused()) return;
   // Don't trigger when a modal is open
-  if (gpOverlay.classList.contains("open") || ssOverlay.classList.contains("open") || kbOverlay.classList.contains("open")) return;
+  if (ctrlOverlay.classList.contains("open") || ssOverlay.classList.contains("open")) return;
 
-  if (e.key.toLowerCase() === "s" && !e.ctrlKey && !e.metaKey) {
+  if (e.code === "F5") {
+    e.preventDefault();
     openSsModal("save");
-  } else if (e.key.toLowerCase() === "l" && !e.ctrlKey && !e.metaKey) {
+  } else if (e.code === "F8") {
+    e.preventDefault();
     openSsModal("load");
   }
 });
 
-// ── Keyboard config modal ─────────────────────────────────────────────────
+// ── Keyboard config (tab content) ─────────────────────────────────────────
 
-const kbOverlay = getElement<HTMLDivElement>("keyboard-modal-overlay");
 const kbMappingListP1 = getElement<HTMLDivElement>("kb-mapping-list-p1");
 const kbMappingListP2 = getElement<HTMLDivElement>("kb-mapping-list-p2");
-const kbResetBtn = getElement<HTMLButtonElement>("kb-reset-btn");
-const kbCloseBtn = getElement<HTMLButtonElement>("kb-close-btn");
 
 type KbMappingKey = keyof KeyMapping;
 
@@ -762,7 +779,22 @@ let kbListeningKey: KbMappingKey | null = null;
 let kbListeningBtn: HTMLButtonElement | null = null;
 let kbListeningPlayer = 0;
 
+// Keyboard layout map for correct key labels (AZERTY/QWERTY)
+let layoutMap: Map<string, string> | null = null;
+if ('keyboard' in navigator && 'getLayoutMap' in (navigator as Navigator & { keyboard: { getLayoutMap(): Promise<Map<string, string>> } }).keyboard) {
+  (navigator as Navigator & { keyboard: { getLayoutMap(): Promise<Map<string, string>> } }).keyboard
+    .getLayoutMap()
+    .then(map => { layoutMap = map; })
+    .catch(() => {});
+}
+
 function keyCodeLabel(code: string): string {
+  // Try keyboard layout map first (gives correct letter for AZERTY/QWERTY)
+  if (layoutMap) {
+    const key = layoutMap.get(code);
+    if (key) return key.toUpperCase();
+  }
+  // Fallback
   if (code.startsWith("Key")) return code.slice(3);
   if (code.startsWith("Digit")) return code.slice(5);
   if (code.startsWith("Arrow")) return code.slice(5);
@@ -824,36 +856,13 @@ window.addEventListener("keydown", (e) => {
   mapping[kbListeningKey] = e.code;
   input.setKeyMapping(kbListeningPlayer, mapping);
 
-  kbListeningBtn.textContent = keyCodeLabel(e.code);
+  // Use e.key for display (real letter on current layout), e.code for mapping (physical position)
+  kbListeningBtn.textContent = e.key.length === 1 ? e.key.toUpperCase() : keyCodeLabel(e.code);
   kbListeningBtn.classList.remove("listening");
   kbListeningKey = null;
   kbListeningBtn = null;
 }, true); // capture phase to intercept before other handlers
 
-function openKbModal(): void {
-  renderKbModal();
-  showOverlay(kbOverlay);
-}
-
-function closeKbModal(): void {
-  if (kbListeningBtn) kbListeningBtn.classList.remove("listening");
-  kbListeningKey = null;
-  kbListeningBtn = null;
-  hideOverlay(kbOverlay);
-}
-
-keyboardBtn.addEventListener("click", openKbModal);
-kbCloseBtn.addEventListener("click", closeKbModal);
-kbOverlay.addEventListener("click", (e) => {
-  if (e.target === kbOverlay) closeKbModal();
-});
-
-kbResetBtn.addEventListener("click", () => {
-  const input = emulator.getInputManager();
-  input.setKeyMapping(0, { ...DEFAULT_P1_MAPPING });
-  input.setKeyMapping(1, { ...DEFAULT_P2_MAPPING });
-  renderKbModal();
-});
 
 // ── DIP switch modal ──────────────────────────────────────────────────────
 

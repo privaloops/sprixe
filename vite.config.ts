@@ -1,4 +1,30 @@
 import { defineConfig } from "vite";
+import { readdirSync } from "fs";
+import { join } from "path";
+import type { Plugin } from "vite";
+
+/** Vite plugin: serves /api/roms listing .zip files in public/roms/ */
+function romsListPlugin(): Plugin {
+  return {
+    name: "roms-list",
+    configureServer(server) {
+      server.middlewares.use("/api/roms", (_req, res) => {
+        try {
+          const romsDir = join(process.cwd(), "public", "roms");
+          const files = readdirSync(romsDir)
+            .filter(f => f.endsWith(".zip"))
+            .map(f => f.replace(".zip", ""))
+            .sort();
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify(files));
+        } catch {
+          res.setHeader("Content-Type", "application/json");
+          res.end("[]");
+        }
+      });
+    },
+  };
+}
 
 export default defineConfig({
   root: ".",
@@ -7,20 +33,12 @@ export default defineConfig({
     target: "es2022",
     outDir: "dist",
   },
+  plugins: [romsListPlugin()],
   server: {
     headers: {
       // Required for SharedArrayBuffer (AudioWorklet ring buffer)
       "Cross-Origin-Opener-Policy": "same-origin",
       "Cross-Origin-Embedder-Policy": "require-corp",
-    },
-    proxy: {
-      "/api/rom": {
-        target: "https://archive.org",
-        changeOrigin: true,
-        followRedirects: true,
-        rewrite: (path) =>
-          `/download/mame-0.260-roms-non-merged/MAME%200.260%20ROMs%20%28non-merged%29/MAME%200.260%20ROMs%20%28non-merged%29/${path.replace("/api/rom/", "")}`,
-      },
     },
   },
 });

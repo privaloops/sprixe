@@ -1,6 +1,6 @@
 // =============================================================================
 // Motorola 68000 CPU — Cycle-accurate interpreter
-// CPS1-Web project — TypeScript strict
+// Arcade.ts project — TypeScript strict
 // =============================================================================
 
 import type { BusInterface } from '../types';
