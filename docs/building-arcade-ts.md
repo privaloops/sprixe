@@ -16,7 +16,7 @@ The first commit was 8,900 lines. A complete M68000 CPU interpreter, a Z80 CPU, 
 
 Here's what it looked like:
 
-![First boot — total chaos](../rendering%20bugs/bug-1-2026-03-17.png)
+![First boot — total chaos](bugs/bug-1-2026-03-17.png)
 *The first successful boot of Street Fighter II. Every pixel is wrong.*
 
 This is what you get when the tile decoder reads pixels in the wrong order, the bank mapper is missing, and the transparent color is inverted. But the game is running — the 68000 is executing instructions, reading VRAM, and something is making it to the screen.
@@ -27,22 +27,22 @@ Each fix revealed the next problem:
 
 **Bank mapper** — CPS1 uses a custom PAL chip to translate tile codes through a per-game lookup table. Without it, every tile points to the wrong graphics data.
 
-![Wrong tiles everywhere](../rendering%20bugs/bug-4-2026-03-17.png)
+![Wrong tiles everywhere](bugs/bug-4-2026-03-17.png)
 *Same tile repeated across the entire screen — the bank mapper returns the same value for everything.*
 
 **Pixel bit order** — The GFX ROM encodes pixels MSB-first (bit 7 = leftmost pixel). My decoder had it backwards. Everything was horizontally mirrored at the sub-tile level.
 
-![SF2 logo garbled](../rendering%20bugs/bug-8-2026-03-17.png)
+![SF2 logo garbled](bugs/bug-8-2026-03-17.png)
 *The Street Fighter II logo is recognizable but completely mangled. The text below is gibberish.*
 
 **Plane bit assignment** — CPS1 tiles are 4 bits per pixel, stored across 4 bitplanes. I had the planes in the wrong order, producing psychedelic color artifacts:
 
-![Ryu portrait with red artifacts](../rendering%20bugs/bug-16-2026-03-17.png)
+![Ryu portrait with red artifacts](bugs/bug-16-2026-03-17.png)
 *Ryu's portrait on the character select screen. The colors are close but contaminated with red — one bitplane is swapped.*
 
 **Palette inversion** — I fixed the portraits, but the backgrounds were still in negative. Turns out color index 0 should be transparent, not color index 15. One constant, hours of debugging.
 
-![Inverted colors on the stage](../rendering%20bugs/bug-12-2026-03-17.png)
+![Inverted colors on the stage](bugs/bug-12-2026-03-17.png)
 *The stage background rendered in inverted colors — like a photo negative.*
 
 ### The audio battle
@@ -85,7 +85,7 @@ The first attempt used React. Components for each sprite, each scroll tile. It w
 
 Stripped React. Rewrote in vanilla TypeScript with direct DOM manipulation. Scroll layers rendered in `<canvas>` (too many tiles for DOM), sprites as `<div>` elements with `<canvas>` children for pixel data.
 
-![Final Fight in DOM mode — almost perfect](../rendering%20bugs/bug-18-2026-03-19.png)
+![Final Fight in DOM mode — almost perfect](bugs/bug-18-2026-03-19.png)
 *Final Fight running in DOM mode. Every character on screen is an inspectable HTML element.*
 
 ### Hardware-level testing
@@ -98,10 +98,10 @@ Some CPS1 games (Cadillacs & Dinosaurs, The Punisher) use a completely different
 
 Without decryption, the Z80 executes garbage. With decryption but the wrong interrupt mode, it executes the right code but never responds to audio commands.
 
-![Ghouls'n Ghosts — sprites missing](../rendering%20bugs/bug-25-2026-03-20.png)
+![Ghouls'n Ghosts — sprites missing](bugs/bug-25-2026-03-20.png)
 *Ghouls'n Ghosts with only hearts and two green sprites visible. The GFX bank mapper fallback was wrong for sprite tiles.*
 
-![Ghouls'n Ghosts — sprites as white squares](../rendering%20bugs/bug-27-2026-03-20.png)
+![Ghouls'n Ghosts — sprites as white squares](bugs/bug-27-2026-03-20.png)
 *Getting closer — the background is perfect but sprites are white squares. Bank mapping works but the sprite tile lookup is off.*
 
 ## Day 5 — The 12-hour debug session
