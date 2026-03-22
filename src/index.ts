@@ -377,10 +377,8 @@ fetch("/api/roms").then(r => {
   if (!r.ok) throw new Error("not available");
   return r.json();
 }).then((roms: string[]) => {
-  if (roms.length === 0) {
-    romControls.style.display = "none";
-    return;
-  }
+  if (roms.length === 0) return;
+  romControls.style.display = "flex";
   for (const name of roms) {
     const opt = document.createElement("option");
     opt.value = name;
@@ -388,8 +386,7 @@ fetch("/api/roms").then(r => {
     gameSelect.appendChild(opt);
   }
 }).catch(() => {
-  // No local ROMs available — hide combo, drag & drop only
-  romControls.style.display = "none";
+  // No local ROMs available — stays hidden, drag & drop only
 });
 
 gameSelect.addEventListener("change", () => {
