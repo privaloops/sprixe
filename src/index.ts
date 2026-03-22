@@ -166,13 +166,13 @@ pauseBtn.addEventListener("click", () => {
   if (emulator.isRunning()) {
     emulator.pause();
     emulator.suspendAudio();
-    pauseBtn.textContent = "RESUME";
+    pauseBtn.textContent = "Resume (P)";
     pauseBtn.classList.add("active");
     setStatus("Paused");
   } else if (emulator.isPaused()) {
     emulator.resume();
     if (!muted) emulator.resumeAudio();
-    pauseBtn.textContent = "PAUSE";
+    pauseBtn.textContent = "Pause (P)";
     pauseBtn.classList.remove("active");
     setStatus("Running");
   }
@@ -208,7 +208,7 @@ quitBtn.addEventListener("click", () => {
   domScreen.style.display = "none";
   gameScreen = null;
   controlsEl.classList.remove("visible");
-  pauseBtn.textContent = "Pause";
+  pauseBtn.textContent = "Pause (P)";
   pauseBtn.classList.remove("active");
   loadBtn.disabled = !gameSelect.value;
   setStatus("");
@@ -229,13 +229,13 @@ window.addEventListener("keydown", (e) => {
     if (emulator.isRunning()) {
       emulator.pause();
       emulator.suspendAudio();
-      pauseBtn.textContent = "RESUME";
+      pauseBtn.textContent = "Resume (P)";
       pauseBtn.classList.add("active");
       setStatus("Paused");
     } else if (emulator.isPaused()) {
       emulator.resume();
       if (!muted) emulator.resumeAudio();
-      pauseBtn.textContent = "PAUSE";
+      pauseBtn.textContent = "Pause (P)";
       pauseBtn.classList.remove("active");
       setStatus("Running");
     }
@@ -474,6 +474,47 @@ function renderGpColumn(player: number, container: HTMLDivElement): void {
   const autofireFlags = input.getAutofireFlags(player);
   container.innerHTML = "";
 
+  // Device assignment dropdown
+  const deviceRow = document.createElement("div");
+  deviceRow.className = "gp-row";
+  deviceRow.style.borderBottom = "1px solid #333";
+  deviceRow.style.marginBottom = "6px";
+  deviceRow.style.paddingBottom = "10px";
+
+  const deviceLabel = document.createElement("span");
+  deviceLabel.className = "gp-label";
+  deviceLabel.textContent = "Device";
+
+  const deviceSelect = document.createElement("select");
+  deviceSelect.dataset["deviceSelect"] = "1";
+  deviceSelect.style.cssText = "background:#1a1a1a;border:1px solid #333;color:#ccc;font-family:inherit;font-size:0.8rem;padding:4px 8px;border-radius:3px;cursor:pointer;";
+
+  const noneOpt = document.createElement("option");
+  noneOpt.value = "none";
+  noneOpt.textContent = "None (keyboard only)";
+  deviceSelect.appendChild(noneOpt);
+
+  const connectedPads = input.getConnectedGamepads();
+  for (const gp of connectedPads) {
+    const opt = document.createElement("option");
+    opt.value = String(gp.index);
+    opt.textContent = gp.id;
+    opt.dataset["gp"] = "1";
+    deviceSelect.appendChild(opt);
+  }
+
+  const currentGp = input.getPlayerGamepad(player);
+  deviceSelect.value = currentGp === null ? "none" : String(currentGp);
+
+  deviceSelect.addEventListener("change", () => {
+    const val = deviceSelect.value;
+    input.setPlayerGamepad(player, val === "none" ? null : parseInt(val, 10));
+  });
+
+  deviceRow.appendChild(deviceLabel);
+  deviceRow.appendChild(deviceSelect);
+  container.appendChild(deviceRow);
+
   for (const row of GP_CONFIG_ROWS) {
     const div = document.createElement("div");
     div.className = "gp-row";
@@ -590,13 +631,35 @@ for (const t of configTabs) {
   t.btn.addEventListener("click", () => switchTab(t.name));
 }
 
+let ctrlWasPaused = false;
+let gpPollId = 0;
+
 function openControlsModal(): void {
   renderGpModal();
   renderKbModal();
+  // Pause while config is open
+  ctrlWasPaused = emulator.isPaused();
+  if (!ctrlWasPaused && emulator.isRunning()) {
+    emulator.pause();
+    emulator.suspendAudio();
+  }
   showOverlay(ctrlOverlay);
+  // Poll for new gamepads while modal is open (gamepadconnected requires button press)
+  gpPollId = window.setInterval(() => {
+    const pads = emulator.getInputManager().getConnectedGamepads();
+    const selects = ctrlOverlay.querySelectorAll<HTMLSelectElement>("[data-device-select]");
+    for (const sel of selects) {
+      const currentOptions = sel.querySelectorAll("option[data-gp]");
+      if (currentOptions.length !== pads.length) {
+        renderGpModal(); // Re-render if gamepad count changed
+        break;
+      }
+    }
+  }, 500);
 }
 
 function closeControlsModal(): void {
+  clearInterval(gpPollId);
   if (listeningBtn) listeningBtn.classList.remove("listening");
   cancelAnimationFrame(listenRafId);
   listeningKey = null;
@@ -605,6 +668,11 @@ function closeControlsModal(): void {
   kbListeningKey = null;
   kbListeningBtn = null;
   hideOverlay(ctrlOverlay);
+  // Resume if we paused it
+  if (!ctrlWasPaused && emulator.isPaused()) {
+    emulator.resume();
+    if (!muted) emulator.resumeAudio();
+  }
 }
 
 controlsBtn.addEventListener("click", openControlsModal);
@@ -756,7 +824,10 @@ window.addEventListener("keydown", (e) => {
   // Don't trigger when a modal is open
   if (ctrlOverlay.classList.contains("open") || ssOverlay.classList.contains("open")) return;
 
-  if (e.code === "F5") {
+  if (e.code === "F1") {
+    e.preventDefault();
+    openControlsModal();
+  } else if (e.code === "F5") {
     e.preventDefault();
     openSsModal("save");
   } else if (e.code === "F8") {

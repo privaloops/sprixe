@@ -135,7 +135,11 @@ export class InputManager {
   private gamepadMappings: [GamepadMapping, GamepadMapping];
   private autofireFlags: [Set<AutofireKey>, Set<AutofireKey>];
   private autofireCounter = 0;
-  private gamepadIndices: [number | null, number | null] = [null, null];
+  // Device assignment per player: null = keyboard only, number = gamepad index
+  private playerGamepad: [number | null, number | null] = [null, null];
+  // Track connected gamepads (gamepadconnected events) since navigator.getGamepads()
+  // requires user interaction before returning non-null entries
+  private knownGamepads = new Map<number, string>(); // index → short id
 
   private boundKeyDown: (e: KeyboardEvent) => void;
   private boundKeyUp: (e: KeyboardEvent) => void;
@@ -158,6 +162,7 @@ export class InputManager {
       this.loadAutofire(AUTOFIRE_STORAGE_P1),
       this.loadAutofire(AUTOFIRE_STORAGE_P2),
     ];
+
 
     this.boundKeyDown = this.onKeyDown.bind(this);
     this.boundKeyUp = this.onKeyUp.bind(this);
@@ -357,26 +362,58 @@ export class InputManager {
   // ── Private: gamepad events ───────────────────────────────────────────────
 
   private onGamepadConnected(e: GamepadEvent): void {
-    if (this.gamepadIndices[0] === null) {
-      this.gamepadIndices[0] = e.gamepad.index;
-    } else if (this.gamepadIndices[1] === null) {
-      this.gamepadIndices[1] = e.gamepad.index;
+    const idx = e.gamepad.index;
+    this.knownGamepads.set(idx, e.gamepad.id.split("(")[0]!.trim());
+    // If already assigned somewhere, don't touch
+    if (this.playerGamepad[0] === idx || this.playerGamepad[1] === idx) return;
+    // Auto-assign to first player without a gamepad
+    if (this.playerGamepad[0] === null) {
+      this.playerGamepad[0] = idx;
+    } else if (this.playerGamepad[1] === null) {
+      this.playerGamepad[1] = idx;
     }
   }
 
   private onGamepadDisconnected(e: GamepadEvent): void {
-    if (this.gamepadIndices[0] === e.gamepad.index) {
-      this.gamepadIndices[0] = null;
-    } else if (this.gamepadIndices[1] === e.gamepad.index) {
-      this.gamepadIndices[1] = null;
-    }
+    this.knownGamepads.delete(e.gamepad.index);
+    if (this.playerGamepad[0] === e.gamepad.index) this.playerGamepad[0] = null;
+    if (this.playerGamepad[1] === e.gamepad.index) this.playerGamepad[1] = null;
   }
 
   private getGamepad(player: number): Gamepad | null {
-    const idx = this.gamepadIndices[player === 1 ? 1 : 0];
+    const idx = this.playerGamepad[player === 1 ? 1 : 0];
     if (idx === null) return null;
     const gamepads = navigator.getGamepads();
     return gamepads[idx] ?? null;
+  }
+
+  /** Assign a gamepad to a player. null = keyboard only. */
+  setPlayerGamepad(player: number, gamepadIndex: number | null): void {
+    this.playerGamepad[player === 1 ? 1 : 0] = gamepadIndex;
+  }
+
+  /** Get assigned gamepad index for a player (null = keyboard only). */
+  getPlayerGamepad(player: number): number | null {
+    return this.playerGamepad[player === 1 ? 1 : 0];
+  }
+
+  /** List all connected gamepads (id + index). */
+  getConnectedGamepads(): { index: number; id: string }[] {
+    // Use knownGamepads (from events) as primary source,
+    // supplemented by navigator.getGamepads() if available
+    const result = new Map<number, string>();
+    for (const [idx, id] of this.knownGamepads) {
+      result.set(idx, id);
+    }
+    try {
+      const gamepads = navigator.getGamepads();
+      for (const gp of gamepads) {
+        if (gp && !result.has(gp.index)) {
+          result.set(gp.index, gp.id.split("(")[0]!.trim());
+        }
+      }
+    } catch { /* Secure context required */ }
+    return [...result.entries()].map(([index, id]) => ({ index, id }));
   }
 
   // ── Private: read port logic ──────────────────────────────────────────────

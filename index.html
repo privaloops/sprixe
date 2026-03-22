@@ -144,6 +144,7 @@
         width: 100vw; height: 100vh; max-width: none; aspect-ratio: auto;
         border: none; border-radius: 0;
       }
+      #canvas-wrapper:fullscreen { cursor: none; }
       #canvas-wrapper:fullscreen #screen { width: 100%; height: 100%; object-fit: contain; }
       #canvas-wrapper:fullscreen #dom-screen { width: 100vw; height: 100vh; }
 
@@ -352,7 +353,7 @@
       </div>
 
       <div id="controls">
-        <button id="controls-btn" class="ctrl-btn">Config</button>
+        <button id="controls-btn" class="ctrl-btn">Config (F1)</button>
         <button id="save-btn" class="ctrl-btn">Save (F5)</button>
         <button id="load-btn-ss" class="ctrl-btn">Load (F8)</button>
         <button id="pause-btn" class="ctrl-btn">Pause (P)</button>
