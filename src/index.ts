@@ -499,16 +499,48 @@ function renderGpColumn(player: number, container: HTMLDivElement): void {
   }
 
   const currentGp = input.getPlayerGamepad(player);
-  deviceSelect.value = currentGp === null ? "none" : String(currentGp);
+  const savedId = input.getSavedGamepadId(player);
+
+  // If a gamepad was saved but not yet connected, show it as a pending option
+  if (currentGp === null && savedId) {
+    const shortId = savedId.split("(")[0]!.trim();
+    const pendingOpt = document.createElement("option");
+    pendingOpt.value = "saved";
+    pendingOpt.textContent = `${shortId} `;
+    pendingOpt.dataset["gp"] = "1";
+    deviceSelect.appendChild(pendingOpt);
+    deviceSelect.value = "saved";
+  } else {
+    deviceSelect.value = currentGp === null ? "none" : String(currentGp);
+  }
 
   deviceSelect.addEventListener("change", () => {
     const val = deviceSelect.value;
     input.setPlayerGamepad(player, val === "none" ? null : parseInt(val, 10));
+    renderGpColumn(player, container); // re-render to show/hide mapping rows
   });
 
   deviceRow.appendChild(deviceLabel);
   deviceRow.appendChild(deviceSelect);
   container.appendChild(deviceRow);
+
+  // If no gamepad assigned and none saved, keyboard only
+  if (currentGp === null && !savedId) {
+    const msg = document.createElement("div");
+    msg.style.cssText = "font-size:0.8rem;color:#444;text-align:center;padding:16px 0;";
+    msg.textContent = "Keyboard only — no gamepad mapping";
+    container.appendChild(msg);
+    return;
+  }
+
+  // If saved but not yet connected, show status + mapping (optimistic)
+  if (currentGp === null && savedId) {
+    const status = document.createElement("div");
+    status.style.cssText = "font-size:0.75rem;color:#666;text-align:center;padding:4px 0 8px;";
+    const shortId = savedId.split("(")[0]!.trim();
+    status.innerHTML = `<span style="color:#ff1a50;">${shortId}</span>`;
+    container.appendChild(status);
+  }
 
   for (const row of GP_CONFIG_ROWS) {
     const div = document.createElement("div");
@@ -627,7 +659,6 @@ for (const t of configTabs) {
 }
 
 let ctrlWasPaused = false;
-let gpPollId = 0;
 
 function openControlsModal(): void {
   renderGpModal();
@@ -639,22 +670,43 @@ function openControlsModal(): void {
     emulator.suspendAudio();
   }
   showOverlay(ctrlOverlay);
-  // Poll for new gamepads while modal is open (gamepadconnected requires button press)
-  gpPollId = window.setInterval(() => {
-    const pads = emulator.getInputManager().getConnectedGamepads();
-    const selects = ctrlOverlay.querySelectorAll<HTMLSelectElement>("[data-device-select]");
-    for (const sel of selects) {
-      const currentOptions = sel.querySelectorAll("option[data-gp]");
-      if (currentOptions.length !== pads.length) {
-        renderGpModal(); // Re-render if gamepad count changed
-        break;
-      }
-    }
-  }, 500);
 }
 
+
+// Update device dropdowns when a gamepad connects (no full re-render)
+window.addEventListener("gamepadconnected", () => {
+  if (!ctrlOverlay.classList.contains("open")) return;
+  const input = emulator.getInputManager();
+  const pads = input.getConnectedGamepads();
+  const selects = ctrlOverlay.querySelectorAll<HTMLSelectElement>("[data-device-select]");
+  for (const sel of selects) {
+    // Remove old gamepad options, keep "none" and "saved"
+    for (const opt of [...sel.options]) {
+      if (opt.value !== "none" && opt.value !== "saved" && opt.dataset["gp"]) opt.remove();
+    }
+    // Remove "saved" placeholder if real pad connected
+    for (const opt of [...sel.options]) {
+      if (opt.value === "saved") opt.remove();
+    }
+    // Add connected gamepads
+    for (const gp of pads) {
+      if (!sel.querySelector(`option[value="${gp.index}"]`)) {
+        const opt = document.createElement("option");
+        opt.value = String(gp.index);
+        opt.textContent = gp.id;
+        opt.dataset["gp"] = "1";
+        sel.appendChild(opt);
+      }
+    }
+  }
+  // Update selected values
+  for (let p = 0; p < 2; p++) {
+    const gp = input.getPlayerGamepad(p);
+    if (gp !== null && selects[p]) selects[p]!.value = String(gp);
+  }
+});
+
 function closeControlsModal(): void {
-  clearInterval(gpPollId);
   if (listeningBtn) listeningBtn.classList.remove("listening");
   cancelAnimationFrame(listenRafId);
   listeningKey = null;

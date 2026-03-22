@@ -137,6 +137,8 @@ export class InputManager {
   private autofireCounter = 0;
   // Device assignment per player: null = keyboard only, number = gamepad index
   private playerGamepad: [number | null, number | null] = [null, null];
+  // Saved gamepad IDs for reconnection matching
+  private savedGamepadIds: [string | null, string | null] = [null, null];
   // Track connected gamepads (gamepadconnected events) since navigator.getGamepads()
   // requires user interaction before returning non-null entries
   private knownGamepads = new Map<number, string>(); // index → short id
@@ -163,6 +165,11 @@ export class InputManager {
       this.loadAutofire(AUTOFIRE_STORAGE_P2),
     ];
 
+    // Restore saved gamepad IDs for reconnection matching
+    try {
+      const raw = localStorage.getItem("cps1-gamepad-devices");
+      if (raw) this.savedGamepadIds = JSON.parse(raw) as [string | null, string | null];
+    } catch { /* corrupted */ }
 
     this.boundKeyDown = this.onKeyDown.bind(this);
     this.boundKeyUp = this.onKeyUp.bind(this);
@@ -363,14 +370,22 @@ export class InputManager {
 
   private onGamepadConnected(e: GamepadEvent): void {
     const idx = e.gamepad.index;
-    this.knownGamepads.set(idx, e.gamepad.id.split("(")[0]!.trim());
+    const gpId = e.gamepad.id;
+    this.knownGamepads.set(idx, gpId.split("(")[0]!.trim());
     // If already assigned somewhere, don't touch
     if (this.playerGamepad[0] === idx || this.playerGamepad[1] === idx) return;
+    // Try to match saved gamepad ID first
+    for (const p of [0, 1] as const) {
+      if (this.playerGamepad[p] === null && this.savedGamepadIds[p] && gpId === this.savedGamepadIds[p]) {
+        this.setPlayerGamepad(p, idx);
+        return;
+      }
+    }
     // Auto-assign to first player without a gamepad
     if (this.playerGamepad[0] === null) {
-      this.playerGamepad[0] = idx;
+      this.setPlayerGamepad(0, idx);
     } else if (this.playerGamepad[1] === null) {
-      this.playerGamepad[1] = idx;
+      this.setPlayerGamepad(1, idx);
     }
   }
 
@@ -389,12 +404,27 @@ export class InputManager {
 
   /** Assign a gamepad to a player. null = keyboard only. */
   setPlayerGamepad(player: number, gamepadIndex: number | null): void {
-    this.playerGamepad[player === 1 ? 1 : 0] = gamepadIndex;
+    const idx = player === 1 ? 1 : 0;
+    this.playerGamepad[idx] = gamepadIndex;
+    // Save the gamepad ID for reconnection matching
+    if (gamepadIndex !== null) {
+      const gamepads = navigator.getGamepads();
+      const gp = gamepads[gamepadIndex];
+      this.savedGamepadIds[idx] = gp?.id ?? null;
+    } else {
+      this.savedGamepadIds[idx] = null;
+    }
+    try { localStorage.setItem("cps1-gamepad-devices", JSON.stringify(this.savedGamepadIds)); } catch {}
   }
 
   /** Get assigned gamepad index for a player (null = keyboard only). */
   getPlayerGamepad(player: number): number | null {
     return this.playerGamepad[player === 1 ? 1 : 0];
+  }
+
+  /** Get saved gamepad ID for a player (for display before connection). */
+  getSavedGamepadId(player: number): string | null {
+    return this.savedGamepadIds[player === 1 ? 1 : 0];
   }
 
   /** List all connected gamepads (id + index). */
