@@ -373,7 +373,10 @@ const romControls = getElement<HTMLDivElement>("rom-controls");
 // Build game selector from available ROMs in public/roms/
 const gameDescriptions = new Map(CPS1_PARENT_GAMES.map(g => [g.name, g.description]));
 
-fetch("/api/roms").then(r => r.json()).then((roms: string[]) => {
+fetch("/api/roms").then(r => {
+  if (!r.ok) throw new Error("not available");
+  return r.json();
+}).then((roms: string[]) => {
   if (roms.length === 0) {
     romControls.style.display = "none";
     return;
@@ -385,13 +388,8 @@ fetch("/api/roms").then(r => r.json()).then((roms: string[]) => {
     gameSelect.appendChild(opt);
   }
 }).catch(() => {
-  // Fallback: show full catalog
-  for (const game of CPS1_PARENT_GAMES) {
-    const opt = document.createElement("option");
-    opt.value = game.name;
-    opt.textContent = game.description;
-    gameSelect.appendChild(opt);
-  }
+  // No local ROMs available — hide combo, drag & drop only
+  romControls.style.display = "none";
 });
 
 gameSelect.addEventListener("change", () => {
