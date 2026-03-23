@@ -1,7 +1,7 @@
-# CPS1-Web
+# Arcade.ts
 
 Émulateur CPS1 (Capcom Play System 1) from scratch dans le browser.
-TypeScript strict + WebGL2 + AudioWorklet + WASM. Zéro dépendance d'émulation.
+TypeScript strict + WebGL2 + Web Worker audio + WASM. Zéro dépendance d'émulation.
 
 ## Commandes
 
@@ -24,22 +24,32 @@ src/
     cps1-video.ts   # CPS-A/CPS-B tile decode, layers, sprites, palette
     renderer.ts     # Canvas 2D renderer (fallback)
     renderer-webgl.ts # WebGL2 renderer (texture upload, default)
+    GameScreen.ts   # DOM renderer — hybrid canvas+DOM (experimental)
+    sprite-sheet.ts # Sprite tile cache (ImageData, no data URLs)
+    frame-state.ts  # Frame state extractor for DOM renderer
   audio/
+    audio-worker.ts   # Web Worker: Z80 + YM2151 + OKI autonomous audio
+    audio-output.ts   # AudioWorklet + SharedArrayBuffer ring buffer
     nuked-opm-wasm.ts # Nuked OPM (YM2151) WASM wrapper — cycle-accurate FM
-    nuked-opm.ts      # Nuked OPM port TS (référence, non utilisé en prod)
-    ym2151.ts         # YMFM-based YM2151 (fallback léger, non utilisé)
     oki6295.ts        # OKI MSM6295 ADPCM decoder
-    audio-output.ts   # AudioWorklet + SharedArrayBuffer ring buffer + resampling
+    qsound-wasm.ts    # QSound DSP HLE WASM (CPS1.5 games)
+    resampler.ts      # LinearResampler (shared main thread / worker)
   memory/
     bus.ts          # Bus 68000 — memory map, I/O, CPS-A/B registers
     z80-bus.ts      # Bus Z80 — audio ROM, RAM, YM2151, OKI, sound latch
+    z80-bus-qsound.ts # Bus Z80 QSound — shared RAM, DSP I/O
     rom-loader.ts   # ROM loader ZIP/MAME + 41 GameDefs + CPS-B configs + GFX mappers
+    game-defs.ts    # Per-game ROM layouts, CPS-B configs, GFX mappers
+    kabuki.ts       # Kabuki Z80 decryption (QSound games)
+    eeprom-93c46.ts # EEPROM 93C46 serial protocol (QSound games)
   input/
-    input.ts        # Keyboard + Gamepad API → CPS1 I/O ports
+    input.ts        # Keyboard + Gamepad API + device assignment + autofire
   game-catalog.ts   # 245 jeux CPS1 (source MAME 0.286)
+  save-state.ts     # Save/load state (4 slots, localStorage)
+  dip-switches.ts   # DIP switch definitions (56 games, from MAME)
   types.ts          # Interfaces partagées (BusInterface, Z80BusInterface)
-  index.ts          # Entry point — UI, game selector, shortcuts
-  emulator.ts       # Main loop — frame scheduling, CPU/audio/video orchestration
+  index.ts          # Entry point — UI, config modal, shortcuts
+  emulator.ts       # Main loop — frame scheduling, CPU/video orchestration
 wasm/
   opm.c, opm.h      # Source C Nuked OPM (LGPL 2.1+, github.com/nukeykt/Nuked-OPM)
   opm_wrapper.c     # Wrapper C pour Emscripten
@@ -61,12 +71,14 @@ tests/
 |-----------|-------------|
 | Langage | TypeScript (strict: noUncheckedIndexedAccess, exactOptionalPropertyTypes) |
 | Build | Vite |
-| Rendu | WebGL2 (fallback Canvas 2D) |
+| Rendu | WebGL2 (fallback Canvas 2D, experimental DOM) |
 | Audio FM | Nuked OPM → WASM (Emscripten, -O3) |
 | Audio ADPCM | OKI MSM6295 en TS |
-| Audio output | AudioWorklet + SharedArrayBuffer (COOP/COEP requis) |
+| Audio QSound | QSound HLE → WASM |
+| Audio output | Web Worker + AudioWorklet + SharedArrayBuffer |
 | Tests | Vitest |
 | UI | HTML/CSS vanilla |
+| Hosting | Vercel (COOP/COEP headers) |
 
 ## Référence hardware CPS1
 
@@ -77,52 +89,63 @@ tests/
 | Vidéo | CPS-A + CPS-B (3 scroll layers + 1 sprite layer) |
 | Audio FM | YM2151 (OPM) — 8 canaux, 4 opérateurs, 55930 Hz |
 | Audio ADPCM | OKI MSM6295 — 4 voix, 7575 Hz |
+| Audio QSound | DSP custom — spatialisation, 24038 Hz |
 | Résolution | 384×224 @ ~59.637 Hz |
 | VRAM | 192 KB |
 | Work RAM | 64 KB |
-| Palette | 192 entrées × 16 couleurs (16-bit CPS1 format) |
 
 ## Performance (profiled)
 
 | Composant | CPU % | Notes |
 |-----------|-------|-------|
 | M68000 | ~25% | Interpréteur TS, ~168K instructions/frame |
-| Z80 + OPM WASM | ~8% | ~60K Z80 cycles + ~30K OPM clocks/frame |
+| Z80 + OPM WASM | ~8% | Web Worker autonome |
 | Vidéo (CPU decode + WebGL2) | ~3% | Tile decode + texture upload |
 | **Total** | **~33%** | Sur Mac, Chrome |
 
 ## Jeux supportés
 
 41 GameDefs (parent sets) avec ROM layout, CPS-B config, et GFX mapper.
-245 jeux listés dans le dropdown (source MAME 0.286).
+245 jeux listés dans le catalogue (source MAME 0.286).
 ROMs chargées depuis public/roms/ (non incluses dans le repo).
 
 ## Raccourcis clavier
 
 | Touche | Action |
 |--------|--------|
-| P | Pause / Resume |
-| F | Fullscreen |
-| Escape | Quitter le jeu → sélecteur |
+| Arrows | Move |
+| A, S, D | Buttons 1-3 |
+| Z, X, C | Buttons 4-6 |
 | 5 | Insert coin |
 | 1 | 1P Start |
+| P | Pause / Resume |
+| M | Mute |
+| F1 | Config |
+| F5 | Save state |
+| F8 | Load state |
+| Double-click | Fullscreen |
+| Escape | Close dialog |
 
 ## Architecture audio
 
 ```
-Z80 → sound latch (1 byte, polled) → YM2151 registers
-Z80 → OKI6295 command register → ADPCM playback
-
-YM2151 (WASM) → 55930 Hz stereo
-OKI6295 (TS) → 7575 Hz mono
-
-Resampling (LinearResampler) → 48000 Hz
-Mixing: ymL*0.35 + ymR*0.35 + oki*0.30
-Soft limiter @ ±0.95
-→ SharedArrayBuffer ring buffer (4096 samples)
-→ AudioWorklet (separate thread)
-→ speakers
+Main Thread                     Audio Worker (Web Worker)
+───────────                     ────────────────────────
+68K écrit sound latch  ───────→ Z80 (3.58 MHz, autonomous timer)
+                                ├─ YM2151 WASM (cycle-accurate)
+                                └─ OKI6295 (TS ADPCM)
+                                Resampling → 48kHz
+                                Mixing: ymL*0.35 + ymR*0.35 + oki*0.30
+                                ↓
+                                SharedArrayBuffer ring buffer (8192 samples)
+                                ↓
+                                AudioWorklet (separate thread) → speakers
 ```
+
+Le Z80 audio tourne en autonome dans le Worker, comme sur le vrai hardware où il a son propre cristal.
+Le main thread ne poste que les sound latches via postMessage.
+
+Pour les jeux QSound (Dino, Punisher, WoF, Slammast), le Z80 reste sur le main thread (interleaved per-scanline avec le 68K car communication via shared RAM).
 
 ## Headers requis (dev server)
 
@@ -130,7 +153,8 @@ Soft limiter @ ±0.95
 Cross-Origin-Opener-Policy: same-origin
 Cross-Origin-Embedder-Policy: require-corp
 ```
-Sans ces headers, SharedArrayBuffer est indisponible → fallback ScriptProcessorNode (main thread) → crackling audio.
+Sans ces headers, SharedArrayBuffer est indisponible → fallback ScriptProcessorNode (main thread).
+`vercel.json` configure ces headers pour le déploiement Vercel.
 
 ## Build WASM (Nuked OPM)
 
@@ -150,11 +174,7 @@ emcc -O3 opm.c opm_wrapper.c -o opm.mjs \
 - Nuked OPM: [nukeykt/Nuked-OPM](https://github.com/nukeykt/Nuked-OPM) (LGPL 2.1+)
 - Game definitions: [mamedev/mame](https://github.com/mamedev/mame) src/mame/capcom/cps1.cpp + cps1_v.cpp
 - ROM catalog: MAME 0.286 via `mame -listxml`
-
-## mdma
-
-- **Workflow** : `default`
-- **Git** : `default`
+- DIP switches: parsed from MAME cps1.cpp INPUT_PORTS blocks
 
 ## mdma
 
