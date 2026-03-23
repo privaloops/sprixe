@@ -51,9 +51,9 @@ Each fix revealed the next problem:
 
 ### The audio battle
 
-<!-- TES MOTS : décris le moment où le premier son est sorti, l'émotion -->
+When we got a game displaying more or less correctly, I thought the hard part was over. Wrong.
 
-Getting pixels on screen is satisfying. Getting sound out of the speakers is emotional.
+For someone who knew almost nothing about emulation a week ago, I assumed audio would be a formality. It wasn't. With graphics, a pixel is either right or wrong — there's no debate. Audio is different. You can *argue* about synthesis quality. Clipping is barely noticeable on speakers but screams through headphones. The same mix sounds fine in one game and terrible in another.
 
 The CPS1 audio system is its own computer: a Z80 CPU running at 3.58 MHz, connected to a Yamaha YM2151 FM synthesizer and an OKI MSM6295 ADPCM sample player. The main 68000 CPU communicates with the Z80 through a single byte — the "sound latch".
 
@@ -63,7 +63,9 @@ Three bugs stood between silence and music:
 2. **No timer interleaving** — The YM2151 timers only advanced after the Z80 finished its entire frame budget. But the Z80 music driver depends on Timer A interrupts to sequence notes. No interrupts during execution = the sequencer is frozen.
 3. **Spurious IRQs** — Every sound latch write was triggering a Z80 interrupt. The CPS1 doesn't do this — the Z80 polls the latch during its Timer A interrupt routine.
 
-<!-- TES MOTS : le moment "AUDIO WORKS" -->
+After finally getting Street Fighter II to sound right, I discovered that some later CPS1 games use an entirely different audio system — the QSound DSP, found on the so-called "CPS1.5" boards released just before the CPS2. Different chip, different Z80 bus, encrypted CPU, shared memory communication instead of a simple latch. A whole new architecture to implement.
+
+Even today it's not perfect. The FM synthesis is the one component I gave up writing in TypeScript — I ended up compiling Nuked OPM, a cycle-accurate C emulation based on the actual YM2151 die-shot, to WASM. Some battles you don't need to fight twice.
 
 ## Day 2 — Making it sound right
 
