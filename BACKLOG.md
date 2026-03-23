@@ -44,8 +44,12 @@
 
 ## Audio
 
+- [x] **Web Worker audio** — Z80 + YM2151 + OKI off main thread, autonomous timer
+- [x] **QSound audio resampling** — 24038 Hz → 48kHz via LinearResampler
 - [ ] **QSound stereo panning** — Currently mono output, should be true stereo
 - [ ] **Audio worker state on save/load** — Music resumes but YM2151 envelope state may be slightly off
+- [ ] **OKI sample crackling** — Slight crackling on some OKI samples, may need better interpolation
+- [ ] **Volume per channel** — Allow user to adjust YM2151 / OKI / QSound balance
 
 ## UI / UX
 
