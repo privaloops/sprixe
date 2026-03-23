@@ -1,35 +1,68 @@
 # Backlog
 
-## M68000 CPU — Tom Harte test failures (41 tests)
+## Done (session 21-22 mars)
 
-- [ ] **ADDX.b/MOVE.b/MOVEA avec -(A7)/(A7)+** — Le 68000 force A7 pair: décrémente/incrémente de 2 (pas 1) pour les ops byte sur A7. Fix localisé dans m68000.ts (predecrement/postincrement).
-- [ ] **DIVS** — Flags incorrects (N, Z, V, C) sur division signée. 9 vecteurs échouent.
-- [ ] **DIVU** — Flags incorrects sur division non-signée. 10 vecteurs échouent.
-- [ ] **MULS** — Flags incorrects sur multiplication signée. 11 vecteurs échouent.
-- [ ] **MULU** — Flags incorrects sur multiplication non-signée. 11 vecteurs échouent.
+- [x] Web Worker audio — Z80+YM2151+OKI off main thread, autonomous timer
+- [x] QSound audio resampling (24038 → 48kHz)
+- [x] Kabuki Z80 decryption — all QSound games boot with audio
+- [x] Gamepad remapping with P1/P2 config, autofire, localStorage persistence
+- [x] Keyboard remapping with AZERTY/QWERTY layout detection
+- [x] Save states — 4 slots, full audio restore (YM2151 WASM heap snapshot)
+- [x] DIP switches — 56 games with real MAME definitions, auto-generated from cps1.cpp
+- [x] CRT filter (scanlines + vignetting)
+- [x] TATE mode fixes (canvas + DOM)
+- [x] DOM renderer sprite flickering fix (putImageData instead of data URLs)
+- [x] Unified Config modal (Joypad/Keyboard/Display/DIP tabs)
+- [x] Device assignment — per-player gamepad selection with persistence
+- [x] Buttons 4-6 (kicks) for SF2 via CPS-B register 0x36
+- [x] Ring buffer 4096 → 8192 for better audio margin
+- [x] ROM cache from public/roms/
+- [x] UI redesign, project renamed to Arcade.ts
+- [x] Vercel deployment with COOP/COEP headers
+
+## M68000 CPU — Tom Harte test failures
+
+- [ ] **ADDX.b/MOVE.b/MOVEA avec -(A7)/(A7)+** — 68000 forces A7 even: decrement/increment by 2 for byte ops on A7
+- [ ] **DIVS** — Incorrect flags (N, Z, V, C) on signed division. 9 vectors fail.
+- [ ] **DIVU** — Incorrect flags on unsigned division. 10 vectors fail.
+- [ ] **MULS** — Incorrect flags on signed multiplication. 11 vectors fail.
+- [ ] **MULU** — Incorrect flags on unsigned multiplication. 11 vectors fail.
+- [ ] **DBcc** — SSP/PC incorrect on some edge cases
+
+## Z80 — Tom Harte test failures
+
+- [ ] **SCF/CCF** — Undocumented flag bits 3, 5
+- [ ] **BIT b,(HL)** — Undocumented flag bits 3, 5
+- [ ] **Block I/O (INIR, OTIR, etc.)** — Complex flag calculation not implemented
+
+## Video
+
+- [ ] **Row scroll on scroll1/scroll3** — Only scroll2 supports row scroll currently
+- [ ] **Column scroll** — Not implemented
+- [ ] **Star field** — Background effect used by some games (1941)
+- [ ] **P2 buttons 4-6** — May not work on some games (needs testing)
 
 ## Audio
 
-- [ ] **Web Worker audio** — Déporter la génération audio (Z80 + OPM + OKI) dans un Web Worker séparé du main thread. Résoudrait le crépitement son en mode DOM renderer (les repaints DOM bloquent le main thread et causent des underruns du ring buffer audio).
-- [ ] **QSound audio resampling** — `pushSamples` ne resample pas (24038 → 48000 Hz). Ajouter un resampler QSound dans AudioOutput ou utiliser `pushEmulatorSamples` avec un rate QSound.
+- [ ] **QSound stereo panning** — Currently mono output, should be true stereo
+- [ ] **Audio worker state on save/load** — Music resumes but YM2151 envelope state may be slightly off
 
-## QSound (CPS1.5)
+## UI / UX
 
-- [x] **QSound DSP HLE** — WASM port from MAME (22KB)
-- [x] **Z80 bus QSound** — Shared RAM, DSP I/O, 250 Hz IRQ
-- [x] **GFX mapper ranges** — Auto-generated from bankSizes when ranges[]
-- [x] **Boot handshake** — Pre-run Z80 + DSP ROM loading
-- [x] **DSP ROM** — dl-1425.bin loaded from game ZIP
-- [ ] **Kabuki Z80 decryption** — Tous les jeux QSound utilisent le chiffrement Kabuki sur le Z80. Dino fonctionne (encryption faible?), mais Punisher/WoF/Slammast nécessitent un décodeur Kabuki. Code MAME: `kabuki.cpp` + tables de décodage par jeu (`dino_decode`, `punisher_decode`, etc.)
-- [ ] **Dino layerEnableMask** — Corriger les valeurs (tout à 0x16, devrait avoir des bits distincts)
-- [ ] **Dino son** — Pas de son actuellement (resampling manquant + vérifier si le QSound DSP génère bien des samples)
+- [ ] **Mobile touch controls** — Virtual d-pad and buttons for phones/tablets
+- [ ] **Speed control** — Fast forward / slow motion
+- [ ] **FPS counter** — Optional display
+- [ ] **Screenshot button** — Save current frame as PNG
+- [ ] **Rewind** — Save N frames in circular buffer, hold button to rewind
 
-### Jeux QSound — statut
+## Platform expansion
 
-| Jeu | Boot | Video | Son |
-|-----|------|-------|-----|
-| Cadillacs and Dinosaurs (dino) | OK | OK | Non |
-| The Punisher (punisher) | Non (Kabuki) | - | - |
-| Saturday Night Slam Masters (slammast) | Non (Kabuki) | - | - |
-| Muscle Bomber Duo (mbombrd) | Non (Kabuki) | - | - |
-| Warriors of Fate (wof) | Non (Kabuki) | - | - |
+- [ ] **Neo Geo (MVS)** — Same CPUs (68000 + Z80), different video (sprite-only), YM2610 audio
+- [ ] **CPS2** — Evolution of CPS1, encrypted 68000, QSound standard
+- [ ] **CPS3** — SH-2 CPU, very different architecture
+
+## Infrastructure
+
+- [ ] **GitHub Pages** as alternative hosting (with service worker for COOP/COEP headers)
+- [ ] **PWA** — Offline support via service worker
+- [ ] **CI** — Run tests on PR
