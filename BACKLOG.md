@@ -1,6 +1,6 @@
 # Backlog
 
-## Done (session 21-22 mars)
+## Done (session March 21-22)
 
 - [x] Web Worker audio — Z80+YM2151+OKI off main thread, autonomous timer
 - [x] QSound audio resampling (24038 → 48kHz)
@@ -22,7 +22,7 @@
 
 ## M68000 CPU — Tom Harte test failures
 
-- [ ] **ADDX.b/MOVE.b/MOVEA avec -(A7)/(A7)+** — 68000 forces A7 even: decrement/increment by 2 for byte ops on A7
+- [ ] **ADDX.b/MOVE.b/MOVEA with -(A7)/(A7)+** — 68000 forces A7 even: decrement/increment by 2 for byte ops on A7
 - [ ] **DIVS** — Incorrect flags (N, Z, V, C) on signed division. 9 vectors fail.
 - [ ] **DIVU** — Incorrect flags on unsigned division. 10 vectors fail.
 - [ ] **MULS** — Incorrect flags on signed multiplication. 11 vectors fail.

@@ -1,16 +1,16 @@
 # Arcade.ts
 
-Émulateur CPS1 (Capcom Play System 1) from scratch dans le browser.
-TypeScript strict + WebGL2 + Web Worker audio + WASM. Zéro dépendance d'émulation.
+CPS1 (Capcom Play System 1) arcade emulator, from scratch, in the browser.
+TypeScript strict + WebGL2 + Web Worker audio + WASM. Zero emulation dependencies.
 
-## Commandes
+## Commands
 
 ```bash
-npm run dev      # Serveur de développement Vite (hot reload)
-npm run build    # Compilation TypeScript + build Vite (sortie dans dist/)
-npm run preview  # Prévisualisation du build de production
-npm test         # Tests unitaires (vitest)
-npm run test:watch  # Tests en mode watch
+npm run dev      # Vite dev server (hot reload)
+npm run build    # TypeScript + Vite production build → dist/
+npm run preview  # Preview production build
+npm test         # Unit tests (Vitest)
+npm run test:watch  # Tests in watch mode
 ```
 
 ## Structure
@@ -18,8 +18,8 @@ npm run test:watch  # Tests en mode watch
 ```
 src/
   cpu/
-    m68000.ts       # Motorola 68000 interpréteur (~3000 lignes)
-    z80.ts          # Zilog Z80 interpréteur (~2250 lignes)
+    m68000.ts       # Motorola 68000 interpreter (~3000 lines)
+    z80.ts          # Zilog Z80 interpreter (~2250 lines)
   video/
     cps1-video.ts   # CPS-A/CPS-B tile decode, layers, sprites, palette
     renderer.ts     # Canvas 2D renderer (fallback)
@@ -35,84 +35,84 @@ src/
     qsound-wasm.ts    # QSound DSP HLE WASM (CPS1.5 games)
     resampler.ts      # LinearResampler (shared main thread / worker)
   memory/
-    bus.ts          # Bus 68000 — memory map, I/O, CPS-A/B registers
-    z80-bus.ts      # Bus Z80 — audio ROM, RAM, YM2151, OKI, sound latch
-    z80-bus-qsound.ts # Bus Z80 QSound — shared RAM, DSP I/O
-    rom-loader.ts   # ROM loader ZIP/MAME + 41 GameDefs + CPS-B configs + GFX mappers
+    bus.ts          # 68000 bus — memory map, I/O, CPS-A/B registers
+    z80-bus.ts      # Z80 bus — audio ROM, RAM, YM2151, OKI, sound latch
+    z80-bus-qsound.ts # Z80 QSound bus — shared RAM, DSP I/O
+    rom-loader.ts   # MAME ZIP ROM loader + 41 GameDefs + CPS-B configs + GFX mappers
     game-defs.ts    # Per-game ROM layouts, CPS-B configs, GFX mappers
     kabuki.ts       # Kabuki Z80 decryption (QSound games)
     eeprom-93c46.ts # EEPROM 93C46 serial protocol (QSound games)
   input/
     input.ts        # Keyboard + Gamepad API + device assignment + autofire
-  game-catalog.ts   # 245 jeux CPS1 (source MAME 0.286)
+  game-catalog.ts   # 245 CPS1 games (source: MAME 0.286)
   save-state.ts     # Save/load state (4 slots, localStorage)
   dip-switches.ts   # DIP switch definitions (56 games, from MAME)
-  types.ts          # Interfaces partagées (BusInterface, Z80BusInterface)
+  types.ts          # Shared interfaces (BusInterface, Z80BusInterface)
   index.ts          # Entry point — UI, config modal, shortcuts
   emulator.ts       # Main loop — frame scheduling, CPU/video orchestration
 wasm/
-  opm.c, opm.h      # Source C Nuked OPM (LGPL 2.1+, github.com/nukeykt/Nuked-OPM)
-  opm_wrapper.c     # Wrapper C pour Emscripten
-  opm.mjs           # WASM compilé (ESM, SINGLE_FILE)
+  opm.c, opm.h      # Nuked OPM C source (LGPL 2.1+, github.com/nukeykt/Nuked-OPM)
+  opm_wrapper.c     # Emscripten C wrapper
+  opm.mjs           # Compiled WASM (ESM, SINGLE_FILE)
 src/__tests__/
-  bus.test.ts       # Tests bus address decoding
-  m68000.test.ts    # Tests CPU M68000 (opcodes basiques)
-  m68000-tom-harte.test.ts  # Tests M68000 Tom Harte (84 instructions, 200 vecteurs chacune)
-  z80-tom-harte.test.ts     # Tests Z80 SingleStepTests (588 instructions, 200 vecteurs chacune)
-  oki6295.test.ts   # Tests OKI6295 (ADPCM, commandes)
+  bus.test.ts       # Bus address decoding tests
+  m68000.test.ts    # M68000 CPU tests (basic opcodes)
+  m68000-tom-harte.test.ts  # M68000 Tom Harte tests (84 instructions, 200 vectors each)
+  z80-tom-harte.test.ts     # Z80 SingleStepTests (588 instructions, 200 vectors each)
+  oki6295.test.ts   # OKI6295 tests (ADPCM, commands)
 tests/
-  68000/*.json      # Vecteurs Tom Harte M68000 (ProcessorTests)
-  z80/*.json        # Vecteurs SingleStepTests Z80 (JSMoo)
+  68000/*.json      # Tom Harte M68000 test vectors (ProcessorTests)
+  z80/*.json        # Z80 SingleStepTests vectors (JSMoo)
 ```
 
-## Stack technique
+## Tech stack
 
-| Composant | Technologie |
-|-----------|-------------|
-| Langage | TypeScript (strict: noUncheckedIndexedAccess, exactOptionalPropertyTypes) |
+| Component | Technology |
+|-----------|------------|
+| Language | TypeScript (strict: noUncheckedIndexedAccess, exactOptionalPropertyTypes) |
 | Build | Vite |
-| Rendu | WebGL2 (fallback Canvas 2D, experimental DOM) |
-| Audio FM | Nuked OPM → WASM (Emscripten, -O3) |
-| Audio ADPCM | OKI MSM6295 en TS |
-| Audio QSound | QSound HLE → WASM |
+| Rendering | WebGL2 (fallback Canvas 2D, experimental DOM) |
+| FM audio | Nuked OPM → WASM (Emscripten, -O3) |
+| ADPCM audio | OKI MSM6295 in TS |
+| QSound audio | QSound HLE → WASM |
 | Audio output | Web Worker + AudioWorklet + SharedArrayBuffer |
 | Tests | Vitest |
 | UI | HTML/CSS vanilla |
 | Hosting | Vercel (COOP/COEP headers) |
 
-## Référence hardware CPS1
+## CPS1 hardware reference
 
-| Composant | Spec |
+| Component | Spec |
 |-----------|------|
-| CPU principal | Motorola 68000 @ 10 MHz |
-| CPU audio | Zilog Z80 @ 3.579545 MHz |
-| Vidéo | CPS-A + CPS-B (3 scroll layers + 1 sprite layer) |
-| Audio FM | YM2151 (OPM) — 8 canaux, 4 opérateurs, 55930 Hz |
-| Audio ADPCM | OKI MSM6295 — 4 voix, 7575 Hz |
-| Audio QSound | DSP custom — spatialisation, 24038 Hz |
-| Résolution | 384×224 @ ~59.637 Hz |
+| Main CPU | Motorola 68000 @ 10 MHz |
+| Audio CPU | Zilog Z80 @ 3.579545 MHz |
+| Video | CPS-A + CPS-B (3 scroll layers + 1 sprite layer) |
+| FM audio | YM2151 (OPM) — 8 channels, 4 operators, 55930 Hz |
+| ADPCM audio | OKI MSM6295 — 4 voices, 7575 Hz |
+| QSound audio | Custom DSP — surround spatialization, 24038 Hz |
+| Resolution | 384×224 @ ~59.637 Hz |
 | VRAM | 192 KB |
 | Work RAM | 64 KB |
 
 ## Performance (profiled)
 
-| Composant | CPU % | Notes |
+| Component | CPU % | Notes |
 |-----------|-------|-------|
-| M68000 | ~25% | Interpréteur TS, ~168K instructions/frame |
-| Z80 + OPM WASM | ~8% | Web Worker autonome |
-| Vidéo (CPU decode + WebGL2) | ~3% | Tile decode + texture upload |
-| **Total** | **~33%** | Sur Mac, Chrome |
+| M68000 | ~25% | TS interpreter, ~168K instructions/frame |
+| Z80 + OPM WASM | ~8% | Autonomous Web Worker |
+| Video (CPU decode + WebGL2) | ~3% | Tile decode + texture upload |
+| **Total** | **~33%** | Mac, Chrome |
 
-## Jeux supportés
+## Supported games
 
-41 GameDefs (parent sets) avec ROM layout, CPS-B config, et GFX mapper.
-245 jeux listés dans le catalogue (source MAME 0.286).
-ROMs chargées depuis public/roms/ (non incluses dans le repo).
+41 GameDefs (parent sets) with ROM layout, CPS-B config, and GFX mapper.
+245 games in the catalog (source: MAME 0.286).
+ROMs loaded from public/roms/ (not included in the repo).
 
-## Raccourcis clavier
+## Keyboard shortcuts
 
-| Touche | Action |
-|--------|--------|
+| Key | Action |
+|-----|--------|
 | Arrows | Move |
 | A, S, D | Buttons 1-3 |
 | Z, X, C | Buttons 4-6 |
@@ -126,12 +126,12 @@ ROMs chargées depuis public/roms/ (non incluses dans le repo).
 | Double-click | Fullscreen |
 | Escape | Close dialog |
 
-## Architecture audio
+## Audio architecture
 
 ```
 Main Thread                     Audio Worker (Web Worker)
 ───────────                     ────────────────────────
-68K écrit sound latch  ───────→ Z80 (3.58 MHz, autonomous timer)
+68K writes sound latch ───────→ Z80 (3.58 MHz, autonomous timer)
                                 ├─ YM2151 WASM (cycle-accurate)
                                 └─ OKI6295 (TS ADPCM)
                                 Resampling → 48kHz
@@ -142,21 +142,20 @@ Main Thread                     Audio Worker (Web Worker)
                                 AudioWorklet (separate thread) → speakers
 ```
 
-Le Z80 audio tourne en autonome dans le Worker, comme sur le vrai hardware où il a son propre cristal.
-Le main thread ne poste que les sound latches via postMessage.
+The audio Z80 runs autonomously in the Worker, just like real hardware where it has its own crystal oscillator. The main thread only posts sound latches via postMessage.
 
-Pour les jeux QSound (Dino, Punisher, WoF, Slammast), le Z80 reste sur le main thread (interleaved per-scanline avec le 68K car communication via shared RAM).
+For QSound games (Dino, Punisher, WoF, Slammast), the Z80 stays on the main thread (interleaved per-scanline with the 68K due to shared RAM communication).
 
-## Headers requis (dev server)
+## Required headers (dev server)
 
 ```
 Cross-Origin-Opener-Policy: same-origin
 Cross-Origin-Embedder-Policy: require-corp
 ```
-Sans ces headers, SharedArrayBuffer est indisponible → fallback ScriptProcessorNode (main thread).
-`vercel.json` configure ces headers pour le déploiement Vercel.
+Without these headers, SharedArrayBuffer is unavailable → fallback to ScriptProcessorNode (main thread).
+`vercel.json` configures these headers for Vercel deployment.
 
-## Build WASM (Nuked OPM)
+## Building WASM (Nuked OPM)
 
 ```bash
 source ~/emsdk/emsdk_env.sh
@@ -169,7 +168,7 @@ emcc -O3 opm.c opm_wrapper.c -o opm.mjs \
   -s EXPORTED_RUNTIME_METHODS='["HEAPF32"]'
 ```
 
-## Sources et crédits
+## Credits
 
 - Nuked OPM: [nukeykt/Nuked-OPM](https://github.com/nukeykt/Nuked-OPM) (LGPL 2.1+)
 - Game definitions: [mamedev/mame](https://github.com/mamedev/mame) src/mame/capcom/cps1.cpp + cps1_v.cpp
