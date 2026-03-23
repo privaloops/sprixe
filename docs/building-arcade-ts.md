@@ -1,6 +1,6 @@
 # Building a CPS1 Arcade Emulator from Scratch in TypeScript
 
-*How I went from zero to playing Street Fighter II in the browser in 5 days — and what I learned about hardware, audio, and the browser as a platform.*
+*How I built a CPS1 arcade emulator from scratch — and what I learned about hardware, audio, and the browser as a platform.*
 
 ---
 
@@ -12,7 +12,7 @@ I've been a developer for 20 years, and I was looking for a project that would r
 
 I got sucked in. The obsession kicked in immediately. The feeling of victory when just *an image* shows up on screen — even a broken, garbled one — is something I wasn't prepared for.
 
-Five days later, Street Fighter II was running in Chrome with sound.
+Not long after, Street Fighter II was running in Chrome with sound.
 
 ## Day 1 — From nothing to "something is happening"
 
@@ -170,9 +170,8 @@ The audio output uses an **AudioWorklet** reading from a **SharedArrayBuffer** r
 
 | Metric | Value |
 |--------|-------|
-| Development time | 5 days |
 | Lines of TypeScript | ~20,000 |
-| Games supported | 39 parent ROM sets |
+| Games supported | 39 parent ROM sets (~20-25 fully playable, others with varying bugs) |
 | CPU usage | ~33% on a modern Mac |
 | M68000 test vectors | 16,800 |
 | Z80 test vectors | 117,600 |
@@ -182,17 +181,17 @@ The audio output uses an **AudioWorklet** reading from a **SharedArrayBuffer** r
 
 ## What I learned
 
-<!-- TES MOTS : tes vraies leçons personnelles -->
+1. **Get out of the tunnel.** I know, you know, we all know: locking yourself in a debug session for hours feels necessary and inevitable. It's not. You should set a timer — one hour, two hours max — then stop coding and think. Step back, look at the bigger picture. I didn't do this. I burned an entire day on a bug that MAME's debugger found in two minutes.
 
-1. **Endianness is the enemy.** The CPS1 is big-endian. JavaScript is little-endian. At least 5 bugs came from byte order confusion — pixels, planes, input ports, sprite words, decode rows.
+2. **Building from zero is addictive.** Starting a project from scratch with real technical challenges is intoxicating. Seeing a single pixel appear on screen, hearing a first beep come out of your speakers — these are massive victories. A serotonin hit you don't get from adding a feature to an existing codebase.
 
-2. **One bit matters.** A single bitplane swap turns Ryu's face red. A single mask (`& 0xffff`) silences entire audio channels. A single fetch method (`fetchByte` vs `fetchOpcode`) makes QSound completely mute.
+3. **You're not smarter than everyone who came before you.** This is the classic side-project trap. You think you're on virgin ground, but pioneers have already walked this path — and suffered through the same problems. There's comfort in knowing you're not alone. And honestly, we shouldn't complain too much — they didn't have Claude Code.
 
-3. **MAME is the Bible.** Every time I was stuck, reading MAME's source code resolved it. 400,000 lines of C++ written over 25 years by hundreds of contributors — it's the definitive reference for arcade hardware.
+4. **Endianness is the enemy.** The CPS1 is big-endian. JavaScript is little-endian. At least 5 bugs came from byte order confusion — pixels, planes, input ports, sprite words, decode rows.
 
-4. **The browser is a hostile emulation environment.** User gesture requirements for AudioContext, CORS restrictions, SharedArrayBuffer requiring specific HTTP headers, fullscreen API inconsistencies, gamepad detection requiring button press — every browser API has a gotcha.
+5. **One bit matters.** A single bitplane swap turns Ryu's face red. A single mask (`& 0xffff`) silences entire audio channels. A single fetch method (`fetchByte` vs `fetchOpcode`) makes QSound completely mute.
 
-5. **The real hardware is elegant.** The CPS1 does scroll layers, sprites, palette animation, and stereo FM audio with two CPUs, two custom ASICs, and a handful of standard chips — all on a board the size of a paperback book. Emulating it takes 20,000 lines of TypeScript and a modern computer.
+6. **The real hardware is elegant.** The CPS1 does scroll layers, sprites, palette animation, and stereo FM audio with two CPUs, two custom ASICs, and a handful of standard chips — all on a board the size of a paperback book. Emulating it takes 20,000 lines of TypeScript and a modern computer.
 
 ---
 
