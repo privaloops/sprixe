@@ -1,4 +1,4 @@
-# CPS1-Web : Chronique de développement avec Claude
+# Arcade.ts : Chronique de développement avec Claude
 
 > Mémento exhaustif du développement d'un émulateur CPS1 from scratch dans le browser, en pair-programming avec Claude. Destiné à servir de matière première pour un article de blog. À compléter au fil de l'eau.
 
@@ -118,7 +118,7 @@ Passage de SF2-only à 41 jeux supportés :
 - Architecture CPS-B configurable par jeu (ID, layer control, priority masks, palette control)
 - GFX mapper par jeu (remplacement du mapper_STF29 hardcodé)
 - 245 jeux dans le catalogue (source MAME 0.286)
-- Téléchargement depuis archive.org via proxy Vite (CORS)
+- ROM loading depuis fichiers locaux
 
 ### Le fullscreen : 4 commits pour un feature
 
