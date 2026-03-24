@@ -21,7 +21,7 @@ const PR_OCTAVES = 3;
 const PR_KEYS = PR_OCTAVES * 12; // 36
 const FM_ROW_H = 32; // px per FM channel strip
 const FM_TOTAL_H = FM_CHANNELS * FM_ROW_H; // 256
-const KB_WIDTH = 56;
+const KB_WIDTH = 44;
 const KEY_H = FM_TOTAL_H / PR_KEYS; // ~7px per key
 
 const IS_BLACK = [0, 1, 0, 1, 0, 0, 1, 0, 1, 0, 1, 0];
@@ -293,44 +293,41 @@ export class AudioPanel {
     const ctx = this.kbCtx!;
     const w = KB_WIDTH;
     const h = FM_TOTAL_H;
+    const blackW = Math.round(w * 0.55);
 
-    // Background
-    ctx.fillStyle = "#0a0a0a";
+    // Fill entire keyboard white
+    ctx.fillStyle = "#ccc";
     ctx.fillRect(0, 0, w, h);
 
-    // First pass: draw all white keys
+    // Draw white key separators (between E/F and B/C — the naturals without sharps between)
     for (let i = 0; i < PR_KEYS; i++) {
       const semi = i % 12;
       if (IS_BLACK[semi]) continue;
       const y = (PR_KEYS - 1 - i) * KEY_H;
-      ctx.fillStyle = "#d4d4d4";
-      ctx.fillRect(1, y, w - 2, KEY_H - 1);
-      // Subtle 3D border
-      ctx.fillStyle = "#eee";
-      ctx.fillRect(1, y, w - 2, 1);
+      // Bottom border of each white key
       ctx.fillStyle = "#999";
-      ctx.fillRect(1, y + KEY_H - 2, w - 2, 1);
+      ctx.fillRect(0, y + KEY_H - 1, w, 1);
     }
 
-    // Second pass: draw black keys on top
+    // Draw black keys on top (shorter, only covers left portion)
     for (let i = 0; i < PR_KEYS; i++) {
       const semi = i % 12;
       if (!IS_BLACK[semi]) continue;
       const y = (PR_KEYS - 1 - i) * KEY_H;
-      ctx.fillStyle = "#222";
-      ctx.fillRect(1, y, w * 0.55, KEY_H);
-      // Subtle highlight
+      ctx.fillStyle = "#1a1a1a";
+      ctx.fillRect(0, y, blackW, KEY_H);
+      // Highlight edge
       ctx.fillStyle = "#333";
-      ctx.fillRect(1, y, w * 0.55, 1);
+      ctx.fillRect(blackW - 1, y, 1, KEY_H);
     }
 
-    // C labels on white keys
+    // C labels
     for (let i = 0; i < PR_KEYS; i += 12) {
       const y = (PR_KEYS - 1 - i) * KEY_H;
       const octave = PR_FIRST_OCTAVE + Math.floor(i / 12);
       ctx.fillStyle = "#666";
-      ctx.font = "bold 8px Courier New";
-      ctx.fillText(`C${octave}`, w - 22, y + KEY_H - 1);
+      ctx.font = `${Math.min(KEY_H - 1, 9)}px Courier New`;
+      ctx.fillText(`C${octave}`, blackW + 2, y + KEY_H - 1);
     }
 
     // Highlight active notes (pressed keys)
@@ -342,12 +339,12 @@ export class AudioPanel {
         const semi = offset % 12;
         const isBlack = IS_BLACK[semi];
 
-        // Colored key with glow
+        // Colored pressed key
         ctx.fillStyle = color;
         if (isBlack) {
-          ctx.fillRect(1, y, w * 0.55, KEY_H);
+          ctx.fillRect(0, y, blackW, KEY_H);
         } else {
-          ctx.fillRect(1, y, w - 2, KEY_H - 1);
+          ctx.fillRect(0, y, w, KEY_H - 1);
         }
         // Glow
         ctx.fillStyle = color + "33";

@@ -118,22 +118,47 @@ function getCarrierTl(ch: number): number {
   return ymTl[ch + 24]!; // slot 3 (operator 4, offset = ch + 3*8)
 }
 
+// Pending TL restores (written at start of next frame, before Z80 runs)
+const pendingTlRestores: Array<{ reg: number; val: number }> = [];
+
 /** Apply channel mask changes: update mute flags for FM and OKI voiceMask. */
 function applyChannelMask(mask: number): void {
   if (mask === lastChannelMask) return;
   lastChannelMask = mask;
 
-  // FM channels (bits 0-7): just update the mute flags.
-  // Muted channels have their TL writes replaced with 0x7F in the write callback.
-  // The Z80 naturally writes TL values every frame, so mute/unmute takes effect quickly.
   for (let ch = 0; ch < 8; ch++) {
-    fmMuted[ch] = (mask & (1 << ch)) === 0 ? 1 : 0;
+    const shouldMute = (mask & (1 << ch)) === 0;
+    const wasMuted = fmMuted[ch] !== 0;
+    fmMuted[ch] = shouldMute ? 1 : 0;
+
+    // When unmuting, schedule TL restore for all 4 operators
+    if (wasMuted && !shouldMute) {
+      for (let op = 0; op < 4; op++) {
+        const reg = 0x60 + ch + op * 8;
+        pendingTlRestores.push({ reg, val: ymTl[ch + op * 8]! });
+      }
+    }
+    // When muting, write silence immediately
+    if (!wasMuted && shouldMute) {
+      for (let op = 0; op < 4; op++) {
+        pendingTlRestores.push({ reg: 0x60 + ch + op * 8, val: 0x7F });
+      }
+    }
   }
 
-  // OKI voices (bits 8-11)
   if (oki6295) {
     oki6295.setVoiceMask((mask >> 8) & 0xF);
   }
+}
+
+/** Flush pending TL restores before the Z80 runs. */
+function flushPendingRestores(): void {
+  if (pendingTlRestores.length === 0 || !ym2151) return;
+  for (const { reg, val } of pendingTlRestores) {
+    ym2151.writeAddress(reg);
+    ym2151.writeData(val);
+  }
+  pendingTlRestores.length = 0;
 }
 
 function updateYmShadow(register: number, data: number): void {
@@ -182,6 +207,9 @@ function runAudioFrame(): void {
   if (vizWriter) {
     applyChannelMask(vizWriter.readChannelMask());
   }
+
+  // Restore TL values for freshly unmuted channels (before Z80 runs)
+  flushPendingRestores();
 
   // Advance latch queue (one command per frame)
   z80Bus.advanceSoundLatch();
