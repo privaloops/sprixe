@@ -205,6 +205,11 @@ export class XRayPanel {
         "Drag the slider to spread the layers apart. Click and drag on the view to rotate.\n\n" +
         "This reveals how the CPS1 composes the final image by stacking independent tile planes.", true);
 
+      const hint = el("div");
+      hint.style.cssText = "font-size:0.65rem;color:#444;padding:0 0 6px;";
+      hint.textContent = "Drag to rotate \u00B7 Slider to spread layers";
+      content.appendChild(hint);
+
       const sliderRow = el("div", "xray-slider-row");
       this.spreadSlider = document.createElement("input");
       this.spreadSlider.type = "range";
