@@ -556,16 +556,7 @@ function hex4(n: number): string {
 function sectionTitle(text: string, tooltip: string): HTMLDivElement {
   const div = document.createElement("div");
   div.className = "xray-section-title";
-
-  const span = document.createElement("span");
-  span.textContent = text;
-  div.appendChild(span);
-
-  const help = document.createElement("span");
-  help.className = "xray-help";
-  help.textContent = "?";
-  help.title = tooltip;
-  div.appendChild(help);
-
+  div.textContent = text;
+  div.title = tooltip;
   return div;
 }
