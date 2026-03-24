@@ -164,10 +164,10 @@ const saveBtnCtrl = getElement<HTMLButtonElement>("save-btn");
 const loadBtnCtrl = getElement<HTMLButtonElement>("load-btn-ss");
 const debugBtn = getElement<HTMLButtonElement>("dbg-btn");
 
-let debugPanel: DebugPanel | null = null;
+// Create debug panel immediately so it's visible on page load
+let debugPanel: DebugPanel | null = new DebugPanel(emulator, canvas);
 
 function toggleDebug(): void {
-  if (!emulator.isRunning() && !emulator.isPaused()) return;
   if (!debugPanel) {
     debugPanel = new DebugPanel(emulator, canvas);
   }

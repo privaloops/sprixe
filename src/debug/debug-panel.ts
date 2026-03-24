@@ -55,6 +55,12 @@ export class DebugPanel {
 
     this.buildDOM();
     this.bindEvents();
+
+    // If panel was pre-opened via HTML class, sync state
+    if (this.container.classList.contains("open")) {
+      this.active = true;
+      this.debugBtn.classList.add("active");
+    }
   }
 
   toggle(): void {
