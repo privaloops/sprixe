@@ -146,15 +146,13 @@ At some point you have to admit defeat. Even with experience and a good AI at yo
 
 The emulator worked. Street Fighter II, Final Fight, Cadillacs & Dinosaurs — all running in Chrome with sound. I was proud.
 
-Then I looked around. FinalBurn Neo runs in the browser via WebAssembly. RetroArch has a web player. MAME itself can be compiled to WASM. All with better compatibility, more games, decades of polish.
+Then I stepped back and looked at what I'd built. A functional emulator, sure — but as a player, it was one among many. With 39 games and no polish, nobody would choose it over established projects with thousands of supported titles and decades of work behind them.
 
-My project had no reason to exist for an end user. Nobody is going to choose a TypeScript emulator with 39 games over FBNeo with thousands. As a technical challenge it was rewarding — but a technical challenge is all it was.
+As a technical challenge it was rewarding — but a technical challenge is all it was.
 
 Except my approach had one advantage I hadn't seen.
 
-MAME and FBNeo compiled to WASM are **black boxes**. Their rendering pipeline outputs a single flat framebuffer — all layers already composited, all pixels baked together. You can't see inside. To extract individual layers, you'd need to patch the C source and recompile the WASM. Nobody does this.
-
-My emulator decodes everything in TypeScript. The four CPS1 layers — three scroll planes and the sprite plane — exist as separate data structures before composition. I have access to every tile, every palette entry, every sprite coordinate, at every stage of the rendering pipeline.
+Because everything is written in TypeScript, the four CPS1 layers — three scroll planes and the sprite plane — exist as separate data structures before composition. I have access to every tile, every palette entry, every sprite coordinate, at every stage of the rendering pipeline. The layers aren't baked into a flat framebuffer — they're inspectable JavaScript objects.
 
 So instead of competing as a player, I built a **debug mode** — a tool to see how CPS1 games are actually drawn by the hardware.
 
@@ -172,7 +170,7 @@ Press F2 during gameplay and a panel opens alongside the game — which keeps ru
 
 **Sprite list** — every active sprite object on screen, with tile code, position, palette index, and flip state. You can see a character as the hardware sees it: a grid of 16×16 tiles arranged by the 68000 CPU, with X/Y mirroring for left-facing animations.
 
-None of this is possible with a WASM black-box emulator. This is what the TypeScript approach makes uniquely possible.
+This is what the TypeScript approach makes uniquely possible — the rendering pipeline is transparent, not opaque.
 
 ## A magnifying glass on genius
 

@@ -19,7 +19,7 @@ Press **F2** during gameplay to open the debug panel — the game keeps running.
 - **Register viewer** — live CPS-A/CPS-B scroll offsets, layer order, enable states
 - **Frame-by-frame** — pause, step forward one frame at a time
 
-Most browser emulators are WASM ports of C/C++ — black boxes where the framebuffer is already flat. Because Arcade.ts decodes everything in TypeScript, every layer, sprite, and palette exists as an inspectable object. This is what makes the debug mode possible.
+Because everything is decoded in TypeScript, every layer, sprite, and palette exists as an inspectable object at every stage of the rendering pipeline. This is what makes the debug mode possible.
 
 ## Try it
 
