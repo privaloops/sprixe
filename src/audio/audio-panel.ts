@@ -65,6 +65,9 @@ export class AudioPanel {
   private readonly muted = new Set<number>();
   private readonly soloed = new Set<number>();
 
+  // Waveform previous Y per OKI voice
+  private readonly prevWaveY: number[] = [7, 7, 7, 7];
+
   // Piano roll
   private pianoCanvas: HTMLCanvasElement | null = null;
   private pianoCtx: CanvasRenderingContext2D | null = null;
@@ -308,16 +311,18 @@ export class AudioPanel {
       }
     }
 
-    // Highlight active note
+    // Highlight active note — white, full height, with glow
     if (activeNote >= 0) {
       const offset = activeNote - KB_FIRST_OCTAVE * 12;
       if (offset >= 0 && offset < KB_KEYS) {
         const x = offset * keyW;
-        ctx.fillStyle = color;
-        ctx.fillRect(x, 0, Math.max(keyW, 2), h);
-        // Glow effect
-        ctx.fillStyle = color + "44";
-        ctx.fillRect(Math.max(0, x - 2), 0, Math.max(keyW, 2) + 4, h);
+        const kw = Math.max(keyW, 3);
+        // Glow in channel color
+        ctx.fillStyle = color + "55";
+        ctx.fillRect(Math.max(0, x - 3), 0, kw + 6, h);
+        // White key
+        ctx.fillStyle = "#fff";
+        ctx.fillRect(x, 0, kw, h);
       }
     }
   }
@@ -334,7 +339,7 @@ export class AudioPanel {
     }
   }
 
-  private drawWaveform(ctx: CanvasRenderingContext2D, signal: number, color: string): void {
+  private drawWaveform(ctx: CanvasRenderingContext2D, voice: number, signal: number, color: string): void {
     const w = 192;
     const h = KB_HEIGHT;
     // Scroll left
@@ -342,13 +347,16 @@ export class AudioPanel {
     // Clear rightmost column
     ctx.fillStyle = "#111";
     ctx.fillRect(w - 1, 0, 1, h);
-    // Draw signal (0..255 → vertical position)
+
+    // Draw line from previous Y to current Y
     const y = h - (signal / 255) * h;
+    const prevY = this.prevWaveY[voice]!;
+    const minY = Math.min(y, prevY);
+    const maxY = Math.max(y, prevY);
+    const lineH = Math.max(1, maxY - minY + 1);
     ctx.fillStyle = color;
-    ctx.fillRect(w - 1, Math.max(0, y - 0.5), 1, 1);
-    // Center line
-    ctx.fillStyle = "#222";
-    ctx.fillRect(w - 1, h / 2, 1, 0.5);
+    ctx.fillRect(w - 1, minY, 1, lineH);
+    this.prevWaveY[voice] = y;
   }
 
   // -- Update --
@@ -407,7 +415,7 @@ export class AudioPanel {
 
       // Waveform
       const waveCtx = this.waveCtxs[v];
-      if (waveCtx) this.drawWaveform(waveCtx, oki.playing ? oki.signal : 128, color);
+      if (waveCtx) this.drawWaveform(waveCtx, v, oki.playing ? oki.signal : 128, color);
     }
 
     // Piano roll
