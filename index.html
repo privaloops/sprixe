@@ -464,7 +464,14 @@
       .xray-reg-label { color: #555; display: inline-block; min-width: 100px; }
       .xray-register-view code { color: #ff1a50; }
 
-      .xray-section-title { cursor: help; }
+      .xray-section-title { cursor: pointer; user-select: none; }
+      .xray-section-title:hover { color: #888; }
+      .xray-section-arrow {
+        display: inline-block; width: 12px; color: #555;
+        font-size: 0.65rem; transition: color 0.15s;
+      }
+      .xray-section-title:hover .xray-section-arrow { color: #ff1a50; }
+      .xray-section-content { padding-left: 2px; }
     </style>
   </head>
   <body>

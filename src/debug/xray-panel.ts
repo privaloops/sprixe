@@ -172,183 +172,196 @@ export class XRayPanel {
       this.emulator.stepFrame();
     });
 
-    // Layers section
-    c.appendChild(sectionTitle("Layers",
-      "CPS1 hardware draws the screen in 4 independent layers stacked on top of each other:\n" +
-      "• Scroll 3 (32×32 tiles) — far background, large decorative elements\n" +
-      "• Scroll 2 (16×16 tiles) — main background, the stage you fight on\n" +
-      "• Sprites (16×16 tiles) — characters, projectiles, moving objects\n" +
-      "• Scroll 1 (8×8 tiles) — HUD, score, health bars\n\n" +
-      "Toggle each layer on/off to see what it contributes to the final image."));
+    // ── Layers (open by default) ──
+    {
+      const [sec, content] = collapsibleSection("Layers",
+        "CPS1 hardware draws the screen in 4 independent layers stacked on top of each other:\n" +
+        "• Scroll 3 (32×32 tiles) — far background, large decorative elements\n" +
+        "• Scroll 2 (16×16 tiles) — main background, the stage you fight on\n" +
+        "• Sprites (16×16 tiles) — characters, projectiles, moving objects\n" +
+        "• Scroll 1 (8×8 tiles) — HUD, score, health bars\n\n" +
+        "Toggle each layer on/off to see what it contributes to the final image.", true);
 
-    const layersContainer = el("div");
-    layersContainer.id = "xray-layers-container";
+      for (const layerId of LAYER_IDS) {
+        const row = this.createLayerRow(layerId);
+        this.layerRows.set(layerId, row);
+        content.appendChild(row);
+      }
 
-    for (const layerId of LAYER_IDS) {
-      const row = this.createLayerRow(layerId);
-      this.layerRows.set(layerId, row);
-      layersContainer.appendChild(row);
+      const orderDiv = el("div", "xray-order");
+      orderDiv.textContent = "Draw order: ";
+      this.orderDisplay = el("span", "xray-order-value");
+      this.orderDisplay.textContent = "...";
+      orderDiv.appendChild(this.orderDisplay);
+      content.appendChild(orderDiv);
+
+      c.appendChild(sec);
     }
-    c.appendChild(layersContainer);
 
-    // Draw order
-    const orderDiv = el("div", "xray-order");
-    orderDiv.textContent = "Draw order: ";
-    this.orderDisplay = el("span", "xray-order-value");
-    this.orderDisplay.textContent = "...";
-    orderDiv.appendChild(this.orderDisplay);
-    c.appendChild(orderDiv);
+    // ── 3D Exploded View (open by default) ──
+    {
+      const [sec, content] = collapsibleSection("3D Exploded View",
+        "Separates the 4 hardware layers in 3D space, like an exploded diagram of a PCB.\n\n" +
+        "Drag the slider to spread the layers apart. Click and drag on the view to rotate.\n\n" +
+        "This reveals how the CPS1 composes the final image by stacking independent tile planes.", true);
 
-    // Exploded 3D section
-    c.appendChild(sectionTitle("3D Exploded View",
-      "Separates the 4 hardware layers in 3D space, like an exploded diagram of a PCB.\n\n" +
-      "Drag the slider to spread the layers apart. Click and drag on the view to rotate.\n\n" +
-      "This reveals how the CPS1 composes the final image by stacking independent tile planes."));
+      const sliderRow = el("div", "xray-slider-row");
+      this.spreadSlider = document.createElement("input");
+      this.spreadSlider.type = "range";
+      this.spreadSlider.min = "0";
+      this.spreadSlider.max = "100";
+      this.spreadSlider.value = "0";
+      this.spreadValue = el("span", "xray-slider-value");
+      this.spreadValue.textContent = "0";
+      sliderRow.append(this.spreadSlider, this.spreadValue);
+      content.appendChild(sliderRow);
 
-    const sliderRow = el("div", "xray-slider-row");
-    this.spreadSlider = document.createElement("input");
-    this.spreadSlider.type = "range";
-    this.spreadSlider.min = "0";
-    this.spreadSlider.max = "100";
-    this.spreadSlider.value = "0";
-
-    this.spreadValue = el("span", "xray-slider-value");
-    this.spreadValue.textContent = "0";
-
-    sliderRow.append(this.spreadSlider, this.spreadValue);
-    c.appendChild(sliderRow);
-
-    this.spreadSlider.addEventListener("input", () => {
-      const val = parseInt(this.spreadSlider!.value, 10);
-      this.renderer.setSpread(val);
-      this.spreadValue!.textContent = String(val);
-    });
-
-    // Palette section
-    c.appendChild(sectionTitle("Palette",
-      "The CPS1 doesn't store pixel colors directly — it uses a color lookup table (palette).\n\n" +
-      "Each tile stores color indices (0-15) that point to a palette of 16 colors. " +
-      "The hardware has 192 palettes organized in 6 pages of 32:\n" +
-      "• Page 0: Sprite palettes (characters, projectiles)\n" +
-      "• Page 1: Scroll 1 palettes (HUD, text)\n" +
-      "• Page 2: Scroll 2 palettes (main background)\n" +
-      "• Page 3: Scroll 3 palettes (far background)\n\n" +
-      "Watch palettes change live during fades, hit flashes, and character recolors (P1 vs P2)."));
-
-    // Page selector (6 pages × 32 palettes each)
-    const pageRow = el("div", "xray-palette-pages");
-    for (let p = 0; p < 6; p++) {
-      const btn = el("button", "xray-page-btn") as HTMLButtonElement;
-      btn.textContent = String(p);
-      if (p === 0) btn.classList.add("active");
-      btn.addEventListener("click", () => {
-        this.palettePage = p;
-        pageRow.querySelectorAll(".xray-page-btn").forEach(b => b.classList.remove("active"));
-        btn.classList.add("active");
+      this.spreadSlider.addEventListener("input", () => {
+        const val = parseInt(this.spreadSlider!.value, 10);
+        this.renderer.setSpread(val);
+        this.spreadValue!.textContent = String(val);
       });
-      pageRow.appendChild(btn);
+
+      c.appendChild(sec);
     }
-    const pageLabel = el("span");
-    pageLabel.style.cssText = "font-size:0.65rem;color:#555;margin-left:6px;";
-    pageLabel.textContent = "page";
-    pageRow.appendChild(pageLabel);
-    c.appendChild(pageRow);
 
-    // Palette canvas: 16 colors × 32 palettes, cell = 15×7
-    const CELL_W = 15;
-    const CELL_H = 7;
-    const palCanvas = document.createElement("canvas");
-    palCanvas.width = 16 * CELL_W;  // 240
-    palCanvas.height = 32 * CELL_H; // 224
-    palCanvas.className = "xray-palette-canvas";
-    this.paletteCanvas = palCanvas;
-    this.paletteCtx = palCanvas.getContext("2d")!;
-    c.appendChild(palCanvas);
+    // ── Palette (closed by default) ──
+    {
+      const CELL_W = 15;
+      const CELL_H = 7;
 
-    // Palette info on hover
-    this.paletteInfo = el("div", "xray-palette-info") as HTMLDivElement;
-    this.paletteInfo.textContent = "Hover to inspect";
-    c.appendChild(this.paletteInfo);
+      const [sec, content] = collapsibleSection("Palette",
+        "The CPS1 doesn't store pixel colors directly — it uses a color lookup table (palette).\n\n" +
+        "Each tile stores color indices (0-15) that point to a palette of 16 colors. " +
+        "The hardware has 192 palettes organized in 6 pages of 32:\n" +
+        "• Page 0: Sprite palettes (characters, projectiles)\n" +
+        "• Page 1: Scroll 1 palettes (HUD, text)\n" +
+        "• Page 2: Scroll 2 palettes (main background)\n" +
+        "• Page 3: Scroll 3 palettes (far background)\n\n" +
+        "Watch palettes change live during fades, hit flashes, and character recolors (P1 vs P2).", false);
 
-    palCanvas.addEventListener("mousemove", (e) => {
-      const rect = palCanvas.getBoundingClientRect();
-      const sx = palCanvas.width / rect.width;
-      const sy = palCanvas.height / rect.height;
-      const cx = Math.floor((e.clientX - rect.left) * sx);
-      const cy = Math.floor((e.clientY - rect.top) * sy);
-      const colIdx = Math.floor(cx / CELL_W);
-      const palIdx = Math.floor(cy / CELL_H);
-      if (colIdx < 0 || colIdx >= 16 || palIdx < 0 || palIdx >= 32) return;
+      const pageRow = el("div", "xray-palette-pages");
+      for (let p = 0; p < 6; p++) {
+        const btn = el("button", "xray-page-btn") as HTMLButtonElement;
+        btn.textContent = String(p);
+        if (p === 0) btn.classList.add("active");
+        btn.addEventListener("click", () => {
+          this.palettePage = p;
+          pageRow.querySelectorAll(".xray-page-btn").forEach(b => b.classList.remove("active"));
+          btn.classList.add("active");
+        });
+        pageRow.appendChild(btn);
+      }
+      const pageLabel = el("span");
+      pageLabel.style.cssText = "font-size:0.65rem;color:#555;margin-left:6px;";
+      pageLabel.textContent = "page";
+      pageRow.appendChild(pageLabel);
+      content.appendChild(pageRow);
 
-      const video = this.emulator.getVideo();
-      if (!video) return;
-      const cache = video.getPaletteCache();
-      const absIdx = (this.palettePage * 32 + palIdx) * 16 + colIdx;
-      const packed = cache[absIdx] ?? 0;
-      // Packed is ABGR: 0xFFBBGGRR
-      const r = packed & 0xFF;
-      const g = (packed >> 8) & 0xFF;
-      const b = (packed >> 16) & 0xFF;
-      const hex = `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b.toString(16).padStart(2, "0")}`;
+      const palCanvas = document.createElement("canvas");
+      palCanvas.width = 16 * CELL_W;
+      palCanvas.height = 32 * CELL_H;
+      palCanvas.className = "xray-palette-canvas";
+      this.paletteCanvas = palCanvas;
+      this.paletteCtx = palCanvas.getContext("2d")!;
+      content.appendChild(palCanvas);
 
-      // Palette group labels
-      const absPal = this.palettePage * 32 + palIdx;
-      let group = "";
-      if (absPal < 32) group = " (Sprites)";
-      else if (absPal < 64) group = " (Scroll 1)";
-      else if (absPal < 96) group = " (Scroll 2)";
-      else if (absPal < 128) group = " (Scroll 3)";
+      this.paletteInfo = el("div", "xray-palette-info") as HTMLDivElement;
+      this.paletteInfo.textContent = "Hover to inspect";
+      content.appendChild(this.paletteInfo);
 
-      this.paletteInfo!.innerHTML =
-        `<span style="display:inline-block;width:12px;height:12px;background:${hex};border:1px solid #333;vertical-align:middle;margin-right:4px;"></span>` +
-        `Pal <b>${absPal}</b>${group} · Col <b>${colIdx}</b> · <code>${hex.toUpperCase()}</code>`;
-    });
+      palCanvas.addEventListener("mousemove", (e) => {
+        const rect = palCanvas.getBoundingClientRect();
+        const sx = palCanvas.width / rect.width;
+        const sy = palCanvas.height / rect.height;
+        const cx = Math.floor((e.clientX - rect.left) * sx);
+        const cy = Math.floor((e.clientY - rect.top) * sy);
+        const colIdx = Math.floor(cx / CELL_W);
+        const palIdx = Math.floor(cy / CELL_H);
+        if (colIdx < 0 || colIdx >= 16 || palIdx < 0 || palIdx >= 32) return;
 
-    palCanvas.addEventListener("mouseleave", () => {
-      this.paletteInfo!.textContent = "Hover to inspect";
-    });
+        const video = this.emulator.getVideo();
+        if (!video) return;
+        const cache = video.getPaletteCache();
+        const absIdx = (this.palettePage * 32 + palIdx) * 16 + colIdx;
+        const packed = cache[absIdx] ?? 0;
+        const r = packed & 0xFF;
+        const g = (packed >> 8) & 0xFF;
+        const b = (packed >> 16) & 0xFF;
+        const hex = `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b.toString(16).padStart(2, "0")}`;
 
-    // Tile Inspector section
-    c.appendChild(sectionTitle("Tile Inspector",
-      "Click any pixel on the game screen to find out which hardware layer drew it.\n\n" +
-      "The CPS1 renders each pixel from multiple overlapping layers. " +
-      "This tool scans layers front-to-back to identify the first non-transparent layer " +
-      "that owns the clicked pixel, showing its color and position."));
+        const absPal = this.palettePage * 32 + palIdx;
+        let group = "";
+        if (absPal < 32) group = " (Sprites)";
+        else if (absPal < 64) group = " (Scroll 1)";
+        else if (absPal < 96) group = " (Scroll 2)";
+        else if (absPal < 128) group = " (Scroll 3)";
 
-    const inspHint = el("div");
-    inspHint.style.cssText = "font-size:0.7rem;color:#555;padding:0 0 8px;";
-    inspHint.textContent = "Click on the game screen to inspect a pixel";
-    c.appendChild(inspHint);
+        this.paletteInfo!.innerHTML =
+          `<span style="display:inline-block;width:12px;height:12px;background:${hex};border:1px solid #333;vertical-align:middle;margin-right:4px;"></span>` +
+          `Pal <b>${absPal}</b>${group} · Col <b>${colIdx}</b> · <code>${hex.toUpperCase()}</code>`;
+      });
 
-    this.inspectorInfo = el("div", "xray-inspector-info") as HTMLDivElement;
-    this.inspectorInfo.textContent = "No pixel selected";
-    c.appendChild(this.inspectorInfo);
+      palCanvas.addEventListener("mouseleave", () => {
+        this.paletteInfo!.textContent = "Hover to inspect";
+      });
 
-    // Sprite List section
-    c.appendChild(sectionTitle("Sprites",
-      "Live list of active sprite objects on screen.\n\n" +
-      "Each sprite entry shows:\n" +
-      "• # — index in the sprite table (lower = drawn on top)\n" +
-      "• Code — tile number in the graphics ROM\n" +
-      "• (X,Y) — screen position in pixels\n" +
-      "• P — palette index (0-31)\n" +
-      "• Flip — X/Y mirroring (used for left/right facing)\n\n" +
-      "CPS1 supports up to 256 sprites per frame. Characters are typically multi-tile sprites."));
+      c.appendChild(sec);
+    }
 
-    this.spriteListDiv = el("div", "xray-sprite-list") as HTMLDivElement;
-    c.appendChild(this.spriteListDiv);
+    // ── Tile Inspector (closed by default) ──
+    {
+      const [sec, content] = collapsibleSection("Tile Inspector",
+        "Click any pixel on the game screen to find out which hardware layer drew it.\n\n" +
+        "The CPS1 renders each pixel from multiple overlapping layers. " +
+        "This tool scans layers front-to-back to identify the first non-transparent layer " +
+        "that owns the clicked pixel, showing its color and position.", false);
 
-    // Register Viewer section
-    c.appendChild(sectionTitle("Registers",
-      "Live hardware register values from the CPS-A and CPS-B custom chips.\n\n" +
-      "• Scroll XY — the camera offset for each background layer (in pixels)\n" +
-      "• Layer order — which layers are drawn first (back) to last (front)\n" +
-      "• Layer enables — whether each scroll layer is active\n\n" +
-      "Games manipulate these registers every frame to scroll backgrounds, " +
-      "enable/disable layers during transitions, and change draw priority."));
+      const inspHint = el("div");
+      inspHint.style.cssText = "font-size:0.7rem;color:#555;padding:0 0 8px;";
+      inspHint.textContent = "Click on the game screen to inspect a pixel";
+      content.appendChild(inspHint);
 
-    this.registerDiv = el("div", "xray-register-view") as HTMLDivElement;
-    c.appendChild(this.registerDiv);
+      this.inspectorInfo = el("div", "xray-inspector-info") as HTMLDivElement;
+      this.inspectorInfo.textContent = "No pixel selected";
+      content.appendChild(this.inspectorInfo);
+
+      c.appendChild(sec);
+    }
+
+    // ── Sprites (closed by default) ──
+    {
+      const [sec, content] = collapsibleSection("Sprites",
+        "Live list of active sprite objects on screen.\n\n" +
+        "Each sprite entry shows:\n" +
+        "• # — index in the sprite table (lower = drawn on top)\n" +
+        "• Code — tile number in the graphics ROM\n" +
+        "• (X,Y) — screen position in pixels\n" +
+        "• P — palette index (0-31)\n" +
+        "• Flip — X/Y mirroring (used for left/right facing)\n\n" +
+        "CPS1 supports up to 256 sprites per frame. Characters are typically multi-tile sprites.", false);
+
+      this.spriteListDiv = el("div", "xray-sprite-list") as HTMLDivElement;
+      content.appendChild(this.spriteListDiv);
+
+      c.appendChild(sec);
+    }
+
+    // ── Registers (closed by default) ──
+    {
+      const [sec, content] = collapsibleSection("Registers",
+        "Live hardware register values from the CPS-A and CPS-B custom chips.\n\n" +
+        "• Scroll XY — the camera offset for each background layer (in pixels)\n" +
+        "• Layer order — which layers are drawn first (back) to last (front)\n" +
+        "• Layer enables — whether each scroll layer is active\n\n" +
+        "Games manipulate these registers every frame to scroll backgrounds, " +
+        "enable/disable layers during transitions, and change draw priority.", false);
+
+      this.registerDiv = el("div", "xray-register-view") as HTMLDivElement;
+      content.appendChild(this.registerDiv);
+
+      c.appendChild(sec);
+    }
   }
 
   private createLayerRow(layerId: number): HTMLDivElement {
@@ -553,10 +566,38 @@ function hex4(n: number): string {
   return "0x" + n.toString(16).padStart(4, "0").toUpperCase();
 }
 
-function sectionTitle(text: string, tooltip: string): HTMLDivElement {
-  const div = document.createElement("div");
-  div.className = "xray-section-title";
-  div.textContent = text;
-  div.title = tooltip;
-  return div;
+/**
+ * Creates a collapsible section: clickable title + content container.
+ * Returns [wrapper, contentDiv]. Append children to contentDiv.
+ */
+function collapsibleSection(text: string, tooltip: string, open = true): [HTMLDivElement, HTMLDivElement] {
+  const wrapper = document.createElement("div");
+  wrapper.className = "xray-section";
+
+  const header = document.createElement("div");
+  header.className = "xray-section-title";
+  header.title = tooltip;
+
+  const arrow = document.createElement("span");
+  arrow.className = "xray-section-arrow";
+  arrow.textContent = open ? "\u25BE" : "\u25B8"; // ▾ or ▸
+
+  const label = document.createElement("span");
+  label.textContent = text;
+
+  header.append(arrow, label);
+  wrapper.appendChild(header);
+
+  const content = document.createElement("div");
+  content.className = "xray-section-content";
+  if (!open) content.style.display = "none";
+  wrapper.appendChild(content);
+
+  header.addEventListener("click", () => {
+    const visible = content.style.display !== "none";
+    content.style.display = visible ? "none" : "";
+    arrow.textContent = visible ? "\u25B8" : "\u25BE";
+  });
+
+  return [wrapper, content];
 }
