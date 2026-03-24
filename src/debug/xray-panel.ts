@@ -173,9 +173,13 @@ export class XRayPanel {
     });
 
     // Layers section
-    const layersTitle = el("div", "xray-section-title");
-    layersTitle.textContent = "Layers";
-    c.appendChild(layersTitle);
+    c.appendChild(sectionTitle("Layers",
+      "CPS1 hardware draws the screen in 4 independent layers stacked on top of each other:\n" +
+      "• Scroll 3 (32×32 tiles) — far background, large decorative elements\n" +
+      "• Scroll 2 (16×16 tiles) — main background, the stage you fight on\n" +
+      "• Sprites (16×16 tiles) — characters, projectiles, moving objects\n" +
+      "• Scroll 1 (8×8 tiles) — HUD, score, health bars\n\n" +
+      "Toggle each layer on/off to see what it contributes to the final image."));
 
     const layersContainer = el("div");
     layersContainer.id = "xray-layers-container";
@@ -196,9 +200,10 @@ export class XRayPanel {
     c.appendChild(orderDiv);
 
     // Exploded 3D section
-    const explodedTitle = el("div", "xray-section-title");
-    explodedTitle.textContent = "3D Exploded View";
-    c.appendChild(explodedTitle);
+    c.appendChild(sectionTitle("3D Exploded View",
+      "Separates the 4 hardware layers in 3D space, like an exploded diagram of a PCB.\n\n" +
+      "Drag the slider to spread the layers apart. Click and drag on the view to rotate.\n\n" +
+      "This reveals how the CPS1 composes the final image by stacking independent tile planes."));
 
     const sliderRow = el("div", "xray-slider-row");
     this.spreadSlider = document.createElement("input");
@@ -220,9 +225,15 @@ export class XRayPanel {
     });
 
     // Palette section
-    const palTitle = el("div", "xray-section-title");
-    palTitle.textContent = "Palette";
-    c.appendChild(palTitle);
+    c.appendChild(sectionTitle("Palette",
+      "The CPS1 doesn't store pixel colors directly — it uses a color lookup table (palette).\n\n" +
+      "Each tile stores color indices (0-15) that point to a palette of 16 colors. " +
+      "The hardware has 192 palettes organized in 6 pages of 32:\n" +
+      "• Page 0: Sprite palettes (characters, projectiles)\n" +
+      "• Page 1: Scroll 1 palettes (HUD, text)\n" +
+      "• Page 2: Scroll 2 palettes (main background)\n" +
+      "• Page 3: Scroll 3 palettes (far background)\n\n" +
+      "Watch palettes change live during fades, hit flashes, and character recolors (P1 vs P2)."));
 
     // Page selector (6 pages × 32 palettes each)
     const pageRow = el("div", "xray-palette-pages");
@@ -298,9 +309,11 @@ export class XRayPanel {
     });
 
     // Tile Inspector section
-    const inspTitle = el("div", "xray-section-title");
-    inspTitle.textContent = "Tile Inspector";
-    c.appendChild(inspTitle);
+    c.appendChild(sectionTitle("Tile Inspector",
+      "Click any pixel on the game screen to find out which hardware layer drew it.\n\n" +
+      "The CPS1 renders each pixel from multiple overlapping layers. " +
+      "This tool scans layers front-to-back to identify the first non-transparent layer " +
+      "that owns the clicked pixel, showing its color and position."));
 
     const inspHint = el("div");
     inspHint.style.cssText = "font-size:0.7rem;color:#555;padding:0 0 8px;";
@@ -312,17 +325,27 @@ export class XRayPanel {
     c.appendChild(this.inspectorInfo);
 
     // Sprite List section
-    const sprTitle = el("div", "xray-section-title");
-    sprTitle.textContent = "Sprites";
-    c.appendChild(sprTitle);
+    c.appendChild(sectionTitle("Sprites",
+      "Live list of active sprite objects on screen.\n\n" +
+      "Each sprite entry shows:\n" +
+      "• # — index in the sprite table (lower = drawn on top)\n" +
+      "• Code — tile number in the graphics ROM\n" +
+      "• (X,Y) — screen position in pixels\n" +
+      "• P — palette index (0-31)\n" +
+      "• Flip — X/Y mirroring (used for left/right facing)\n\n" +
+      "CPS1 supports up to 256 sprites per frame. Characters are typically multi-tile sprites."));
 
     this.spriteListDiv = el("div", "xray-sprite-list") as HTMLDivElement;
     c.appendChild(this.spriteListDiv);
 
     // Register Viewer section
-    const regTitle = el("div", "xray-section-title");
-    regTitle.textContent = "Registers";
-    c.appendChild(regTitle);
+    c.appendChild(sectionTitle("Registers",
+      "Live hardware register values from the CPS-A and CPS-B custom chips.\n\n" +
+      "• Scroll XY — the camera offset for each background layer (in pixels)\n" +
+      "• Layer order — which layers are drawn first (back) to last (front)\n" +
+      "• Layer enables — whether each scroll layer is active\n\n" +
+      "Games manipulate these registers every frame to scroll backgrounds, " +
+      "enable/disable layers during transitions, and change draw priority."));
 
     this.registerDiv = el("div", "xray-register-view") as HTMLDivElement;
     c.appendChild(this.registerDiv);
@@ -528,4 +551,21 @@ function el(tag: string, className?: string): HTMLElement {
 
 function hex4(n: number): string {
   return "0x" + n.toString(16).padStart(4, "0").toUpperCase();
+}
+
+function sectionTitle(text: string, tooltip: string): HTMLDivElement {
+  const div = document.createElement("div");
+  div.className = "xray-section-title";
+
+  const span = document.createElement("span");
+  span.textContent = text;
+  div.appendChild(span);
+
+  const help = document.createElement("span");
+  help.className = "xray-help";
+  help.textContent = "?";
+  help.title = tooltip;
+  div.appendChild(help);
+
+  return div;
 }
