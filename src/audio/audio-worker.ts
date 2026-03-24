@@ -110,6 +110,7 @@ const ymTl = new Uint8Array(32);  // Total Level per operator (8ch × 4ops)
 const ymRl = new Uint8Array(8);       // Right/Left per channel
 const ymConnect = new Uint8Array(8);  // Connection/algorithm per channel
 const ymRlFull = new Uint8Array(8);   // Full 0x20 register value (RL+FB+connect)
+const ymRlValid = new Uint8Array(8);  // 1 = Z80 has written register 0x20+ch
 
 /** Carrier operator slot for each algorithm (0-7).
  *  In YM2151, the carrier is the last operator in the signal chain.
@@ -132,6 +133,9 @@ function applyChannelMask(mask: number): void {
     const wasMuted = fmMuted[ch] !== 0;
     if (shouldMute === wasMuted) continue; // no change
     fmMuted[ch] = shouldMute ? 1 : 0;
+
+    // Only write RL if the Z80 has initialized this register
+    if (!ymRlValid[ch]) continue;
 
     // Write RL register (0x20+ch): bits 7-6 = R/L, bits 5-3 = FB, bits 2-0 = connect
     // Mute: clear bits 7-6 (RL=0). Unmute: restore full original value.
@@ -179,6 +183,7 @@ function updateYmShadow(register: number, data: number): void {
     ymRl[ch] = (data >> 6) & 3;
     ymConnect[ch] = data & 7;
     ymRlFull[ch] = data;
+    ymRlValid[ch] = 1;
     vizWriter.updateFmRl(ch, ymRl[ch]!);
   }
 }
