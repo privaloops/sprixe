@@ -53,9 +53,6 @@ export class SpriteSheetManager {
   // Cache: key = `${tileSize}:${tileCode}:${paletteIndex}`, value = data URL
   private readonly cache = new Map<string, ImageData>();
 
-  // Reusable canvas + context for rendering tiles
-  private canvas: HTMLCanvasElement;
-  private ctx: CanvasRenderingContext2D;
   private rowBuf = new Uint8Array(32);
 
   // Palette cache: decoded from VRAM, keyed by palette index
@@ -65,10 +62,6 @@ export class SpriteSheetManager {
 
   constructor(gfxRom: Uint8Array) {
     this.gfxRom = gfxRom;
-    this.canvas = document.createElement('canvas');
-    this.canvas.width = 32;
-    this.canvas.height = 32;
-    this.ctx = this.canvas.getContext('2d')!;
   }
 
   /**
