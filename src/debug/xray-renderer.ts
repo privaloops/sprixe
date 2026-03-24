@@ -28,10 +28,12 @@ export class XRayRenderer {
   // Parallax 2.5D state
   private parallaxActive = false;
   private parallaxIntensity = 50; // 0..100
+  private parallaxMode: "mouse" | "auto" | "sprite" = "auto";
   private mouseX = 0; // normalized [-1, 1]
   private mouseY = 0;
   private smoothMouseX = 0; // lerped
   private smoothMouseY = 0;
+  private autoPhase = 0; // for auto-oscillation
   private parallaxContainer: HTMLDivElement | null = null;
   private parallaxCanvases: HTMLCanvasElement[] = [];
   private parallaxCtxs: CanvasRenderingContext2D[] = [];
@@ -160,6 +162,14 @@ export class XRayRenderer {
 
   getParallaxIntensity(): number {
     return this.parallaxIntensity;
+  }
+
+  setParallaxMode(mode: "mouse" | "auto" | "sprite"): void {
+    this.parallaxMode = mode;
+  }
+
+  getParallaxMode(): string {
+    return this.parallaxMode;
   }
 
   // -- Render --
@@ -461,13 +471,73 @@ export class XRayRenderer {
     this.mainCanvas.style.display = "";
   }
 
+  private getParallaxTarget(): { tx: number; ty: number } {
+    if (this.parallaxMode === "mouse") {
+      return { tx: this.mouseX, ty: this.mouseY };
+    }
+
+    if (this.parallaxMode === "auto") {
+      // Gentle figure-8 oscillation
+      this.autoPhase += 0.015;
+      return {
+        tx: Math.sin(this.autoPhase) * 0.6,
+        ty: Math.sin(this.autoPhase * 0.7) * 0.3,
+      };
+    }
+
+    // "sprite" mode — track player 1 sprite position
+    const video = this.video;
+    if (!video) return { tx: 0, ty: 0 };
+
+    const objBuf = video.getObjBuffer();
+    // Find first visible sprite (player is typically among the first)
+    // Scan first 8 sprites, pick the one closest to center
+    let bestX = SCREEN_WIDTH / 2;
+    let bestY = SCREEN_HEIGHT / 2;
+    let bestDist = Infinity;
+
+    for (let i = 0; i < 8; i++) {
+      const off = i * 8;
+      if (off + 7 >= objBuf.length) break;
+      const colour = (objBuf[off + 6]! << 8) | objBuf[off + 7]!;
+      if ((colour & 0xFF00) === 0xFF00) break; // end marker
+
+      let sx = (objBuf[off]! << 8) | objBuf[off + 1]!;
+      let sy = (objBuf[off + 2]! << 8) | objBuf[off + 3]!;
+
+      // CPS1 sprite coordinates wrap at 512
+      if (sx >= 512) sx -= 1024;
+      if (sy >= 512) sy -= 1024;
+      sx += 64; // CPS1 sprite X offset
+      sy += 16; // CPS1 sprite Y offset
+
+      // Skip off-screen sprites
+      if (sx < 0 || sx >= SCREEN_WIDTH || sy < 0 || sy >= SCREEN_HEIGHT) continue;
+
+      const dist = Math.abs(sx - SCREEN_WIDTH / 2) + Math.abs(sy - SCREEN_HEIGHT / 2);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestX = sx;
+        bestY = sy;
+      }
+    }
+
+    // Normalize to [-1, 1] from center
+    return {
+      tx: ((bestX / SCREEN_WIDTH) - 0.5) * 2,
+      ty: ((bestY / SCREEN_HEIGHT) - 0.5) * 2,
+    };
+  }
+
   private renderParallax(): void {
     const video = this.video!;
     const layerOrder = video.getLayerOrder();
 
-    // Smooth lerp towards target mouse position (0.12 = responsive but smooth)
-    this.smoothMouseX += (this.mouseX - this.smoothMouseX) * 0.12;
-    this.smoothMouseY += (this.mouseY - this.smoothMouseY) * 0.12;
+    // Get target from current mode
+    const { tx, ty } = this.getParallaxTarget();
+    // Smooth lerp towards target (0.12 = responsive but smooth)
+    this.smoothMouseX += (tx - this.smoothMouseX) * 0.12;
+    this.smoothMouseY += (ty - this.smoothMouseY) * 0.12;
 
     const intensity = this.parallaxIntensity / 100;
 

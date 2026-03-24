@@ -203,10 +203,27 @@ export class XRayPanel {
     parallaxCb.id = "xray-parallax-toggle";
     const parallaxLabel = el("label", "xray-toggle-label") as HTMLLabelElement;
     parallaxLabel.htmlFor = parallaxCb.id;
-    parallaxLabel.textContent = "Enable (mouse tracking)";
+    parallaxLabel.textContent = "Enable";
     parallaxToggleRow.append(parallaxCb, parallaxLabel);
     c.appendChild(parallaxToggleRow);
 
+    // Mode selector
+    const modeRow = el("div", "xray-layer-row");
+    const modeLabel = el("span", "xray-layer-label");
+    modeLabel.textContent = "Source";
+    const modeSelect = document.createElement("select");
+    modeSelect.style.cssText = "background:#1a1a1a;border:1px solid #333;color:#ccc;font-family:inherit;font-size:0.75rem;padding:3px 6px;border-radius:3px;cursor:pointer;";
+    for (const [value, label] of [["auto", "Auto (showcase)"], ["sprite", "Follow player"], ["mouse", "Mouse"]] as const) {
+      const opt = document.createElement("option");
+      opt.value = value;
+      opt.textContent = label;
+      if (value === "auto") opt.selected = true;
+      modeSelect.appendChild(opt);
+    }
+    modeRow.append(modeLabel, modeSelect);
+    c.appendChild(modeRow);
+
+    // Intensity slider
     const parallaxSliderRow = el("div", "xray-slider-row");
     const parallaxSlider = document.createElement("input");
     parallaxSlider.type = "range";
@@ -219,18 +236,28 @@ export class XRayPanel {
     c.appendChild(parallaxSliderRow);
 
     const parallaxHint = el("div");
-    parallaxHint.style.cssText = "font-size:0.65rem;color:#444;padding:4px 0;";
-    parallaxHint.textContent = "Move mouse over the game to shift layers by depth";
+    parallaxHint.style.cssText = "font-size:0.65rem;color:#444;padding:4px 0;line-height:1.4;";
+    const hints: Record<string, string> = {
+      auto: "Gentle automatic oscillation — demo/showcase mode",
+      sprite: "Parallax follows player sprite position",
+      mouse: "Move mouse over the game to shift layers",
+    };
+    parallaxHint.textContent = hints["auto"]!;
     c.appendChild(parallaxHint);
 
     parallaxCb.addEventListener("change", () => {
       this.renderer.setParallax(parallaxCb.checked);
-      // Disable exploded if parallax is activated
       if (parallaxCb.checked && this.renderer.getSpread() > 0) {
         this.renderer.setSpread(0);
         this.spreadSlider!.value = "0";
         this.spreadValue!.textContent = "0";
       }
+    });
+
+    modeSelect.addEventListener("change", () => {
+      const mode = modeSelect.value as "mouse" | "auto" | "sprite";
+      this.renderer.setParallaxMode(mode);
+      parallaxHint.textContent = hints[mode]!;
     });
 
     parallaxSlider.addEventListener("input", () => {
