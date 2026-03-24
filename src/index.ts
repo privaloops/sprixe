@@ -44,6 +44,8 @@ const loadBtnCtrl = getElement<HTMLButtonElement>("load-btn-ss");
 const debugBtn = getElement<HTMLButtonElement>("dbg-btn");
 const audBtn = getElement<HTMLButtonElement>("aud-btn");
 const quitBtn = getElement<HTMLButtonElement>("quit-btn");
+const hamburgerBtn = getElement<HTMLButtonElement>("hamburger-btn");
+const hamburgerMenu = getElement<HTMLDivElement>("hamburger-menu");
 const crtToggle = getElement<HTMLInputElement>("crt-toggle");
 const tateToggle = getElement<HTMLInputElement>("tate-toggle");
 const controlsBtn = getElement<HTMLButtonElement>("controls-btn");
@@ -176,6 +178,7 @@ const rendererDeps = { emulator, canvas, domScreen, getGameScreen, setGameScreen
 const controlsBarDeps = {
   emulator, canvas, domScreen, dropZone, controlsEl, canvasWrapper,
   pauseBtn, muteBtn, saveBtnCtrl, loadBtnCtrl, debugBtn, audBtn, quitBtn,
+  hamburgerBtn, hamburgerMenu,
   crtToggle, tateToggle, gameSelect, loadBtn,
   getMuted, setMuted, getDebugPanel, setDebugPanel, getAudioPanel, setAudioPanel,
   getGameScreen, setGameScreen, setStatus,
