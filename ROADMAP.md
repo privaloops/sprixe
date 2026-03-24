@@ -40,6 +40,11 @@ L'avantage structurel : tout est décodé en TypeScript. Chaque layer, sprite, p
 - [ ] Mute / Solo par canal (FM et OKI)
 - [ ] Export pistes séparées (WAV par canal)
 
+### Export MIDI
+- [ ] Enregistrer les notes FM (canal, note, durée, velocity) pendant N secondes
+- [ ] Exporter en fichier MIDI standard (8 pistes = 8 canaux FM)
+- [ ] Ouvrir dans n'importe quel DAW (Cubase, Ableton, FL Studio, GarageBand)
+
 ### Remplacement de samples
 - [ ] Clic sur un sample OKI → lecture du sample original
 - [ ] "Replace" → upload WAV ou enregistrement micro

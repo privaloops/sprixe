@@ -13,6 +13,7 @@ import { OKI6295, type OKI6295State } from './oki6295';
 import { LinearResampler } from './resampler';
 import { YM2151_SAMPLE_RATE, OKI6295_SAMPLE_RATE } from '../constants';
 import { RING_BUFFER_SAMPLES, SAB_DATA_OFFSET } from './audio-output';
+import { VizWriter } from './audio-viz';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -93,6 +94,84 @@ let mixedR = new Float32Array(2048);
 let suspended = false;
 let intervalId: ReturnType<typeof setInterval> | null = null;
 
+// Visualization
+let vizWriter: VizWriter | null = null;
+
+// Mute/Solo state
+const fmMuted = new Uint8Array(8);       // 1 = channel is muted
+let lastChannelMask = 0xFFF;             // all 12 channels audible
+let lastYmAddr = 0;                      // last address written to YM2151
+
+// YM2151 shadow register state (for visualization)
+const ymKc = new Uint8Array(8);   // Key Code per channel
+const ymKf = new Uint8Array(8);   // Key Fraction per channel
+const ymKon = new Uint8Array(8);  // Key On per channel
+const ymTl = new Uint8Array(32);  // Total Level per operator (8ch × 4ops)
+const ymRl = new Uint8Array(8);       // Right/Left per channel
+const ymConnect = new Uint8Array(8);  // Connection/algorithm per channel
+const ymRlFull = new Uint8Array(8);   // Full 0x20 register value (RL+FB+connect)
+const ymRlValid = new Uint8Array(8);  // 1 = Z80 has written register 0x20+ch
+
+/** Carrier operator slot for each algorithm (0-7).
+ *  In YM2151, the carrier is the last operator in the signal chain.
+ *  For algorithms 0-3, only op4 (slot 3) is the carrier.
+ *  For algo 4, ops 2+4 are carriers. For algo 5-6, ops 2+3+4. For algo 7, all 4.
+ *  We simplify: always read op4 (slot 3 = channel + 24) as the primary carrier TL. */
+function getCarrierTl(ch: number): number {
+  return ymTl[ch + 24]!; // slot 3 (operator 4, offset = ch + 3*8)
+}
+
+/** Apply channel mask: just update mute flags. All muting happens in the
+ *  Z80 write callback — we NEVER write to the WASM directly. */
+function applyChannelMask(mask: number): void {
+  if (mask === lastChannelMask) return;
+  lastChannelMask = mask;
+
+  for (let ch = 0; ch < 8; ch++) {
+    fmMuted[ch] = (mask & (1 << ch)) === 0 ? 1 : 0;
+  }
+
+  if (oki6295) {
+    oki6295.setVoiceMask((mask >> 8) & 0xF);
+  }
+}
+
+function updateYmShadow(register: number, data: number): void {
+  if (!vizWriter) return;
+
+  if (register === 0x08) {
+    // Key On/Off: bits 2-0 = channel, bits 6-3 = operator mask (M1,C1,M2,C2)
+    const ch = data & 7;
+    const opMask = (data >> 3) & 0xF;
+    ymKon[ch] = opMask !== 0 ? 1 : 0;
+    vizWriter.updateFmKon(ch, ymKon[ch]!);
+    // Also update TL for this channel (carrier may have changed)
+    vizWriter.updateFmTl(ch, getCarrierTl(ch));
+  } else if (register >= 0x28 && register <= 0x2F) {
+    const ch = register & 7;
+    ymKc[ch] = data;
+    vizWriter.updateFmKc(ch, data);
+  } else if (register >= 0x30 && register <= 0x37) {
+    const ch = register & 7;
+    ymKf[ch] = data >> 2; // KF is bits 7-2
+    vizWriter.updateFmKf(ch, ymKf[ch]!);
+  } else if (register >= 0x60 && register <= 0x7F) {
+    // TL: operator index = register & 0x1F
+    const opIdx = register & 0x1F;
+    ymTl[opIdx] = data & 0x7F;
+    // Update carrier TL for the channel this operator belongs to
+    const ch = opIdx & 7;
+    vizWriter.updateFmTl(ch, getCarrierTl(ch));
+  } else if (register >= 0x20 && register <= 0x27) {
+    const ch = register & 7;
+    ymRl[ch] = (data >> 6) & 3;
+    ymConnect[ch] = data & 7;
+    ymRlFull[ch] = data;
+    ymRlValid[ch] = 1;
+    vizWriter.updateFmRl(ch, ymRl[ch]!);
+  }
+}
+
 // ── Autonomous frame generation ──────────────────────────────────────────
 
 function runAudioFrame(): void {
@@ -100,6 +179,11 @@ function runAudioFrame(): void {
 
   // Skip if ring buffer is nearly full (we're ahead of the AudioWorklet)
   if (ringBuffer.freeSlots < 1024) return;
+
+  // Read channel mask from main thread (mute/solo)
+  if (vizWriter) {
+    applyChannelMask(vizWriter.readChannelMask());
+  }
 
   // Advance latch queue (one command per frame)
   z80Bus.advanceSoundLatch();
@@ -158,6 +242,17 @@ function runAudioFrame(): void {
   }
 
   ringBuffer.write(mixedL, mixedR, nOut);
+
+  // Update OKI voice state in vizSAB
+  if (vizWriter && oki6295) {
+    const okiState = oki6295.getState();
+    for (let v = 0; v < 4; v++) {
+      const ch = okiState.channels[v];
+      if (ch) {
+        vizWriter.updateOki(v, ch.playing ? 1 : 0, 0, Math.round(ch.volume * 255), ch.signal);
+      }
+    }
+  }
 }
 
 // ── Message handler ──────────────────────────────────────────────────────
@@ -171,6 +266,8 @@ self.onmessage = async (e: MessageEvent) => {
       const okiRom = new Uint8Array(msg.okiRom as ArrayBuffer);
       const sab = msg.sab as SharedArrayBuffer;
       const sampleRate = msg.sampleRate as number;
+      const vizSab = msg.vizSab as SharedArrayBuffer | undefined;
+      if (vizSab) vizWriter = new VizWriter(vizSab);
 
       // Init WASM OPM
       await initOPMWasm();
@@ -182,10 +279,22 @@ self.onmessage = async (e: MessageEvent) => {
       z80Bus.loadAudioRom(audioRom);
 
       z80Bus.setYm2151AddressWriteCallback((value: number) => {
+        lastYmAddr = value;
         ym2151!.writeAddress(value);
       });
-      z80Bus.setYm2151WriteCallback((_register: number, data: number) => {
-        ym2151!.writeData(data);
+      z80Bus.setYm2151WriteCallback((register: number, data: number) => {
+        updateYmShadow(register, data);
+
+        // Intercept writes for muted channels — modify data, never block
+        if (register >= 0x60 && register <= 0x7F && fmMuted[register & 7]) {
+          ym2151!.writeData(0x7F); // silence: max attenuation
+        } else if (register >= 0x20 && register <= 0x27 && fmMuted[register & 7]) {
+          ym2151!.writeData(data & 0x3F); // clear RL output bits
+        } else if (register === 0x08 && fmMuted[data & 7]) {
+          ym2151!.writeData(data & 0x07); // key off: clear operator bits
+        } else {
+          ym2151!.writeData(data);
+        }
       });
       z80Bus.setYm2151ReadStatusCallback(() => {
         return ym2151!.readStatus();
