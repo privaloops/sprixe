@@ -284,6 +284,7 @@ export class AudioPanel {
       mask = 0xFFF;
       for (const ch of this.muted) mask &= ~(1 << ch);
     }
+    console.log(`[audio] channelMask=0x${mask.toString(16)} soloed=${[...this.soloed]} muted=${[...this.muted]}`);
     viz.setChannelMask(mask);
   }
 

@@ -193,19 +193,19 @@
 
       /* ── Game selector ─────────────────────────────────── */
       #rom-controls {
-        display: none; gap: 10px; align-items: center; justify-content: center; flex-wrap: wrap;
+        display: none; gap: 6px; align-items: center;
       }
 
       #game-select {
-        padding: 8px 12px; background: #111; color: #ccc;
-        border: 1px solid #333; font-family: inherit; font-size: 0.85rem;
-        border-radius: 4px; min-width: 240px;
+        padding: 4px 8px; background: #111; color: #ccc;
+        border: 1px solid #333; font-family: inherit; font-size: 0.75rem;
+        border-radius: 3px; max-width: 180px;
       }
 
       #load-btn {
-        padding: 8px 18px; background: #ff1a50; color: #fff; border: none;
-        cursor: pointer; font-family: inherit; font-size: 0.85rem; font-weight: 600;
-        letter-spacing: 0.05em; border-radius: 4px; transition: background 0.15s;
+        padding: 4px 10px; background: #ff1a50; color: #fff; border: none;
+        cursor: pointer; font-family: inherit; font-size: 0.7rem; font-weight: 600;
+        letter-spacing: 0.05em; border-radius: 3px; transition: background 0.15s;
       }
       #load-btn:hover { background: #e0153f; }
       #load-btn:disabled { background: #333; color: #666; cursor: default; }
@@ -225,7 +225,7 @@
       .ctrl-btn.active { border-color: #ff1a50; color: #ff1a50; }
 
       /* ── Status ────────────────────────────────────────── */
-      #status { font-size: 0.8rem; color: #666; min-height: 1em; text-align: center; }
+      #status { font-size: 0.65rem; color: #555; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
       #gamepad-status { color: #4a4; margin-left: 6px; }
 
       /* ── Footer ────────────────────────────────────────── */
@@ -577,6 +577,13 @@
     <div id="app">
       <header>
         <h1>StudioROM</h1>
+        <div id="rom-controls">
+          <select id="game-select">
+            <option value="">Select a game</option>
+          </select>
+          <button id="load-btn" disabled>LOAD</button>
+        </div>
+        <span id="status"><span id="gamepad-status"></span></span>
         <div id="controls">
           <button id="controls-btn" class="ctrl-btn">Config (F1)</button>
           <button id="save-btn" class="ctrl-btn">Save (F5)</button>
@@ -606,14 +613,7 @@
         <input type="file" id="file-input" accept=".zip" />
       </div>
 
-      <div id="rom-controls">
-        <select id="game-select">
-          <option value="">Select a game</option>
-        </select>
-        <button id="load-btn" disabled>LOAD</button>
-      </div>
-
-      <p id="status"><span id="gamepad-status"></span></p>
+      <!-- rom-controls and status moved to header -->
 
       <!-- Modals -->
       <div id="savestate-modal-overlay">
