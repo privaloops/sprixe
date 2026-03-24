@@ -332,6 +332,11 @@
       .dbg-panel.open { transform: translateX(0); }
       body.dbg-active #app { margin-right: 280px; transition: margin-right 0.3s ease; }
 
+      @media (max-width: 900px) {
+        .dbg-panel { display: none; }
+        body.dbg-active #app { margin-right: 0; }
+      }
+
       .dbg-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
       .dbg-header h2 {
         font: 700 1.1rem "Courier New", Courier, monospace; color: #ff1a50;
