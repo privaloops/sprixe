@@ -58,12 +58,12 @@ export class SampleBrowser {
     const title = el("h2");
     title.textContent = "Samples";
     const importBtn = el("button", "ctrl-btn smp-export") as HTMLButtonElement;
-    importBtn.textContent = "Import";
-    importBtn.title = "Import WAV files (filename must contain sample number)";
+    importBtn.textContent = "Import Set";
+    importBtn.title = "Import multiple WAV files (filename must contain sample number, e.g. 00.wav)";
     importBtn.addEventListener("click", () => this.importSamples());
     const exportBtn = el("button", "ctrl-btn smp-export") as HTMLButtonElement;
-    exportBtn.textContent = "Export";
-    exportBtn.title = "Download all samples as WAV files";
+    exportBtn.textContent = "Export Set";
+    exportBtn.title = "Download all samples as individual WAV files";
     exportBtn.addEventListener("click", () => this.exportSamples());
     const closeBtn = el("button", "smp-close");
     closeBtn.textContent = "\u00D7";
