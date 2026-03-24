@@ -574,13 +574,14 @@
 
       /* Sample Browser panel */
       .smp-panel {
-        position: fixed; top: 50px; right: 0; width: 420px; height: calc(100vh - 50px);
-        background: #0a0a0a; border-left: 1px solid #2a2a2a; z-index: 8500;
+        position: fixed; top: 50px; right: 280px; width: 360px; height: calc(100vh - 50px);
+        background: #0a0a0a; border-left: 1px solid #2a2a2a; z-index: 9500;
         transform: translateX(100%); transition: transform 0.3s ease;
         overflow-y: auto; padding: 12px; color: #ccc;
         font-family: -apple-system, BlinkMacSystemFont, sans-serif;
       }
       .smp-panel.open { transform: translateX(0); }
+      body:not(.dbg-active) .smp-panel { right: 0; }
 
       .smp-header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
       .smp-header h2 {
