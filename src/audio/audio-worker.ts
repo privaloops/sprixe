@@ -125,6 +125,7 @@ const pendingTlRestores: Array<{ reg: number; val: number }> = [];
 /** Apply channel mask changes: update mute flags for FM and OKI voiceMask. */
 function applyChannelMask(mask: number): void {
   if (mask === lastChannelMask) return;
+  console.log(`[worker] mask change: 0x${lastChannelMask.toString(16)} → 0x${mask.toString(16)}`);
   lastChannelMask = mask;
 
   for (let ch = 0; ch < 8; ch++) {
@@ -155,6 +156,7 @@ function applyChannelMask(mask: number): void {
 /** Flush pending TL restores before the Z80 runs. Saves/restores address latch. */
 function flushPendingRestores(): void {
   if (pendingTlRestores.length === 0 || !ym2151) return;
+  console.log(`[worker] flushing ${pendingTlRestores.length} TL restores`);
   for (const { reg, val } of pendingTlRestores) {
     ym2151.writeAddress(reg);
     ym2151.writeData(val);
