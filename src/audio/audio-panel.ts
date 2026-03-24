@@ -15,14 +15,14 @@ import type { Emulator } from "../emulator";
 const FM_CHANNELS = 8;
 const OKI_VOICES = 4;
 
-// Piano: 4 octaves C2-B5
+// Piano: 3 octaves C2-B4
 const PR_FIRST_OCTAVE = 2;
-const PR_OCTAVES = 4;
-const PR_KEYS = PR_OCTAVES * 12; // 48
-const FM_ROW_H = 24; // px per FM channel strip
-const FM_TOTAL_H = FM_CHANNELS * FM_ROW_H; // 192
-const KB_WIDTH = 80;
-const KEY_H = FM_TOTAL_H / PR_KEYS; // 4px per key
+const PR_OCTAVES = 3;
+const PR_KEYS = PR_OCTAVES * 12; // 36
+const FM_ROW_H = 32; // px per FM channel strip
+const FM_TOTAL_H = FM_CHANNELS * FM_ROW_H; // 256
+const KB_WIDTH = 56;
+const KEY_H = FM_TOTAL_H / PR_KEYS; // ~7px per key
 
 const IS_BLACK = [0, 1, 0, 1, 0, 0, 1, 0, 1, 0, 1, 0];
 const NOTE_LABELS = ["C", "", "D", "", "E", "F", "", "G", "", "A", "", "B"];
@@ -60,9 +60,11 @@ export class AudioPanel {
   private readonly fmTimeCanvases: HTMLCanvasElement[] = [];
   private readonly fmTimeCtxs: (CanvasRenderingContext2D | null)[] = [];
 
-  // Shared keyboard canvas
+  // Shared keyboard canvas — shows notes of the selected FM channel
   private kbCanvas: HTMLCanvasElement | null = null;
   private kbCtx: CanvasRenderingContext2D | null = null;
+  private selectedFmChannel = 0; // which FM channel the keyboard follows
+  private readonly fmStripEls: HTMLElement[] = [];
 
   // OKI waveforms
   private readonly waveCanvases: HTMLCanvasElement[] = [];
@@ -155,6 +157,11 @@ export class AudioPanel {
       noteEl.textContent = "--";
       strip.appendChild(noteEl);
       this.noteEls[ch] = noteEl;
+
+      // Click to select this channel for the keyboard
+      strip.addEventListener("click", () => this.selectFmChannel(ch));
+      if (ch === 0) strip.classList.add("selected");
+      this.fmStripEls[ch] = strip;
 
       fmGrid.appendChild(strip);
     }
@@ -260,6 +267,13 @@ export class AudioPanel {
     return btn;
   }
 
+  private selectFmChannel(ch: number): void {
+    this.selectedFmChannel = ch;
+    for (let i = 0; i < FM_CHANNELS; i++) {
+      this.fmStripEls[i]?.classList.toggle("selected", i === ch);
+    }
+  }
+
   private updateChannelMask(): void {
     const viz = this.emulator.getVizReader();
     if (!viz) return;
@@ -360,45 +374,39 @@ export class AudioPanel {
     const viz = this.emulator.getVizReader();
     if (!viz) return;
 
-    const activeNotes = new Map<number, string>();
-
-    // FM channels
+    // FM channels — update strips (VU, note name)
     for (let ch = 0; ch < FM_CHANNELS; ch++) {
       const fm = viz.getFm(ch);
       const color = CH_COLORS[ch]!;
 
       this.noteEls[ch]!.textContent = fm.kon ? kcToNoteName(fm.kc) : "--";
 
-      // VU
       const vol = fm.kon ? Math.max(0, (127 - fm.tl) / 127 * 100) : 0;
       const vuCtx = this.vuCtxs[ch];
       if (vuCtx) this.drawVuMeter(vuCtx, vol, color);
 
-      // Timeline: scroll left, draw note at pitch position
+      // Per-channel hit timeline (simple on/off block)
       const tCtx = this.fmTimeCtxs[ch];
       const tCvs = this.fmTimeCanvases[ch];
       if (tCtx && tCvs) {
         tCtx.drawImage(tCvs, -1, 0);
         tCtx.fillStyle = "#0d0d0d";
         tCtx.fillRect(tCvs.width - 1, 0, 1, FM_ROW_H);
-
         if (fm.kon) {
-          // Map pitch to Y within this row (0=top=high, ROW_H=bottom=low)
-          const semi = kcToAbsSemitone(fm.kc);
-          const offset = semi - PR_FIRST_OCTAVE * 12;
-          if (offset >= 0 && offset < PR_KEYS) {
-            const yRatio = 1 - offset / PR_KEYS;
-            const y = yRatio * (FM_ROW_H - 2);
-            tCtx.fillStyle = color;
-            tCtx.fillRect(tCvs.width - 1, y, 1, 2);
-          }
-
-          activeNotes.set(semi, color);
+          tCtx.fillStyle = color;
+          tCtx.fillRect(tCvs.width - 1, 2, 1, FM_ROW_H - 4);
         }
       }
     }
 
-    // Redraw keyboard with active notes
+    // Keyboard + piano roll: show only the selected FM channel
+    const selCh = this.selectedFmChannel;
+    const selFm = viz.getFm(selCh);
+    const selColor = CH_COLORS[selCh]!;
+    const activeNotes = new Map<number, string>();
+    if (selFm.kon) {
+      activeNotes.set(kcToAbsSemitone(selFm.kc), selColor);
+    }
     this.drawKeyboard(activeNotes);
 
     // OKI voices

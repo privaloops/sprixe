@@ -528,7 +528,10 @@
       .aud-fm-strip {
         display: flex; align-items: center; gap: 4px; padding: 0 4px;
         background: #111; border-bottom: 1px solid #0d0d0d;
+        cursor: pointer; transition: background 0.1s;
       }
+      .aud-fm-strip:hover { background: #181818; }
+      .aud-fm-strip.selected { background: #1a1520; border-left: 2px solid #ff1a50; }
       .aud-kb-canvas { image-rendering: pixelated; border-left: 1px solid #222; border-right: 1px solid #222; }
       .aud-fm-timeline {
         width: 100%; image-rendering: pixelated;
@@ -569,8 +572,17 @@
   <body class="dbg-active">
     <div id="app">
       <header>
-        <h1>Arcade.ts</h1>
-        <span class="tagline">CPS1 emulator with debug mode &mdash; see how the hardware draws each frame</span>
+        <h1>StudioROM</h1>
+        <div id="controls">
+          <button id="controls-btn" class="ctrl-btn">Config (F1)</button>
+          <button id="save-btn" class="ctrl-btn">Save (F5)</button>
+          <button id="load-btn-ss" class="ctrl-btn">Load (F8)</button>
+          <button id="pause-btn" class="ctrl-btn">Pause (P)</button>
+          <button id="mute-btn" class="ctrl-btn">Mute (M)</button>
+          <button id="dbg-btn" class="ctrl-btn">Debug (F2)</button>
+          <button id="aud-btn" class="ctrl-btn">Audio (F3)</button>
+          <button id="quit-btn" class="ctrl-btn" style="color:#ff1a50;">Quit</button>
+        </div>
         <a class="github-link" href="https://github.com/privaloops/arcade-ts" target="_blank" rel="noopener">
           <svg viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
           GitHub
@@ -595,17 +607,6 @@
           <option value="">Select a game</option>
         </select>
         <button id="load-btn" disabled>LOAD</button>
-      </div>
-
-      <div id="controls">
-        <button id="controls-btn" class="ctrl-btn">Config (F1)</button>
-        <button id="save-btn" class="ctrl-btn">Save (F5)</button>
-        <button id="load-btn-ss" class="ctrl-btn">Load (F8)</button>
-        <button id="pause-btn" class="ctrl-btn">Pause (P)</button>
-        <button id="mute-btn" class="ctrl-btn">Mute (M)</button>
-        <button id="dbg-btn" class="ctrl-btn">Debug (F2)</button>
-        <button id="aud-btn" class="ctrl-btn">Audio (F3)</button>
-        <button id="quit-btn" class="ctrl-btn" style="color:#ff1a50;">Quit</button>
       </div>
 
       <p id="status"><span id="gamepad-status"></span></p>
