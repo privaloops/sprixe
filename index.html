@@ -521,19 +521,16 @@
         font: 0.65rem "Courier New", monospace; color: #ccc;
         min-width: 28px; text-align: center;
       }
-      .aud-ch-kon {
-        width: 6px; height: 6px; border-radius: 50%;
-        background: #333; flex-shrink: 0; transition: background 0.1s;
+      .aud-vu {
+        width: 4px; height: 14px; flex-shrink: 0; image-rendering: pixelated;
       }
-      .aud-ch-kon.active { background: #4ecb71; box-shadow: 0 0 4px #4ecb7188; }
-
-      .aud-vol-container {
-        flex: 1 1 0; min-width: 0; height: 6px; background: #1a1a1a; border-radius: 3px;
-        overflow: hidden;
+      .aud-keyboard {
+        flex: 1 1 0; min-width: 0; height: 14px; image-rendering: pixelated;
+        border-radius: 2px;
       }
-      .aud-vol-bar {
-        height: 100%; border-radius: 3px; transition: width 0.08s linear;
-        min-width: 0;
+      .aud-waveform {
+        flex: 1 1 0; min-width: 0; height: 14px; image-rendering: pixelated;
+        border-radius: 2px; background: #111;
       }
 
       .aud-separator {

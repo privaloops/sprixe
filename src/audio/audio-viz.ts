@@ -51,11 +51,13 @@ export class VizWriter {
   updateFmTl(ch: number, tl: number): void { this.u8[OFF_TL + ch] = tl; }
   updateFmRl(ch: number, rl: number): void { this.u8[OFF_RL + ch] = rl; }
 
-  updateOki(voice: number, playing: number, phraseId: number, volume: number): void {
+  updateOki(voice: number, playing: number, phraseId: number, volume: number, signal: number): void {
     const base = OFF_OKI + voice * 4;
     this.u8[base] = playing;
     this.u8[base + 1] = phraseId;
     this.u8[base + 2] = volume;
+    // Signal as signed byte: map -2048..2047 → 0..255
+    this.u8[base + 3] = Math.max(0, Math.min(255, ((signal + 2048) * 255 / 4095) | 0));
   }
 
   /** Read the channel mask set by the main thread (for mute/solo). */
@@ -76,6 +78,7 @@ export interface OkiVoiceState {
   playing: boolean;
   phraseId: number;
   volume: number;
+  signal: number; // 0..255 (128 = center/silence)
 }
 
 /** Main thread reader. Reads channel state from the vizSAB for UI display. */
@@ -104,6 +107,7 @@ export class VizReader {
       playing: this.u8[base]! !== 0,
       phraseId: this.u8[base + 1]!,
       volume: this.u8[base + 2]!,
+      signal: this.u8[base + 3]!,
     };
   }
 

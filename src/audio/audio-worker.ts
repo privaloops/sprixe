@@ -247,7 +247,7 @@ function runAudioFrame(): void {
     for (let v = 0; v < 4; v++) {
       const ch = okiState.channels[v];
       if (ch) {
-        vizWriter.updateOki(v, ch.playing ? 1 : 0, 0, Math.round(ch.volume * 255));
+        vizWriter.updateOki(v, ch.playing ? 1 : 0, 0, Math.round(ch.volume * 255), ch.signal);
       }
     }
   }
