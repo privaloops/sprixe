@@ -1,8 +1,12 @@
 /**
- * Audio DAW Panel — Cubase-style Key Editor for CPS1 audio.
+ * Audio DAW Panel — Cubase Key Editor style.
  *
- * Top: per-channel strips with M/S, VU, name, hit timeline
- * Bottom: shared piano roll (vertical keyboard left, note blocks scrolling right)
+ * FM section: 3-column grid
+ *   Left:   channel strips (M/S, VU, name, note)
+ *   Middle: shared vertical piano keyboard (80px, spans all 8 rows)
+ *   Right:  per-channel piano roll timelines (note blocks by pitch)
+ *
+ * OKI section: channel strips + waveforms
  */
 
 import { kcToNoteName, type VizReader } from "./audio-viz";
@@ -10,20 +14,19 @@ import type { Emulator } from "../emulator";
 
 const FM_CHANNELS = 8;
 const OKI_VOICES = 4;
-const TOTAL_CHANNELS = FM_CHANNELS + OKI_VOICES;
 
-// Piano roll: 3 octaves (C2-B4 = 36 semitones)
+// Piano: 4 octaves C2-B5
 const PR_FIRST_OCTAVE = 2;
-const PR_OCTAVES = 3;
-const PR_KEYS = PR_OCTAVES * 12; // 36
-const PR_KEY_H = 6; // pixels per semitone row
-const PR_KB_W = 28; // keyboard width on left
-const PR_HEIGHT = PR_KEYS * PR_KEY_H; // 216
+const PR_OCTAVES = 4;
+const PR_KEYS = PR_OCTAVES * 12; // 48
+const FM_ROW_H = 24; // px per FM channel strip
+const FM_TOTAL_H = FM_CHANNELS * FM_ROW_H; // 192
+const KB_WIDTH = 80;
+const KEY_H = FM_TOTAL_H / PR_KEYS; // 4px per key
 
 const IS_BLACK = [0, 1, 0, 1, 0, 0, 1, 0, 1, 0, 1, 0];
 const NOTE_LABELS = ["C", "", "D", "", "E", "F", "", "G", "", "A", "", "B"];
 
-// KC → absolute semitone
 const KC_TO_SEMI = [1, 2, 3, -1, 4, 5, 6, -1, 7, 8, 9, -1, 10, 11, 0, -1];
 function kcToAbsSemitone(kc: number): number {
   const octave = (kc >> 4) & 7;
@@ -33,7 +36,6 @@ function kcToAbsSemitone(kc: number): number {
   return octave * 12 + semi;
 }
 
-// Per-channel colors
 const CH_COLORS = [
   "#ff1a50", "#ff6b35", "#ffc234", "#4ecb71",
   "#36b5ff", "#8b5cf6", "#d946ef", "#f97316",
@@ -47,23 +49,25 @@ export class AudioPanel {
   private readonly container: HTMLDivElement;
   private readonly audBtn: HTMLElement;
 
-  // Per-channel elements
+  // Per-channel
   private readonly noteEls: HTMLSpanElement[] = [];
   private readonly vuCanvases: HTMLCanvasElement[] = [];
   private readonly vuCtxs: (CanvasRenderingContext2D | null)[] = [];
-  private readonly hitCanvases: HTMLCanvasElement[] = []; // FM: hit timeline
-  private readonly hitCtxs: (CanvasRenderingContext2D | null)[] = [];
-  private readonly waveCanvases: HTMLCanvasElement[] = []; // OKI: waveform
-  private readonly waveCtxs: (CanvasRenderingContext2D | null)[] = [];
   private readonly muteButtons: HTMLButtonElement[] = [];
   private readonly soloButtons: HTMLButtonElement[] = [];
 
-  // Waveform state
-  private readonly prevWaveY: number[] = [7, 7, 7, 7];
+  // FM timelines (per-channel canvas, pitch on Y)
+  private readonly fmTimeCanvases: HTMLCanvasElement[] = [];
+  private readonly fmTimeCtxs: (CanvasRenderingContext2D | null)[] = [];
 
-  // Shared piano roll canvas
-  private prCanvas: HTMLCanvasElement | null = null;
-  private prCtx: CanvasRenderingContext2D | null = null;
+  // Shared keyboard canvas
+  private kbCanvas: HTMLCanvasElement | null = null;
+  private kbCtx: CanvasRenderingContext2D | null = null;
+
+  // OKI waveforms
+  private readonly waveCanvases: HTMLCanvasElement[] = [];
+  private readonly waveCtxs: (CanvasRenderingContext2D | null)[] = [];
+  private readonly prevWaveY: number[] = [5, 5, 5, 5];
 
   // Mute/Solo
   private readonly muted = new Set<number>();
@@ -129,79 +133,84 @@ export class AudioPanel {
     header.append(title, closeBtn);
     c.appendChild(header);
 
-    // Channel strips
-    const channels = el("div", "aud-channels");
-    for (let i = 0; i < FM_CHANNELS; i++) {
-      channels.appendChild(this.createFmStrip(i));
-    }
-    channels.appendChild(el("div", "aud-separator"));
-    for (let i = 0; i < OKI_VOICES; i++) {
-      channels.appendChild(this.createOkiStrip(i));
-    }
-    c.appendChild(channels);
+    // FM Section — 3-column grid: controls | keyboard | timelines
+    const fmGrid = el("div", "aud-fm-grid") as HTMLDivElement;
+    fmGrid.style.cssText = `display:grid; grid-template-columns: auto ${KB_WIDTH}px 1fr; grid-template-rows: repeat(${FM_CHANNELS}, ${FM_ROW_H}px); gap:0;`;
 
-    // Shared Piano Roll (Cubase Key Editor style)
-    const prWrapper = el("div", "aud-pr-wrapper");
-    this.prCanvas = document.createElement("canvas");
-    this.prCanvas.className = "aud-pr-canvas";
-    this.prCanvas.height = PR_HEIGHT;
-    this.prCanvas.width = 600; // will be stretched via CSS
-    this.prCtx = this.prCanvas.getContext("2d")!;
-    this.initPianoRoll();
-    prWrapper.appendChild(this.prCanvas);
-    c.appendChild(prWrapper);
+    // Column 1: channel strips
+    for (let ch = 0; ch < FM_CHANNELS; ch++) {
+      const strip = el("div", "aud-fm-strip");
+      strip.append(
+        this.createMuteBtn(ch),
+        this.createSoloBtn(ch),
+        this.createVu(ch),
+      );
+      const colorDot = el("span", "aud-ch-color");
+      colorDot.style.background = CH_COLORS[ch]!;
+      strip.appendChild(colorDot);
+      const nameEl = el("span", "aud-ch-name");
+      nameEl.textContent = `FM${ch + 1}`;
+      strip.appendChild(nameEl);
+      const noteEl = el("span", "aud-ch-note") as HTMLSpanElement;
+      noteEl.textContent = "--";
+      strip.appendChild(noteEl);
+      this.noteEls[ch] = noteEl;
+
+      fmGrid.appendChild(strip);
+    }
+
+    // Column 2: shared keyboard (spans all 8 rows)
+    this.kbCanvas = document.createElement("canvas");
+    this.kbCanvas.width = KB_WIDTH;
+    this.kbCanvas.height = FM_TOTAL_H;
+    this.kbCanvas.className = "aud-kb-canvas";
+    this.kbCanvas.style.cssText = `grid-column:2; grid-row:1/${FM_CHANNELS + 1};`;
+    this.kbCtx = this.kbCanvas.getContext("2d")!;
+    this.drawKeyboard();
+    fmGrid.appendChild(this.kbCanvas);
+
+    // Column 3: per-channel timelines (one canvas per row)
+    for (let ch = 0; ch < FM_CHANNELS; ch++) {
+      const cvs = document.createElement("canvas");
+      cvs.width = 400;
+      cvs.height = FM_ROW_H;
+      cvs.className = "aud-fm-timeline";
+      cvs.style.cssText = `grid-column:3; grid-row:${ch + 1};`;
+      const ctx = cvs.getContext("2d")!;
+      ctx.fillStyle = "#0d0d0d";
+      ctx.fillRect(0, 0, 400, FM_ROW_H);
+      fmGrid.appendChild(cvs);
+      this.fmTimeCanvases[ch] = cvs;
+      this.fmTimeCtxs[ch] = ctx;
+    }
+
+    c.appendChild(fmGrid);
+
+    // Separator
+    c.appendChild(el("div", "aud-separator"));
+
+    // OKI Section
+    const okiSection = el("div", "aud-channels");
+    for (let v = 0; v < OKI_VOICES; v++) {
+      okiSection.appendChild(this.createOkiRow(v));
+    }
+    c.appendChild(okiSection);
   }
 
-  private createFmStrip(ch: number): HTMLDivElement {
-    const color = CH_COLORS[ch]!;
-    const row = el("div", "aud-ch-row") as HTMLDivElement;
-
-    row.append(this.createMuteBtn(ch), this.createSoloBtn(ch));
-
-    // VU
+  private createVu(idx: number): HTMLCanvasElement {
     const vu = document.createElement("canvas");
-    vu.width = 4; vu.height = 14; vu.className = "aud-vu";
-    row.appendChild(vu);
-    this.vuCanvases[ch] = vu;
-    this.vuCtxs[ch] = vu.getContext("2d");
-
-    // Color + Name + Note
-    const colorDot = el("span", "aud-ch-color");
-    colorDot.style.background = color;
-    row.appendChild(colorDot);
-    const nameEl = el("span", "aud-ch-name");
-    nameEl.textContent = `FM${ch + 1}`;
-    row.appendChild(nameEl);
-    const noteEl = el("span", "aud-ch-note") as HTMLSpanElement;
-    noteEl.textContent = "--";
-    row.appendChild(noteEl);
-    this.noteEls[ch] = noteEl;
-
-    // Hit timeline canvas (scrolling colored blocks when note is on)
-    const hit = document.createElement("canvas");
-    hit.width = 300; hit.height = 10; hit.className = "aud-hit-timeline";
-    const hctx = hit.getContext("2d")!;
-    hctx.fillStyle = "#111";
-    hctx.fillRect(0, 0, 300, 10);
-    row.appendChild(hit);
-    this.hitCanvases[ch] = hit;
-    this.hitCtxs[ch] = hctx;
-
-    return row;
+    vu.width = 4; vu.height = 16; vu.className = "aud-vu";
+    this.vuCanvases[idx] = vu;
+    this.vuCtxs[idx] = vu.getContext("2d");
+    return vu;
   }
 
-  private createOkiStrip(voice: number): HTMLDivElement {
+  private createOkiRow(voice: number): HTMLDivElement {
     const idx = FM_CHANNELS + voice;
     const color = CH_COLORS[idx]!;
     const row = el("div", "aud-ch-row") as HTMLDivElement;
 
-    row.append(this.createMuteBtn(idx), this.createSoloBtn(idx));
-
-    const vu = document.createElement("canvas");
-    vu.width = 4; vu.height = 14; vu.className = "aud-vu";
-    row.appendChild(vu);
-    this.vuCanvases[idx] = vu;
-    this.vuCtxs[idx] = vu.getContext("2d");
+    row.append(this.createMuteBtn(idx), this.createSoloBtn(idx), this.createVu(idx));
 
     const colorDot = el("span", "aud-ch-color");
     colorDot.style.background = color;
@@ -214,9 +223,9 @@ export class AudioPanel {
     row.appendChild(noteEl);
     this.noteEls[idx] = noteEl;
 
-    // Waveform
     const wave = document.createElement("canvas");
-    wave.width = 300; wave.height = 10; wave.className = "aud-hit-timeline";
+    wave.width = 300; wave.height = 10;
+    wave.className = "aud-hit-timeline";
     const wctx = wave.getContext("2d")!;
     wctx.fillStyle = "#111";
     wctx.fillRect(0, 0, 300, 10);
@@ -230,7 +239,6 @@ export class AudioPanel {
   private createMuteBtn(idx: number): HTMLButtonElement {
     const btn = el("button", "aud-ms-btn") as HTMLButtonElement;
     btn.textContent = "M";
-    btn.title = "Mute";
     btn.addEventListener("click", () => {
       if (this.muted.has(idx)) this.muted.delete(idx); else this.muted.add(idx);
       btn.classList.toggle("active", this.muted.has(idx));
@@ -243,7 +251,6 @@ export class AudioPanel {
   private createSoloBtn(idx: number): HTMLButtonElement {
     const btn = el("button", "aud-ms-btn aud-solo-btn") as HTMLButtonElement;
     btn.textContent = "S";
-    btn.title = "Solo";
     btn.addEventListener("click", () => {
       if (this.soloed.has(idx)) this.soloed.delete(idx); else this.soloed.add(idx);
       btn.classList.toggle("active", this.soloed.has(idx));
@@ -266,85 +273,76 @@ export class AudioPanel {
     viz.setChannelMask(mask);
   }
 
-  // -- Piano Roll Drawing --
+  // -- Keyboard Drawing --
 
-  private initPianoRoll(): void {
-    const ctx = this.prCtx!;
-    const cvs = this.prCanvas!;
-    ctx.fillStyle = "#0d0d0d";
-    ctx.fillRect(0, 0, cvs.width, cvs.height);
-    this.drawKeyboardColumn(ctx);
-  }
+  private drawKeyboard(activeNotes?: Map<number, string>): void {
+    const ctx = this.kbCtx!;
+    const w = KB_WIDTH;
+    const h = FM_TOTAL_H;
 
-  /** Draw the vertical piano keyboard on the left side. */
-  private drawKeyboardColumn(ctx: CanvasRenderingContext2D): void {
+    // Background
+    ctx.fillStyle = "#0a0a0a";
+    ctx.fillRect(0, 0, w, h);
+
+    // First pass: draw all white keys
     for (let i = 0; i < PR_KEYS; i++) {
       const semi = i % 12;
-      // Piano roll: bottom = low notes, top = high notes
-      const y = (PR_KEYS - 1 - i) * PR_KEY_H;
+      if (IS_BLACK[semi]) continue;
+      const y = (PR_KEYS - 1 - i) * KEY_H;
+      ctx.fillStyle = "#d4d4d4";
+      ctx.fillRect(1, y, w - 2, KEY_H - 1);
+      // Subtle 3D border
+      ctx.fillStyle = "#eee";
+      ctx.fillRect(1, y, w - 2, 1);
+      ctx.fillStyle = "#999";
+      ctx.fillRect(1, y + KEY_H - 2, w - 2, 1);
+    }
 
-      if (IS_BLACK[semi]) {
-        ctx.fillStyle = "#181818";
-        ctx.fillRect(0, y, PR_KB_W, PR_KEY_H);
-      } else {
-        ctx.fillStyle = "#252525";
-        ctx.fillRect(0, y, PR_KB_W, PR_KEY_H);
-        // Border between white keys
-        ctx.fillStyle = "#1a1a1a";
-        ctx.fillRect(0, y + PR_KEY_H - 1, PR_KB_W, 1);
+    // Second pass: draw black keys on top
+    for (let i = 0; i < PR_KEYS; i++) {
+      const semi = i % 12;
+      if (!IS_BLACK[semi]) continue;
+      const y = (PR_KEYS - 1 - i) * KEY_H;
+      ctx.fillStyle = "#222";
+      ctx.fillRect(1, y, w * 0.55, KEY_H);
+      // Subtle highlight
+      ctx.fillStyle = "#333";
+      ctx.fillRect(1, y, w * 0.55, 1);
+    }
+
+    // C labels on white keys
+    for (let i = 0; i < PR_KEYS; i += 12) {
+      const y = (PR_KEYS - 1 - i) * KEY_H;
+      const octave = PR_FIRST_OCTAVE + Math.floor(i / 12);
+      ctx.fillStyle = "#666";
+      ctx.font = "bold 8px Courier New";
+      ctx.fillText(`C${octave}`, w - 22, y + KEY_H - 1);
+    }
+
+    // Highlight active notes (pressed keys)
+    if (activeNotes) {
+      for (const [absSemi, color] of activeNotes) {
+        const offset = absSemi - PR_FIRST_OCTAVE * 12;
+        if (offset < 0 || offset >= PR_KEYS) continue;
+        const y = (PR_KEYS - 1 - offset) * KEY_H;
+        const semi = offset % 12;
+        const isBlack = IS_BLACK[semi];
+
+        // Colored key with glow
+        ctx.fillStyle = color;
+        if (isBlack) {
+          ctx.fillRect(1, y, w * 0.55, KEY_H);
+        } else {
+          ctx.fillRect(1, y, w - 2, KEY_H - 1);
+        }
+        // Glow
+        ctx.fillStyle = color + "33";
+        ctx.fillRect(0, Math.max(0, y - 1), w, KEY_H + 2);
       }
-
-      // Label on C notes
-      const label = NOTE_LABELS[semi];
-      if (label) {
-        const octave = PR_FIRST_OCTAVE + Math.floor(i / 12);
-        ctx.fillStyle = "#555";
-        ctx.font = "8px Courier New";
-        ctx.fillText(`${label}${octave}`, 2, y + PR_KEY_H - 1);
-      }
     }
   }
 
-  // -- VU / Hit / Waveform drawing --
-
-  private drawVuMeter(ctx: CanvasRenderingContext2D, level: number, color: string): void {
-    ctx.fillStyle = "#111";
-    ctx.fillRect(0, 0, 4, 14);
-    if (level > 0) {
-      const barH = (level / 100) * 14;
-      ctx.fillStyle = color;
-      ctx.fillRect(0, 14 - barH, 4, barH);
-    }
-  }
-
-  private drawHitTimeline(ctx: CanvasRenderingContext2D, active: boolean, color: string): void {
-    const w = 300;
-    const h = 10;
-    ctx.drawImage(ctx.canvas, -1, 0);
-    ctx.fillStyle = "#111";
-    ctx.fillRect(w - 1, 0, 1, h);
-    if (active) {
-      ctx.fillStyle = color;
-      ctx.fillRect(w - 1, 1, 1, h - 2);
-    }
-  }
-
-  private drawWaveform(ctx: CanvasRenderingContext2D, voice: number, signal: number, color: string): void {
-    const w = 300;
-    const h = 10;
-    ctx.drawImage(ctx.canvas, -1, 0);
-    ctx.fillStyle = "#111";
-    ctx.fillRect(w - 1, 0, 1, h);
-    const y = h - (signal / 255) * h;
-    const prevY = this.prevWaveY[voice]!;
-    const minY = Math.min(y, prevY);
-    const maxY = Math.max(y, prevY);
-    ctx.fillStyle = color;
-    ctx.fillRect(w - 1, minY, 1, Math.max(1, maxY - minY + 1));
-    this.prevWaveY[voice] = y;
-  }
-
-  // -- Update loop --
+  // -- Update --
 
   private startUpdateLoop(): void {
     cancelAnimationFrame(this.updateRafId);
@@ -362,27 +360,7 @@ export class AudioPanel {
     const viz = this.emulator.getVizReader();
     if (!viz) return;
 
-    const prCtx = this.prCtx;
-    const prCvs = this.prCanvas;
-
-    // Scroll piano roll left (only the timeline area, not the keyboard)
-    if (prCtx && prCvs) {
-      // Copy timeline area shifted left
-      prCtx.drawImage(
-        prCvs,
-        PR_KB_W + 1, 0, prCvs.width - PR_KB_W - 1, PR_HEIGHT,
-        PR_KB_W, 0, prCvs.width - PR_KB_W - 1, PR_HEIGHT
-      );
-      // Clear rightmost column
-      prCtx.fillStyle = "#0d0d0d";
-      prCtx.fillRect(prCvs.width - 1, 0, 1, PR_HEIGHT);
-      // Draw subtle grid lines on C notes
-      for (let i = 0; i < PR_KEYS; i += 12) {
-        const y = (PR_KEYS - 1 - i) * PR_KEY_H;
-        prCtx.fillStyle = "#1a1a1a";
-        prCtx.fillRect(prCvs.width - 1, y, 1, 1);
-      }
-    }
+    const activeNotes = new Map<number, string>();
 
     // FM channels
     for (let ch = 0; ch < FM_CHANNELS; ch++) {
@@ -391,40 +369,37 @@ export class AudioPanel {
 
       this.noteEls[ch]!.textContent = fm.kon ? kcToNoteName(fm.kc) : "--";
 
+      // VU
       const vol = fm.kon ? Math.max(0, (127 - fm.tl) / 127 * 100) : 0;
       const vuCtx = this.vuCtxs[ch];
       if (vuCtx) this.drawVuMeter(vuCtx, vol, color);
 
-      // Hit timeline
-      const hitCtx = this.hitCtxs[ch];
-      if (hitCtx) this.drawHitTimeline(hitCtx, fm.kon, color);
+      // Timeline: scroll left, draw note at pitch position
+      const tCtx = this.fmTimeCtxs[ch];
+      const tCvs = this.fmTimeCanvases[ch];
+      if (tCtx && tCvs) {
+        tCtx.drawImage(tCvs, -1, 0);
+        tCtx.fillStyle = "#0d0d0d";
+        tCtx.fillRect(tCvs.width - 1, 0, 1, FM_ROW_H);
 
-      // Piano roll: draw note block on the shared canvas
-      if (prCtx && prCvs && fm.kon) {
-        const semi = kcToAbsSemitone(fm.kc);
-        const offset = semi - PR_FIRST_OCTAVE * 12;
-        if (offset >= 0 && offset < PR_KEYS) {
-          const y = (PR_KEYS - 1 - offset) * PR_KEY_H;
-          prCtx.fillStyle = color;
-          prCtx.fillRect(prCvs.width - 1, y, 1, PR_KEY_H - 1);
-        }
-
-        // Highlight on keyboard
-        this.highlightKey(prCtx, semi, color);
-      }
-    }
-
-    // Reset keyboard highlights (redraw base keyboard, then active notes)
-    if (prCtx) {
-      this.drawKeyboardColumn(prCtx);
-      for (let ch = 0; ch < FM_CHANNELS; ch++) {
-        const fm = viz.getFm(ch);
         if (fm.kon) {
+          // Map pitch to Y within this row (0=top=high, ROW_H=bottom=low)
           const semi = kcToAbsSemitone(fm.kc);
-          this.highlightKey(prCtx, semi, CH_COLORS[ch]!);
+          const offset = semi - PR_FIRST_OCTAVE * 12;
+          if (offset >= 0 && offset < PR_KEYS) {
+            const yRatio = 1 - offset / PR_KEYS;
+            const y = yRatio * (FM_ROW_H - 2);
+            tCtx.fillStyle = color;
+            tCtx.fillRect(tCvs.width - 1, y, 1, 2);
+          }
+
+          activeNotes.set(semi, color);
         }
       }
     }
+
+    // Redraw keyboard with active notes
+    this.drawKeyboard(activeNotes);
 
     // OKI voices
     for (let v = 0; v < OKI_VOICES; v++) {
@@ -438,17 +413,34 @@ export class AudioPanel {
       const vuCtx = this.vuCtxs[idx];
       if (vuCtx) this.drawVuMeter(vuCtx, vol, color);
 
-      const waveCtx = this.waveCtxs[v];
-      if (waveCtx) this.drawWaveform(waveCtx, v, oki.playing ? oki.signal : 128, color);
+      const wCtx = this.waveCtxs[v];
+      if (wCtx) this.drawWaveform(wCtx, v, oki.playing ? oki.signal : 128, color);
     }
   }
 
-  private highlightKey(ctx: CanvasRenderingContext2D, absSemi: number, color: string): void {
-    const offset = absSemi - PR_FIRST_OCTAVE * 12;
-    if (offset < 0 || offset >= PR_KEYS) return;
-    const y = (PR_KEYS - 1 - offset) * PR_KEY_H;
+  private drawVuMeter(ctx: CanvasRenderingContext2D, level: number, color: string): void {
+    ctx.fillStyle = "#111";
+    ctx.fillRect(0, 0, 4, 16);
+    if (level > 0) {
+      const barH = (level / 100) * 16;
+      ctx.fillStyle = color;
+      ctx.fillRect(0, 16 - barH, 4, barH);
+    }
+  }
+
+  private drawWaveform(ctx: CanvasRenderingContext2D, voice: number, signal: number, color: string): void {
+    const w = 300;
+    const h = 10;
+    ctx.drawImage(ctx.canvas, -1, 0);
+    ctx.fillStyle = "#111";
+    ctx.fillRect(w - 1, 0, 1, h);
+    const y = h - (signal / 255) * h;
+    const prevY = this.prevWaveY[voice]!;
+    const minY = Math.min(y, prevY);
+    const maxY = Math.max(y, prevY);
     ctx.fillStyle = color;
-    ctx.fillRect(0, y, PR_KB_W, PR_KEY_H - 1);
+    ctx.fillRect(w - 1, minY, 1, Math.max(1, maxY - minY + 1));
+    this.prevWaveY[voice] = y;
   }
 }
 
