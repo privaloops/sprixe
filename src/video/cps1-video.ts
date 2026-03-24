@@ -985,6 +985,11 @@ export class CPS1Video {
     this.paletteCacheValid = false;
   }
 
+  /** Returns the decoded palette cache (256 palettes × 16 colors, packed ABGR). */
+  getPaletteCache(): Uint32Array {
+    return this.paletteCache;
+  }
+
   getObjBuffer(): Uint8Array {
     return this.objBuffer;
   }

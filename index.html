@@ -408,6 +408,28 @@
         text-shadow: 0 0 6px rgba(255,26,80,0.4);
         pointer-events: none; text-transform: uppercase; letter-spacing: 0.1em;
       }
+
+      /* Palette viewer */
+      .xray-palette-pages {
+        display: flex; gap: 3px; align-items: center; margin-bottom: 8px;
+      }
+      .xray-page-btn {
+        background: #1a1a1a; border: 1px solid #333; color: #666;
+        font: 0.7rem "Courier New", monospace; width: 24px; height: 22px;
+        border-radius: 3px; cursor: pointer; transition: all 0.15s;
+      }
+      .xray-page-btn:hover { border-color: #ff1a50; color: #ff1a50; }
+      .xray-page-btn.active { border-color: #ff1a50; color: #ff1a50; background: #1a0a10; }
+      .xray-palette-canvas {
+        width: 100%; image-rendering: pixelated; border: 1px solid #2a2a2a;
+        border-radius: 3px; cursor: crosshair;
+      }
+      .xray-palette-info {
+        font: 0.7rem "Courier New", monospace; color: #888; padding: 6px 0;
+        min-height: 1.2em;
+      }
+      .xray-palette-info code { color: #ff1a50; }
+      .xray-palette-info b { color: #ccc; font-weight: 600; }
     </style>
   </head>
   <body>

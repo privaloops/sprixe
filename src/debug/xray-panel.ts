@@ -27,6 +27,12 @@ export class XRayPanel {
   private spreadSlider: HTMLInputElement | null = null;
   private spreadValue: HTMLSpanElement | null = null;
 
+  // Palette viewer
+  private paletteCanvas: HTMLCanvasElement | null = null;
+  private paletteCtx: CanvasRenderingContext2D | null = null;
+  private paletteInfo: HTMLDivElement | null = null;
+  private palettePage = 0; // 0..5
+
   // Update throttle
   private updateRafId = 0;
 
@@ -186,6 +192,84 @@ export class XRayPanel {
       this.renderer.setSpread(val);
       this.spreadValue!.textContent = String(val);
     });
+
+    // Palette section
+    const palTitle = el("div", "xray-section-title");
+    palTitle.textContent = "Palette";
+    c.appendChild(palTitle);
+
+    // Page selector (6 pages × 32 palettes each)
+    const pageRow = el("div", "xray-palette-pages");
+    for (let p = 0; p < 6; p++) {
+      const btn = el("button", "xray-page-btn") as HTMLButtonElement;
+      btn.textContent = String(p);
+      if (p === 0) btn.classList.add("active");
+      btn.addEventListener("click", () => {
+        this.palettePage = p;
+        pageRow.querySelectorAll(".xray-page-btn").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+      });
+      pageRow.appendChild(btn);
+    }
+    const pageLabel = el("span");
+    pageLabel.style.cssText = "font-size:0.65rem;color:#555;margin-left:6px;";
+    pageLabel.textContent = "page";
+    pageRow.appendChild(pageLabel);
+    c.appendChild(pageRow);
+
+    // Palette canvas: 16 colors × 32 palettes, cell = 15×7
+    const CELL_W = 15;
+    const CELL_H = 7;
+    const palCanvas = document.createElement("canvas");
+    palCanvas.width = 16 * CELL_W;  // 240
+    palCanvas.height = 32 * CELL_H; // 224
+    palCanvas.className = "xray-palette-canvas";
+    this.paletteCanvas = palCanvas;
+    this.paletteCtx = palCanvas.getContext("2d")!;
+    c.appendChild(palCanvas);
+
+    // Palette info on hover
+    this.paletteInfo = el("div", "xray-palette-info") as HTMLDivElement;
+    this.paletteInfo.textContent = "Hover to inspect";
+    c.appendChild(this.paletteInfo);
+
+    palCanvas.addEventListener("mousemove", (e) => {
+      const rect = palCanvas.getBoundingClientRect();
+      const sx = palCanvas.width / rect.width;
+      const sy = palCanvas.height / rect.height;
+      const cx = Math.floor((e.clientX - rect.left) * sx);
+      const cy = Math.floor((e.clientY - rect.top) * sy);
+      const colIdx = Math.floor(cx / CELL_W);
+      const palIdx = Math.floor(cy / CELL_H);
+      if (colIdx < 0 || colIdx >= 16 || palIdx < 0 || palIdx >= 32) return;
+
+      const video = this.emulator.getVideo();
+      if (!video) return;
+      const cache = video.getPaletteCache();
+      const absIdx = (this.palettePage * 32 + palIdx) * 16 + colIdx;
+      const packed = cache[absIdx] ?? 0;
+      // Packed is ABGR: 0xFFBBGGRR
+      const r = packed & 0xFF;
+      const g = (packed >> 8) & 0xFF;
+      const b = (packed >> 16) & 0xFF;
+      const hex = `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b.toString(16).padStart(2, "0")}`;
+
+      // Palette group labels
+      const absPal = this.palettePage * 32 + palIdx;
+      let group = "";
+      if (absPal < 32) group = " (Sprites)";
+      else if (absPal < 64) group = " (Scroll 1)";
+      else if (absPal < 96) group = " (Scroll 2)";
+      else if (absPal < 128) group = " (Scroll 3)";
+
+      this.paletteInfo!.innerHTML =
+        `<span style="display:inline-block;width:12px;height:12px;background:${hex};border:1px solid #333;vertical-align:middle;margin-right:4px;"></span>` +
+        `Pal <b>${absPal}</b>${group} · Col <b>${colIdx}</b> · <code>${hex.toUpperCase()}</code>`;
+    });
+
+    palCanvas.addEventListener("mouseleave", () => {
+      this.paletteInfo!.textContent = "Hover to inspect";
+    });
   }
 
   private createLayerRow(layerId: number): HTMLDivElement {
@@ -223,6 +307,28 @@ export class XRayPanel {
     // No additional bindings needed — events are bound in buildDOM
   }
 
+  private renderPalette(): void {
+    const ctx = this.paletteCtx;
+    const video = this.emulator.getVideo();
+    if (!ctx || !video) return;
+
+    const cache = video.getPaletteCache();
+    const CELL_W = 15;
+    const CELL_H = 7;
+    const pageBase = this.palettePage * 32 * 16; // 32 palettes × 16 colors
+
+    for (let pal = 0; pal < 32; pal++) {
+      for (let col = 0; col < 16; col++) {
+        const packed = cache[pageBase + pal * 16 + col] ?? 0;
+        const r = packed & 0xFF;
+        const g = (packed >> 8) & 0xFF;
+        const b = (packed >> 16) & 0xFF;
+        ctx.fillStyle = `rgb(${r},${g},${b})`;
+        ctx.fillRect(col * CELL_W, pal * CELL_H, CELL_W, CELL_H);
+      }
+    }
+  }
+
   private startUpdateLoop(): void {
     let tick = 0;
     const update = (): void => {
@@ -249,6 +355,11 @@ export class XRayPanel {
       // Update play/pause button state
       if (tick % 15 === 0 && this.playPauseBtn) {
         this.playPauseBtn.textContent = this.emulator.isPaused() ? "Play" : "Pause";
+      }
+
+      // Update palette grid every 15 frames (~4Hz)
+      if (tick % 15 === 0) {
+        this.renderPalette();
       }
 
       this.updateRafId = requestAnimationFrame(update);
