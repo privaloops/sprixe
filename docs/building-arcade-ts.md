@@ -146,7 +146,7 @@ At some point you have to admit defeat. Even with experience and a good AI at yo
 
 The emulator worked. Street Fighter II, Final Fight, Cadillacs & Dinosaurs — all running in Chrome with sound. I was proud.
 
-Then I stepped back and looked at what I'd built. A functional emulator, sure — but as a player, it was one among many. With 39 games and no polish, nobody would choose it over established projects with thousands of supported titles and decades of work behind them.
+Then I stepped back and looked at what I'd built. A functional emulator, sure — but as a player, it was one among many. With 32 playable games and no polish, nobody would choose it over established projects with thousands of supported titles and decades of work behind them.
 
 As a technical challenge it was rewarding — but a technical challenge is all it was.
 
@@ -221,7 +221,7 @@ The audio output uses an **AudioWorklet** reading from a **SharedArrayBuffer** r
 | Metric | Value |
 |--------|-------|
 | Lines of TypeScript | ~20,000 |
-| Games supported | 39 parent ROM sets (~20-25 fully playable, others with varying bugs) |
+| Games supported | 32 fully playable, 8 with known issues |
 | CPU usage | ~33% on a modern Mac |
 | M68000 test vectors | 16,800 |
 | Z80 test vectors | 117,600 |

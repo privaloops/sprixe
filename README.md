@@ -2,7 +2,7 @@
 
 **A CPS1 arcade emulator written from scratch in TypeScript.** Runs entirely in the browser — with a built-in debug mode that lets you see how the hardware actually draws each frame.
 
-> Play Street Fighter II, Final Fight, Cadillacs & Dinosaurs, and 35+ Capcom classics in your browser. Then press F2 to look inside.
+> Play Street Fighter II, Final Fight, Cadillacs & Dinosaurs, and 30+ Capcom classics in your browser. Then press F2 to look inside.
 
 ![Arcade.ts — Debug mode: 3D exploded view of CPS1 layers](docs/demo.gif)
 
@@ -40,7 +40,7 @@ The audio subsystem runs in a dedicated **Web Worker** with its own Z80+YM2151+O
 
 ## Features
 
-- **39 games** supported (41 parent ROM sets)
+- **32 games** fully playable (8 with known issues — see below)
 - **Save states** with full audio restore (F5/F8)
 - **Gamepad support** with per-player device assignment
 - **Keyboard remapping** with AZERTY/QWERTY auto-detection
@@ -86,7 +86,22 @@ MAME 0.286 non-merged ROM sets in ZIP format. The filename must match the MAME c
 | King of Dragons | `kod` |
 | Willow | `willow` |
 
-...and 20 more. See [`src/game-catalog.ts`](src/game-catalog.ts) for the full list.
+...and more. See [`src/game-catalog.ts`](src/game-catalog.ts) for the full list.
+
+### Known issues
+
+These 8 games load but have bugs (graphics glitches, crashes, or missing features):
+
+| Game | ROM | Issue |
+|------|-----|-------|
+| Captain Commando | `captcomm` | Not working |
+| Carrier Air Wing | `cawing` | Not working |
+| Forgotten Worlds | `forgottn` | Not working |
+| Ganbare! Marine Kun | `ganbare` | Not working |
+| Mega Bomberman | `mbombrd` | Not working |
+| Pang! 3 | `pang3` | Not working |
+| Pnickies / Monster | `pmonster` | Not working |
+| Saturday Night Slam Masters | `slammast` | Not working |
 
 ## Getting started
 
