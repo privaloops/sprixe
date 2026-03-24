@@ -1,28 +1,10 @@
 # Arcade.ts
 
-**A CPS1 arcade machine emulator written from scratch in TypeScript.** Runs entirely in the browser — no plugins, no install, no backend.
+**A CPS1 arcade emulator written from scratch in TypeScript.** Runs entirely in the browser — with a built-in debug mode that lets you see how the hardware actually draws each frame.
 
-> Street Fighter II, Final Fight, Cadillacs & Dinosaurs, Ghouls'n Ghosts, and 35+ more Capcom classics playable in your browser.
+> Play Street Fighter II, Final Fight, Cadillacs & Dinosaurs, and 35+ Capcom classics in your browser. Then press F2 to look inside.
 
 ![Arcade.ts — Debug mode: 3D exploded view of CPS1 layers](docs/demo.gif)
-
-## Try it
-
-**[Live demo](https://arcade-ts.vercel.app)** — drop a MAME ROM (.zip) onto the screen.
-
-## Why
-
-Most browser-based emulators are ports of C/C++ codebases compiled to WASM — black boxes where the rendering pipeline is invisible. Arcade.ts is different — every component is written from scratch in TypeScript, which means every layer, sprite, and palette is accessible as a JavaScript object you can inspect, toggle, and render independently:
-
-- **M68000 CPU** — full interpreter, 3000+ lines
-- **Z80 CPU** — full interpreter, 2200+ lines
-- **YM2151 FM synthesis** — via [Nuked OPM](https://github.com/nukeykt/Nuked-OPM) compiled to WASM (the only non-TS component)
-- **OKI MSM6295 ADPCM** — pure TypeScript decoder
-- **CPS-A/CPS-B video** — tile decode, 3 scroll layers, sprites, palette, priority
-- **WebGL2 renderer** with Canvas 2D fallback
-- **Experimental DOM renderer** — every sprite is an HTML element
-
-The audio subsystem runs in a dedicated **Web Worker** with its own Z80+YM2151+OKI instances, communicating via **SharedArrayBuffer** — just like the real hardware where the audio CPU runs on its own crystal, independent from the main CPU.
 
 ## Debug mode
 
@@ -37,7 +19,24 @@ Press **F2** during gameplay to open the debug panel — the game keeps running.
 - **Register viewer** — live CPS-A/CPS-B scroll offsets, layer order, enable states
 - **Frame-by-frame** — pause, step forward one frame at a time
 
-This is what the TypeScript approach makes uniquely possible — no WASM black-box emulator can expose its internals this way.
+Most browser emulators are WASM ports of C/C++ — black boxes where the framebuffer is already flat. Because Arcade.ts decodes everything in TypeScript, every layer, sprite, and palette exists as an inspectable object. This is what makes the debug mode possible.
+
+## Try it
+
+**[Live demo](https://arcade-ts.vercel.app)** — drop a MAME ROM (.zip) onto the screen.
+
+## Under the hood
+
+Every component is written from scratch in TypeScript:
+
+- **M68000 CPU** — full interpreter, 3000+ lines
+- **Z80 CPU** — full interpreter, 2200+ lines
+- **YM2151 FM synthesis** — via [Nuked OPM](https://github.com/nukeykt/Nuked-OPM) compiled to WASM (the only non-TS component)
+- **OKI MSM6295 ADPCM** — pure TypeScript decoder
+- **CPS-A/CPS-B video** — tile decode, 3 scroll layers, sprites, palette, priority
+- **WebGL2 renderer** with Canvas 2D fallback
+
+The audio subsystem runs in a dedicated **Web Worker** with its own Z80+YM2151+OKI instances, communicating via **SharedArrayBuffer** — just like the real hardware where the audio CPU runs on its own crystal, independent from the main CPU.
 
 ## Features
 
