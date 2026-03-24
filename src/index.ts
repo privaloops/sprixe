@@ -372,7 +372,7 @@ async function handleRomFile(file: File): Promise<void> {
   }
 }
 
-// ── File picker ──────────────────────────────────────────────────────────────
+// ── File picker + drag & drop ────────────────────────────────────────────────
 
 dropZone.addEventListener("click", () => {
   if (!dropZone.classList.contains("hidden")) {
@@ -387,6 +387,29 @@ fileInput.addEventListener("change", () => {
     void handleRomFile(file);
   }
   fileInput.value = ""; // allow re-selecting the same file
+});
+
+// HTML5 drag & drop on the entire page
+document.addEventListener("dragover", (e) => {
+  e.preventDefault();
+  if (!dropZone.classList.contains("hidden")) {
+    dropZone.classList.add("drag-over");
+  }
+});
+
+document.addEventListener("dragleave", (e) => {
+  if (e.relatedTarget === null) {
+    dropZone.classList.remove("drag-over");
+  }
+});
+
+document.addEventListener("drop", (e) => {
+  e.preventDefault();
+  dropZone.classList.remove("drag-over");
+  const file = e.dataTransfer?.files[0];
+  if (file) {
+    void handleRomFile(file);
+  }
 });
 
 // ── Game selector (loads from public/roms/) ──────────────────────────────────
