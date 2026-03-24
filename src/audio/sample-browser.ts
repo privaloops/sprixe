@@ -2,6 +2,7 @@
  * Sample Browser — list, preview, replace, and export OKI ADPCM samples.
  */
 
+import JSZip from "jszip";
 import { parsePhraseTable, decodeSample, encodeSample, replaceSampleInRom, OKI_SAMPLE_RATE, type PhraseInfo } from "./oki-codec";
 import type { Emulator } from "../emulator";
 
@@ -281,67 +282,116 @@ export class SampleBrowser {
     }
   }
 
-  // -- Export all samples as individual WAV downloads --
+  // -- Export Set (ZIP of WAVs) --
 
-  private exportSamples(): void {
+  private async exportSamples(): Promise<void> {
     const rom = this.emulator.getOkiRom();
     if (!rom || this.phrases.length === 0) return;
 
     const gameName = this.emulator.getGameName();
+    const zip = new JSZip();
+
     for (const phrase of this.phrases) {
       const pcm = decodeSample(rom, phrase);
       if (pcm.length === 0) continue;
       const wav = pcmToWav(pcm, OKI_SAMPLE_RATE);
-      const blob = new Blob([wav], { type: "audio/wav" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${gameName}_sample_${String(phrase.id).padStart(2, "0")}.wav`;
-      a.click();
-      URL.revokeObjectURL(url);
+      zip.file(`${String(phrase.id).padStart(2, "0")}.wav`, wav);
     }
+
+    const blob = await zip.generateAsync({ type: "blob" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${gameName}_samples.zip`;
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
-  // -- Import WAV files --
+  // -- Import Set (ZIP of WAVs) or individual WAVs --
 
   private importSamples(): void {
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = ".wav,audio/*";
+    input.accept = ".zip,.wav,audio/*";
     input.multiple = true;
     input.addEventListener("change", async () => {
       const files = input.files;
       if (!files || files.length === 0) return;
-      const rom = this.emulator.getOkiRom();
-      if (!rom) return;
 
-      const ctx = this.getAudioCtx();
-      let replaced = 0;
-
-      for (const file of Array.from(files)) {
-        // Extract sample ID from filename: "XX.wav" or "*_sample_XX.wav"
-        const match = file.name.match(/(\d{1,3})\.wav$/i) ?? file.name.match(/sample_(\d{1,3})/i);
-        if (!match) continue;
-        const phraseId = parseInt(match[1]!, 10);
-        if (phraseId < 0 || phraseId >= 128) continue;
-
-        try {
-          const arrayBuf = await file.arrayBuffer();
-          const audioBuf = await ctx.decodeAudioData(arrayBuf);
-          const pcm = audioBuf.getChannelData(0);
-          const adpcm = encodeSample(pcm, audioBuf.sampleRate);
-          if (replaceSampleInRom(rom, phraseId, adpcm)) replaced++;
-        } catch (err) {
-          console.warn(`Failed to import ${file.name}:`, err);
-        }
-      }
-
-      if (replaced > 0) {
-        this.emulator.updateOkiRom(rom);
-        this.refreshTable();
+      // If a ZIP file, extract and import all WAVs from it
+      if (files.length === 1 && files[0]!.name.endsWith(".zip")) {
+        await this.importFromZip(files[0]!);
+      } else {
+        await this.importFromFiles(Array.from(files));
       }
     });
     input.click();
+  }
+
+  private async importFromZip(file: File): Promise<void> {
+    const rom = this.emulator.getOkiRom();
+    if (!rom) return;
+
+    const zip = await JSZip.loadAsync(await file.arrayBuffer());
+    const ctx = this.getAudioCtx();
+    let replaced = 0;
+
+    for (const [filename, entry] of Object.entries(zip.files)) {
+      if (entry.dir) continue;
+      const phraseId = this.extractPhraseId(filename);
+      if (phraseId < 0) continue;
+
+      try {
+        const arrayBuf = await entry.async("arraybuffer");
+        const audioBuf = await ctx.decodeAudioData(arrayBuf);
+        const pcm = audioBuf.getChannelData(0);
+        const adpcm = encodeSample(pcm, audioBuf.sampleRate);
+        if (replaceSampleInRom(rom, phraseId, adpcm)) replaced++;
+      } catch (err) {
+        console.warn(`Failed to import ${filename}:`, err);
+      }
+    }
+
+    if (replaced > 0) {
+      this.emulator.updateOkiRom(rom);
+      this.refreshTable();
+    }
+  }
+
+  private async importFromFiles(files: File[]): Promise<void> {
+    const rom = this.emulator.getOkiRom();
+    if (!rom) return;
+
+    const ctx = this.getAudioCtx();
+    let replaced = 0;
+
+    for (const file of files) {
+      const phraseId = this.extractPhraseId(file.name);
+      if (phraseId < 0) continue;
+
+      try {
+        const arrayBuf = await file.arrayBuffer();
+        const audioBuf = await ctx.decodeAudioData(arrayBuf);
+        const pcm = audioBuf.getChannelData(0);
+        const adpcm = encodeSample(pcm, audioBuf.sampleRate);
+        if (replaceSampleInRom(rom, phraseId, adpcm)) replaced++;
+      } catch (err) {
+        console.warn(`Failed to import ${file.name}:`, err);
+      }
+    }
+
+    if (replaced > 0) {
+      this.emulator.updateOkiRom(rom);
+      this.refreshTable();
+    }
+  }
+
+  private extractPhraseId(filename: string): number {
+    // Match "XX.wav" or "*_sample_XX.wav" or "XX_something.wav"
+    const match = filename.match(/(\d{1,3})\.wav$/i) ?? filename.match(/sample_(\d{1,3})/i) ?? filename.match(/^(\d{1,3})[_.\-]/);
+    if (!match) return -1;
+    const id = parseInt(match[1]!, 10);
+    return (id >= 0 && id < 128) ? id : -1;
   }
 }
 
