@@ -10,6 +10,8 @@
  */
 
 import { kcToNoteName, type VizReader } from "./audio-viz";
+import { parsePhraseTable, decodeSample, encodeSample, replaceSampleInRom, OKI_SAMPLE_RATE, type PhraseInfo } from "./oki-codec";
+import JSZip from "jszip";
 import type { Emulator } from "../emulator";
 
 const FM_CHANNELS = 8;
@@ -71,6 +73,18 @@ export class AudioPanel {
   private readonly waveCtxs: (CanvasRenderingContext2D | null)[] = [];
   private readonly prevWaveY: number[] = [5, 5, 5, 5];
 
+  // Tabs
+  private tracksContent: HTMLDivElement | null = null;
+  private samplesContent: HTMLDivElement | null = null;
+  private activeTab: "tracks" | "samples" = "tracks";
+  private tracksTabBtn: HTMLButtonElement | null = null;
+  private samplesTabBtn: HTMLButtonElement | null = null;
+
+  // Sample browser
+  private sampleTableBody: HTMLElement | null = null;
+  private phrases: PhraseInfo[] = [];
+  private sampleAudioCtx: AudioContext | null = null;
+
   // Mute/Solo
   private readonly muted = new Set<number>();
   private readonly soloed = new Set<number>();
@@ -125,15 +139,27 @@ export class AudioPanel {
     const c = this.container;
     c.innerHTML = "";
 
-    // Header
+    // Header with tabs
     const header = el("div", "aud-header");
     const title = el("h2");
     title.textContent = "Audio";
+
+    this.tracksTabBtn = el("button", "aud-tab-btn active") as HTMLButtonElement;
+    this.tracksTabBtn.textContent = "Tracks";
+    this.tracksTabBtn.addEventListener("click", () => this.switchTab("tracks"));
+
+    this.samplesTabBtn = el("button", "aud-tab-btn") as HTMLButtonElement;
+    this.samplesTabBtn.textContent = "Samples";
+    this.samplesTabBtn.addEventListener("click", () => this.switchTab("samples"));
+
     const closeBtn = el("button", "aud-close");
     closeBtn.textContent = "\u00D7";
     closeBtn.addEventListener("click", () => this.toggle());
-    header.append(title, closeBtn);
+    header.append(title, this.tracksTabBtn, this.samplesTabBtn, closeBtn);
     c.appendChild(header);
+
+    // -- Tracks tab content --
+    this.tracksContent = el("div", "aud-tab-content") as HTMLDivElement;
 
     // FM Section — 3-column grid: controls | keyboard | timelines
     const fmGrid = el("div", "aud-fm-grid") as HTMLDivElement;
@@ -191,17 +217,105 @@ export class AudioPanel {
       this.fmTimeCtxs[ch] = ctx;
     }
 
-    c.appendChild(fmGrid);
+    this.tracksContent.appendChild(fmGrid);
+    this.tracksContent.appendChild(el("div", "aud-separator"));
 
-    // Separator
-    c.appendChild(el("div", "aud-separator"));
-
-    // OKI Section
     const okiSection = el("div", "aud-channels");
     for (let v = 0; v < OKI_VOICES; v++) {
       okiSection.appendChild(this.createOkiRow(v));
     }
-    c.appendChild(okiSection);
+    this.tracksContent.appendChild(okiSection);
+    c.appendChild(this.tracksContent);
+
+    // -- Samples tab content --
+    this.samplesContent = el("div", "aud-tab-content") as HTMLDivElement;
+    this.samplesContent.style.display = "none";
+    this.buildSamplesTab();
+    c.appendChild(this.samplesContent);
+  }
+
+  private buildSamplesTab(): void {
+    const sc = this.samplesContent!;
+    sc.innerHTML = "";
+
+    // Import/Export buttons
+    const actions = el("div", "smp-actions");
+    const importBtn = el("button", "ctrl-btn") as HTMLButtonElement;
+    importBtn.textContent = "Import Set";
+    importBtn.style.cssText = "font-size:0.6rem;padding:3px 8px;";
+    importBtn.addEventListener("click", () => this.importSamples());
+    const exportBtn = el("button", "ctrl-btn") as HTMLButtonElement;
+    exportBtn.textContent = "Export Set";
+    exportBtn.style.cssText = "font-size:0.6rem;padding:3px 8px;";
+    exportBtn.addEventListener("click", () => this.exportSamples());
+    actions.append(importBtn, exportBtn);
+    sc.appendChild(actions);
+
+    // Table
+    const table = el("table", "smp-table");
+    const thead = el("thead");
+    thead.innerHTML = `<tr><th>#</th><th>Duration</th><th>Size</th><th>Play</th><th>Replace</th></tr>`;
+    table.appendChild(thead);
+    this.sampleTableBody = el("tbody");
+    table.appendChild(this.sampleTableBody);
+    sc.appendChild(table);
+  }
+
+  private switchTab(tab: "tracks" | "samples"): void {
+    this.activeTab = tab;
+    if (this.tracksContent) this.tracksContent.style.display = tab === "tracks" ? "" : "none";
+    if (this.samplesContent) this.samplesContent.style.display = tab === "samples" ? "" : "none";
+    this.tracksTabBtn?.classList.toggle("active", tab === "tracks");
+    this.samplesTabBtn?.classList.toggle("active", tab === "samples");
+    if (tab === "samples") this.refreshSampleTable();
+  }
+
+  private refreshSampleTable(): void {
+    if (!this.sampleTableBody) return;
+    const rom = this.emulator.getOkiRom();
+    if (!rom) {
+      this.sampleTableBody.innerHTML = `<tr><td colspan="5" style="color:#555;text-align:center;padding:12px;">No OKI ROM</td></tr>`;
+      return;
+    }
+    this.phrases = parsePhraseTable(rom);
+    this.sampleTableBody.innerHTML = "";
+
+    for (const phrase of this.phrases) {
+      const tr = document.createElement("tr");
+      const tdId = el("td"); tdId.textContent = String(phrase.id).padStart(2, "0");
+      const tdDur = el("td"); tdDur.textContent = `${(phrase.durationMs / 1000).toFixed(2)}s`;
+      const tdSize = el("td"); tdSize.textContent = phrase.sizeBytes > 1024 ? `${(phrase.sizeBytes / 1024).toFixed(1)} KB` : `${phrase.sizeBytes} B`;
+
+      const tdPlay = el("td");
+      const playBtn = el("button", "smp-play-btn") as HTMLButtonElement;
+      playBtn.textContent = "\u25B6";
+      playBtn.addEventListener("click", () => this.playSample(phrase));
+      tdPlay.appendChild(playBtn);
+
+      const tdReplace = el("td", "smp-replace-cell");
+      const dropZone = el("div", "smp-drop") as HTMLDivElement;
+      dropZone.textContent = "Drop WAV";
+      dropZone.addEventListener("dragover", (e) => { e.preventDefault(); dropZone.classList.add("drag-over"); });
+      dropZone.addEventListener("dragleave", () => dropZone.classList.remove("drag-over"));
+      dropZone.addEventListener("drop", (e) => {
+        e.preventDefault(); dropZone.classList.remove("drag-over");
+        const file = (e as DragEvent).dataTransfer?.files[0];
+        if (file) this.replaceWithFile(phrase.id, file, dropZone);
+      });
+      dropZone.addEventListener("click", () => {
+        const input = document.createElement("input");
+        input.type = "file"; input.accept = ".wav,audio/*";
+        input.addEventListener("change", () => {
+          const file = input.files?.[0];
+          if (file) this.replaceWithFile(phrase.id, file, dropZone);
+        });
+        input.click();
+      });
+      tdReplace.appendChild(dropZone);
+
+      tr.append(tdId, tdDur, tdSize, tdPlay, tdReplace);
+      this.sampleTableBody.appendChild(tr);
+    }
   }
 
   private createVu(idx: number): HTMLCanvasElement {
@@ -265,6 +379,139 @@ export class AudioPanel {
     });
     this.soloButtons[idx] = btn;
     return btn;
+  }
+
+  // -- Sample operations --
+
+  private getAudioCtx(): AudioContext {
+    if (!this.sampleAudioCtx) this.sampleAudioCtx = new AudioContext();
+    return this.sampleAudioCtx;
+  }
+
+  private playSample(phrase: PhraseInfo): void {
+    const rom = this.emulator.getOkiRom();
+    if (!rom) return;
+    const pcm = decodeSample(rom, phrase);
+    const ctx = this.getAudioCtx();
+    const buffer = ctx.createBuffer(1, pcm.length, OKI_SAMPLE_RATE);
+    buffer.getChannelData(0).set(pcm);
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(ctx.destination);
+    source.start();
+  }
+
+  private async replaceWithFile(phraseId: number, file: File, dropZone: HTMLElement): Promise<void> {
+    const rom = this.emulator.getOkiRom();
+    if (!rom) return;
+    try {
+      dropZone.textContent = "Encoding...";
+      const ctx = this.getAudioCtx();
+      const arrayBuf = await file.arrayBuffer();
+      const audioBuf = await ctx.decodeAudioData(arrayBuf);
+      const pcm = audioBuf.getChannelData(0);
+      const adpcm = encodeSample(pcm, audioBuf.sampleRate);
+      if (replaceSampleInRom(rom, phraseId, adpcm)) {
+        this.emulator.updateOkiRom(rom);
+        dropZone.textContent = "\u2713 OK";
+        dropZone.classList.add("replaced");
+        this.showToast(`Sample #${phraseId} replaced`, true);
+        setTimeout(() => this.refreshSampleTable(), 1000);
+      } else {
+        this.showToast(`Sample #${phraseId}: ROM full`, false);
+      }
+    } catch (err) {
+      this.showToast(`Sample #${phraseId}: error`, false);
+      console.error("Replace error:", err);
+    }
+  }
+
+  private async exportSamples(): Promise<void> {
+    const rom = this.emulator.getOkiRom();
+    if (!rom || this.phrases.length === 0) return;
+    const gameName = this.emulator.getGameName();
+    const zip = new JSZip();
+    for (const phrase of this.phrases) {
+      const pcm = decodeSample(rom, phrase);
+      if (pcm.length === 0) continue;
+      zip.file(`${String(phrase.id).padStart(2, "0")}.wav`, pcmToWav(pcm, OKI_SAMPLE_RATE));
+    }
+    const blob = await zip.generateAsync({ type: "blob" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `${gameName}_samples.zip`; a.click();
+    URL.revokeObjectURL(url);
+    this.showToast(`Exported ${this.phrases.length} samples`, true);
+  }
+
+  private importSamples(): void {
+    const input = document.createElement("input");
+    input.type = "file"; input.accept = ".zip,.wav,audio/*"; input.multiple = true;
+    input.addEventListener("change", async () => {
+      const files = input.files;
+      if (!files || files.length === 0) return;
+      if (files.length === 1 && files[0]!.name.endsWith(".zip")) {
+        await this.importFromZip(files[0]!);
+      } else {
+        await this.importFromFiles(Array.from(files));
+      }
+    });
+    input.click();
+  }
+
+  private async importFromZip(file: File): Promise<void> {
+    const rom = this.emulator.getOkiRom();
+    if (!rom) return;
+    const zip = await JSZip.loadAsync(await file.arrayBuffer());
+    const ctx = this.getAudioCtx();
+    let replaced = 0;
+    for (const [filename, entry] of Object.entries(zip.files)) {
+      if (entry.dir) continue;
+      const phraseId = this.extractPhraseId(filename);
+      if (phraseId < 0) continue;
+      try {
+        const buf = await entry.async("arraybuffer");
+        const audioBuf = await ctx.decodeAudioData(buf);
+        const adpcm = encodeSample(audioBuf.getChannelData(0), audioBuf.sampleRate);
+        if (replaceSampleInRom(rom, phraseId, adpcm)) replaced++;
+      } catch { /* skip bad files */ }
+    }
+    if (replaced > 0) { this.emulator.updateOkiRom(rom); this.refreshSampleTable(); }
+    this.showToast(replaced > 0 ? `Imported ${replaced} sample${replaced > 1 ? "s" : ""}` : "No samples imported", replaced > 0);
+  }
+
+  private async importFromFiles(files: File[]): Promise<void> {
+    const rom = this.emulator.getOkiRom();
+    if (!rom) return;
+    const ctx = this.getAudioCtx();
+    let replaced = 0;
+    for (const file of files) {
+      const phraseId = this.extractPhraseId(file.name);
+      if (phraseId < 0) continue;
+      try {
+        const buf = await file.arrayBuffer();
+        const audioBuf = await ctx.decodeAudioData(buf);
+        const adpcm = encodeSample(audioBuf.getChannelData(0), audioBuf.sampleRate);
+        if (replaceSampleInRom(rom, phraseId, adpcm)) replaced++;
+      } catch { /* skip */ }
+    }
+    if (replaced > 0) { this.emulator.updateOkiRom(rom); this.refreshSampleTable(); }
+    this.showToast(replaced > 0 ? `Imported ${replaced} sample${replaced > 1 ? "s" : ""}` : "No samples imported", replaced > 0);
+  }
+
+  private extractPhraseId(filename: string): number {
+    const match = filename.match(/(\d{1,3})\.wav$/i) ?? filename.match(/sample_(\d{1,3})/i) ?? filename.match(/^(\d{1,3})[_.\-]/);
+    if (!match) return -1;
+    const id = parseInt(match[1]!, 10);
+    return (id >= 0 && id < 128) ? id : -1;
+  }
+
+  private showToast(message: string, success: boolean): void {
+    const toast = document.createElement("div");
+    toast.className = `smp-toast ${success ? "success" : "error"}`;
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 3000);
   }
 
   private selectFmChannel(ch: number): void {
@@ -454,4 +701,22 @@ function el(tag: string, className?: string): HTMLElement {
   const e = document.createElement(tag);
   if (className) e.className = className;
   return e;
+}
+
+function pcmToWav(pcm: Float32Array, sampleRate: number): ArrayBuffer {
+  const numSamples = pcm.length;
+  const dataSize = numSamples * 2;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const v = new DataView(buffer);
+  const w = (off: number, str: string) => { for (let i = 0; i < str.length; i++) v.setUint8(off + i, str.charCodeAt(i)); };
+  w(0, "RIFF"); v.setUint32(4, 36 + dataSize, true); w(8, "WAVE");
+  w(12, "fmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, sampleRate, true); v.setUint32(28, sampleRate * 2, true);
+  v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  w(36, "data"); v.setUint32(40, dataSize, true);
+  for (let i = 0; i < numSamples; i++) {
+    const s = Math.max(-1, Math.min(1, pcm[i]!));
+    v.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+  }
+  return buffer;
 }

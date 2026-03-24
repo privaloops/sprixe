@@ -508,6 +508,16 @@
       }
       .aud-close:hover { border-color: #ff1a50; color: #ff1a50; }
 
+      .aud-tab-btn {
+        background: transparent; border: 1px solid #333; color: #555;
+        font: 600 0.6rem -apple-system, sans-serif; padding: 3px 10px;
+        border-radius: 3px; cursor: pointer; transition: all 0.15s;
+      }
+      .aud-tab-btn:hover { border-color: #888; color: #888; }
+      .aud-tab-btn.active { border-color: #ff1a50; color: #ff1a50; background: #1a0a10; }
+
+      .smp-actions { display: flex; gap: 6px; margin-bottom: 8px; }
+
       .aud-channels { display: flex; flex-direction: column; gap: 1px; }
 
       .aud-ch-row {
@@ -662,7 +672,6 @@
           <button id="mute-btn" class="ctrl-btn">Mute (M)</button>
           <button id="dbg-btn" class="ctrl-btn">Video (F2)</button>
           <button id="aud-btn" class="ctrl-btn">Audio (F3)</button>
-          <button id="sample-btn" class="ctrl-btn">Samples (F4)</button>
           <button id="quit-btn" class="ctrl-btn" style="color:#ff1a50;">Quit</button>
         </div>
         <a class="github-link" href="https://github.com/privaloops/arcade-ts" target="_blank" rel="noopener">
@@ -759,7 +768,6 @@
 
     <div id="dbg-panel" class="dbg-panel open"></div>
     <div id="aud-panel" class="aud-panel open"></div>
-    <div id="sample-panel" class="smp-panel"></div>
     <script type="module" src="/src/index.ts"></script>
   </body>
 </html>
