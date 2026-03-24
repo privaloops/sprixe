@@ -1,8 +1,8 @@
-# Arcade.ts — Roadmap
+# StudioROM — Roadmap
 
 ## Vision
 
-Arcade.ts n'est pas un émulateur de plus. C'est un **studio CPS1 dans le navigateur** : jouer, comprendre, modifier, créer. Tout en un, zero install.
+StudioROM n'est pas un émulateur de plus. C'est un **studio CPS1 dans le navigateur** : jouer, comprendre, modifier, créer. Tout en un, zero install.
 
 L'avantage structurel : tout est décodé en TypeScript. Chaque layer, sprite, palette, canal audio existe comme un objet JavaScript inspectable et modifiable. C'est ce que les émulateurs compilés en WASM ne peuvent pas offrir.
 
@@ -46,12 +46,13 @@ L'avantage structurel : tout est décodé en TypeScript. Chaque layer, sprite, p
 - [ ] Exporter en fichier MIDI standard (8 pistes = 8 canaux FM)
 - [ ] Ouvrir dans n'importe quel DAW (Cubase, Ableton, FL Studio, GarageBand)
 
-### Remplacement de samples
-- [ ] Clic sur un sample OKI → lecture du sample original
-- [ ] "Replace" → upload WAV ou enregistrement micro
-- [ ] Encodage WAV → ADPCM OKI en temps réel
-- [ ] Preview dans le jeu qui tourne
-- [ ] Export ROM audio modifiée
+### Remplacement de samples ✅
+- [x] Sample browser — liste des phrases OKI avec durée et taille
+- [x] Preview ▶ de chaque sample via AudioContext
+- [x] Drop WAV → encode ADPCM → replace in ROM en temps réel
+- [x] Import/Export Set en ZIP (round-trip WAV editing)
+- [x] Enregistrement micro → encode → replace
+- [x] Hot-swap : ROM modifiée propagée au Worker
 
 ### Technique ✅
 - [x] SharedArrayBuffer (vizSAB 128 bytes) pour les métriques audio (Worker → Main thread)

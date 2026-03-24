@@ -1,17 +1,17 @@
-# Arcade.ts
+# StudioROM
 
-**A CPS1 arcade emulator written from scratch in TypeScript.** Runs entirely in the browser — with a built-in debug mode that lets you see how the hardware actually draws each frame.
+**A CPS1 arcade studio in the browser.** Play, inspect, and modify — zero install.
 
-> Play Street Fighter II, Final Fight, Cadillacs & Dinosaurs, and 30+ Capcom classics in your browser. Then press F2 to look inside.
+> Play Street Fighter II, Final Fight, Cadillacs & Dinosaurs, and 30+ Capcom classics. Then open the studio tools to see how the hardware works, isolate audio channels, and replace sound samples.
 
-![Arcade.ts — Debug mode: 3D exploded view of CPS1 layers](docs/demo.gif)
+![StudioROM — 3D exploded view of CPS1 layers](docs/demo.gif)
 
-## Debug mode
+## Video (F2)
 
-Press **F2** during gameplay to open the debug panel — the game keeps running.
+Real-time hardware inspector — the game keeps running.
 
-- **Layer toggles** — show/hide each of the 4 hardware layers independently (Scroll 1/2/3, Sprites)
-- **3D exploded view** — separate the layers in Z-space with CSS perspective, drag to rotate
+- **Layer toggles** — show/hide each of the 4 hardware layers (Scroll 1/2/3, Sprites)
+- **3D exploded view** — separate layers in Z-space with CSS perspective, drag to rotate
 - **Flash** — highlight a single layer by dimming all others
 - **Palette viewer** — live grid of all 192 color palettes (6 pages × 32), hover for details
 - **Tile inspector** — click any pixel to identify which layer drew it
@@ -19,7 +19,22 @@ Press **F2** during gameplay to open the debug panel — the game keeps running.
 - **Register viewer** — live CPS-A/CPS-B scroll offsets, layer order, enable states
 - **Frame-by-frame** — pause, step forward one frame at a time
 
-Because everything is decoded in TypeScript, every layer, sprite, and palette exists as an inspectable object at every stage of the rendering pipeline. This is what makes the debug mode possible.
+## Audio (F3)
+
+### Tracks tab
+- **8 FM channels** (YM2151) — note name, VU meter, hit timeline, mute/solo
+- **4 OKI voices** (ADPCM) — waveform oscilloscope, mute/solo
+- **Piano roll** — Cubase-style Key Editor with vertical keyboard, selectable per track
+- **Mute/Solo** per channel — isolate bass, melody, percussion independently
+
+### Samples tab
+- **Sample browser** — list all OKI ADPCM phrases with duration and size
+- **Preview** — click ▶ to hear any sample
+- **Replace** — drag & drop a WAV to replace a sample in real-time
+- **Import/Export Set** — ZIP of all samples as WAV, round-trip editing
+- **Microphone recording** — record from mic to replace a sample
+
+Because everything is decoded in TypeScript, every layer, sprite, palette, and audio channel exists as an inspectable, modifiable JavaScript object. This is what makes the studio possible.
 
 ## Try it
 
@@ -192,8 +207,11 @@ src/
   memory/bus.ts          68K bus (memory map, I/O, CPS registers)
   memory/z80-bus.ts      Z80 bus (audio ROM, YM2151, OKI)
   memory/rom-loader.ts   MAME ZIP ROM loader
-  debug/debug-panel.ts   Debug drawer UI (F2)
+  debug/debug-panel.ts   Video inspector panel (F2)
   debug/debug-renderer.ts Layer mask + 3D exploded rendering
+  audio/audio-panel.ts   Audio DAW panel (F3) — tracks + samples tabs
+  audio/audio-viz.ts     SharedArrayBuffer bridge (Worker ↔ Main thread)
+  audio/oki-codec.ts     OKI ADPCM encoder/decoder for sample editing
   emulator.ts            Main loop, frame scheduling
   save-state.ts          Save/load state to localStorage
   dip-switches.ts        DIP switch definitions (from MAME)
