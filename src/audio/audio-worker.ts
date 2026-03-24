@@ -107,8 +107,9 @@ const ymKc = new Uint8Array(8);   // Key Code per channel
 const ymKf = new Uint8Array(8);   // Key Fraction per channel
 const ymKon = new Uint8Array(8);  // Key On per channel
 const ymTl = new Uint8Array(32);  // Total Level per operator (8ch × 4ops)
-const ymRl = new Uint8Array(8);   // Right/Left per channel
-const ymConnect = new Uint8Array(8); // Connection/algorithm per channel
+const ymRl = new Uint8Array(8);       // Right/Left per channel
+const ymConnect = new Uint8Array(8);  // Connection/algorithm per channel
+const ymRlFull = new Uint8Array(8);   // Full 0x20 register value (RL+FB+connect)
 
 /** Carrier operator slot for each algorithm (0-7).
  *  In YM2151, the carrier is the last operator in the signal chain.
@@ -119,51 +120,32 @@ function getCarrierTl(ch: number): number {
   return ymTl[ch + 24]!; // slot 3 (operator 4, offset = ch + 3*8)
 }
 
-// Pending TL restores (written at start of next frame, before Z80 runs)
-const pendingTlRestores: Array<{ reg: number; val: number }> = [];
-
-/** Apply channel mask changes: update mute flags for FM and OKI voiceMask. */
+/** Apply channel mask changes via RL (Right/Left output enable) register.
+ *  Muting: write RL=0 (no L, no R output). Unmuting: restore original RL.
+ *  This is cleaner than TL manipulation — no interference with volume envelope. */
 function applyChannelMask(mask: number): void {
-  if (mask === lastChannelMask) return;
-  console.log(`[worker] mask change: 0x${lastChannelMask.toString(16)} → 0x${mask.toString(16)}`);
+  if (mask === lastChannelMask || !ym2151) return;
   lastChannelMask = mask;
 
   for (let ch = 0; ch < 8; ch++) {
     const shouldMute = (mask & (1 << ch)) === 0;
     const wasMuted = fmMuted[ch] !== 0;
+    if (shouldMute === (wasMuted !== 0)) continue; // no change
     fmMuted[ch] = shouldMute ? 1 : 0;
 
-    // When unmuting, schedule TL restore for all 4 operators
-    if (wasMuted && !shouldMute) {
-      for (let op = 0; op < 4; op++) {
-        const reg = 0x60 + ch + op * 8;
-        pendingTlRestores.push({ reg, val: ymTl[ch + op * 8]! });
-      }
-    }
-    // When muting, write silence immediately
-    if (!wasMuted && shouldMute) {
-      for (let op = 0; op < 4; op++) {
-        pendingTlRestores.push({ reg: 0x60 + ch + op * 8, val: 0x7F });
-      }
-    }
+    // Write RL register (0x20+ch): bits 7-6 = R/L, bits 5-3 = FB, bits 2-0 = connect
+    // Mute: clear bits 7-6 (RL=0). Unmute: restore full original value.
+    const reg = 0x20 + ch;
+    const val = shouldMute ? (ymRlFull[ch]! & 0x3F) : ymRlFull[ch]!;
+    ym2151.writeAddress(reg);
+    ym2151.writeData(val);
   }
+  // Restore address latch
+  ym2151.writeAddress(lastYmAddr);
 
   if (oki6295) {
     oki6295.setVoiceMask((mask >> 8) & 0xF);
   }
-}
-
-/** Flush pending TL restores before the Z80 runs. Saves/restores address latch. */
-function flushPendingRestores(): void {
-  if (pendingTlRestores.length === 0 || !ym2151) return;
-  console.log(`[worker] flushing ${pendingTlRestores.length} TL restores`);
-  for (const { reg, val } of pendingTlRestores) {
-    ym2151.writeAddress(reg);
-    ym2151.writeData(val);
-  }
-  pendingTlRestores.length = 0;
-  // Restore the address latch so the Z80's next data write goes to the right register
-  ym2151.writeAddress(lastYmAddr);
 }
 
 function updateYmShadow(register: number, data: number): void {
@@ -196,6 +178,7 @@ function updateYmShadow(register: number, data: number): void {
     const ch = register & 7;
     ymRl[ch] = (data >> 6) & 3;
     ymConnect[ch] = data & 7;
+    ymRlFull[ch] = data;
     vizWriter.updateFmRl(ch, ymRl[ch]!);
   }
 }
@@ -212,9 +195,6 @@ function runAudioFrame(): void {
   if (vizWriter) {
     applyChannelMask(vizWriter.readChannelMask());
   }
-
-  // Restore TL values for freshly unmuted channels (before Z80 runs)
-  flushPendingRestores();
 
   // Advance latch queue (one command per frame)
   z80Bus.advanceSoundLatch();
@@ -315,9 +295,9 @@ self.onmessage = async (e: MessageEvent) => {
       });
       z80Bus.setYm2151WriteCallback((register: number, data: number) => {
         updateYmShadow(register, data);
-        // If this is a TL write and the channel is muted, replace with silence
-        if (register >= 0x60 && register <= 0x7F && fmMuted[register & 7]) {
-          ym2151!.writeData(0x7F); // silence this operator
+        // If this is an RL write and the channel is muted, force RL=0
+        if (register >= 0x20 && register <= 0x27 && fmMuted[register & 7]) {
+          ym2151!.writeData(data & 0x3F); // clear RL bits (keep FB + connect)
           return;
         }
         ym2151!.writeData(data);
