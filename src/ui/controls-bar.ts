@@ -22,6 +22,8 @@ export interface ControlsBarDeps {
   debugBtn: HTMLButtonElement;
   audBtn: HTMLButtonElement;
   quitBtn: HTMLButtonElement;
+  hamburgerBtn: HTMLButtonElement;
+  hamburgerMenu: HTMLDivElement;
   crtToggle: HTMLInputElement;
   tateToggle: HTMLInputElement;
   gameSelect: HTMLSelectElement;
@@ -71,10 +73,36 @@ export function initControlsBar(deps: ControlsBarDeps): void {
   const {
     emulator, canvas, domScreen, dropZone, controlsEl, canvasWrapper,
     pauseBtn, muteBtn, saveBtnCtrl, loadBtnCtrl, debugBtn, audBtn, quitBtn,
+    hamburgerBtn, hamburgerMenu,
     crtToggle, tateToggle, gameSelect, loadBtn,
     getMuted, setMuted, getDebugPanel, setDebugPanel, getAudioPanel, setAudioPanel,
     getGameScreen, setGameScreen, setStatus,
   } = deps;
+
+  // Hamburger menu toggle
+  function closeHamburger(): void { hamburgerMenu.classList.remove("open"); }
+
+  hamburgerBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    hamburgerMenu.classList.toggle("open");
+  });
+
+  document.addEventListener("click", (e) => {
+    if (!hamburgerMenu.contains(e.target as Node) && e.target !== hamburgerBtn) {
+      closeHamburger();
+    }
+  });
+
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && hamburgerMenu.classList.contains("open")) {
+      closeHamburger();
+    }
+  });
+
+  // Close hamburger when any button inside is clicked
+  hamburgerMenu.querySelectorAll(".ctrl-btn").forEach(btn => {
+    btn.addEventListener("click", () => closeHamburger());
+  });
 
   pauseBtn.addEventListener("click", () => {
     if (emulator.isRunning()) {
