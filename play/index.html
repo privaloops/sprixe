@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="description" content="Arcade.ts — CPS1 arcade emulator in TypeScript with a built-in debug mode: see how the hardware draws each frame, layer by layer, in 3D." />
+    <meta property="og:title" content="Arcade.ts — CPS1 emulator with debug mode" />
+    <meta property="og:description" content="CPS1 arcade emulator in TypeScript — with a debug mode to explore layers, sprites, palettes, and 3D exploded views in real time." />
+    <meta property="og:type" content="website" />
+    <link rel="manifest" href="/manifest.json" />
+    <title>Arcade.ts — CPS1 emulator with debug mode</title>
+    <link rel="stylesheet" href="../src/styles/main.css" />
+  </head>
+  <body class="dbg-active aud-active">
+    <div id="app">
+      <header>
+        <h1>ROMstudio</h1>
+        <div id="rom-controls">
+          <select id="game-select">
+            <option value="">Select a game</option>
+          </select>
+          <button id="load-btn" disabled>LOAD</button>
+        </div>
+        <span id="status"><span id="gamepad-status"></span></span>
+        <div id="controls">
+          <button id="controls-btn" class="ctrl-btn">Config (F1)</button>
+          <button id="save-btn" class="ctrl-btn">Save (F5)</button>
+          <button id="load-btn-ss" class="ctrl-btn">Load (F8)</button>
+          <button id="pause-btn" class="ctrl-btn">Pause (P)</button>
+          <button id="mute-btn" class="ctrl-btn">Mute (M)</button>
+        </div>
+        <div class="hamburger-wrapper">
+          <button id="hamburger-btn" class="ctrl-btn hamburger-btn" title="More options">
+            <span class="hamburger-icon"></span>
+          </button>
+          <div id="hamburger-menu" class="hamburger-menu">
+            <button id="dbg-btn" class="ctrl-btn">Video (F2)</button>
+            <button id="aud-btn" class="ctrl-btn">Audio (F3)</button>
+            <button id="edit-btn" class="ctrl-btn" style="display:none;">Sprite Editor (E)</button>
+            <button id="export-btn" class="ctrl-btn" style="display:none;">Export ROM</button>
+            <button id="quit-btn" class="ctrl-btn hamburger-quit">Quit</button>
+            <a class="hamburger-link" href="https://github.com/privaloops/arcade-ts" target="_blank" rel="noopener">
+              <svg viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+              GitHub
+            </a>
+            <span id="app-version" class="hamburger-version"></span>
+          </div>
+        </div>
+      </header>
+
+      <div id="canvas-wrapper">
+        <canvas id="screen" width="384" height="224" aria-label="CPS1 arcade game screen"></canvas>
+        <div id="dom-screen"></div>
+
+        <div id="drop-zone">
+          <span class="label">Drop ROM here</span>
+          <span class="sublabel">or tap to browse</span>
+          <span class="format">MAME .zip ROM sets</span>
+          <span class="games">Street Fighter II &middot; Final Fight &middot; Strider &middot; Ghouls'n Ghosts &middot; Cadillacs &amp; Dinosaurs &middot; Knights of the Round &middot; Captain Commando &middot; The Punisher &middot; and more</span>
+        </div>
+        <input type="file" id="file-input" accept=".zip" />
+      </div>
+
+      <!-- rom-controls and status moved to header -->
+
+      <!-- Modals -->
+      <div id="savestate-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="savestate-title">
+        <div id="savestate-modal">
+          <h2 id="savestate-title">Save State</h2>
+          <div id="savestate-slots"></div>
+          <div class="gp-actions"><button id="ss-close-btn" aria-label="Close">Close</button></div>
+        </div>
+      </div>
+
+      <div id="controls-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="config-title">
+        <div id="controls-modal" class="modal-wide">
+          <h2 id="config-title">Config</h2>
+          <div class="config-tabs" role="tablist">
+            <button id="tab-joypad" class="ctrl-btn active" role="tab" aria-selected="true" aria-controls="tab-joypad-content">Joypad</button>
+            <button id="tab-keyboard" class="ctrl-btn" role="tab" aria-selected="false" aria-controls="tab-keyboard-content">Keyboard</button>
+            <button id="tab-display" class="ctrl-btn" role="tab" aria-selected="false" aria-controls="tab-display-content">Display</button>
+            <button id="tab-dip" class="ctrl-btn" role="tab" aria-selected="false" aria-controls="tab-dip-content">DIP</button>
+          </div>
+
+          <div id="tab-joypad-content" role="tabpanel" aria-labelledby="tab-joypad">
+            <div class="modal-2col">
+              <div class="modal-col"><h3 class="modal-col-title">Player 1</h3><div id="gp-mapping-list-p1"></div></div>
+              <div class="modal-col"><h3 class="modal-col-title">Player 2</h3><div id="gp-mapping-list-p2"></div></div>
+            </div>
+          </div>
+
+          <div id="tab-keyboard-content" role="tabpanel" aria-labelledby="tab-keyboard" style="display:none;">
+            <div class="modal-2col">
+              <div class="modal-col"><h3 class="modal-col-title">Player 1</h3><div id="kb-mapping-list-p1"></div></div>
+              <div class="modal-col"><h3 class="modal-col-title">Player 2</h3><div id="kb-mapping-list-p2"></div></div>
+            </div>
+          </div>
+
+          <div id="tab-display-content" role="tabpanel" aria-labelledby="tab-display" style="display:none;">
+            <div class="settings-row">
+              <span class="settings-label">Renderer</span>
+              <div id="renderer-toggle" style="display:flex;gap:10px;font-size:0.8rem;color:#888;">
+                <label style="cursor:pointer;display:flex;align-items:center;gap:3px;"><input type="radio" name="renderer" value="canvas" checked style="accent-color:#ff1a50;" /> Canvas</label>
+                <label style="cursor:pointer;display:flex;align-items:center;gap:3px;"><input type="radio" name="renderer" value="dom" style="accent-color:#ff1a50;" /> DOM</label>
+              </div>
+            </div>
+            <div class="settings-row">
+              <span class="settings-label">CRT Filter</span>
+              <input type="checkbox" id="crt-toggle" style="accent-color:#ff1a50;width:16px;height:16px;cursor:pointer;" />
+            </div>
+            <div class="settings-row">
+              <span class="settings-label">TATE (vertical screen)</span>
+              <input type="checkbox" id="tate-toggle" style="accent-color:#ff1a50;width:16px;height:16px;cursor:pointer;" />
+            </div>
+          </div>
+
+          <div id="tab-dip-content" role="tabpanel" aria-labelledby="tab-dip" style="display:none;">
+            <div id="dip-list"></div>
+          </div>
+
+          <div class="gp-actions">
+            <button id="controls-reset-btn">Reset All</button>
+            <button id="controls-close-btn" aria-label="Close">Close</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <footer>
+      No ROMs included &mdash; provide your own
+      <span class="sep">|</span>
+      <a href="https://github.com/privaloops/arcade-ts" target="_blank" rel="noopener">GitHub</a>
+      <span class="sep">|</span>
+      Built with TypeScript + WebGL2 + WASM
+    </footer>
+
+    <div id="dbg-panel" class="dbg-panel open"></div>
+    <div id="aud-panel" class="aud-panel open"></div>
+    <script type="module" src="../src/index.ts"></script>
+  </body>
+</html>

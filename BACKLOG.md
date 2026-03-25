@@ -87,6 +87,116 @@
 - [ ] **CPS2** — Evolution of CPS1, encrypted 68000, QSound standard
 - [ ] **CPS3** — SH-2 CPU, very different architecture
 
+## Homebrew / Portage CPS1
+
+### Portage Sonic the Hedgehog → CPS1
+
+Le code 68000 de Sonic 1 (Mega Drive) est entièrement désassemblé et buildable (projet sonicretro).
+La Mega Drive partage le 68000 (main) et le Z80 (audio) avec le CPS1. Le portage consiste à
+remplacer les couches hardware-spécifiques tout en gardant la logique de jeu intacte.
+
+**Ce qu'on garde tel quel :**
+- Physique du personnage (vitesse, accélération, pentes, anneaux)
+- Logique des ennemis et patterns
+- State machine du jeu (titre, zones, transitions, game over)
+- Structure des niveaux (layout data)
+
+**Ce qu'il faut adapter :**
+
+| Composant | Mega Drive (VDP) | CPS1 (CPS-A/CPS-B) | Travail |
+|-----------|------------------|---------------------|---------|
+| Scroll planes | 2 planes (A/B) + window, registres `$C00000` | 3 scroll layers, registres `$800100+` | Réécrire le driver vidéo |
+| Sprites | 80 max, 8×8 à 32×32, table à `$C00000` | 256 max, 16×16, table VRAM `$900000` | Nouveau sprite manager |
+| Tiles | 8×8, 4bpp, layout VDP | 16×16, 4bpp, layout CPS1 | Conversion de tous les assets |
+| Palette | 4×16 couleurs, 9-bit RGB (512 couleurs) | 192×16 couleurs, 16-bit RGB (65536 couleurs) | Conversion + enrichissement |
+| DMA/VRAM | DMA fill/copy via port VDP | Écriture directe VRAM | Remplacer toutes les routines DMA |
+| Scrolling | Row scroll, column scroll via VDP | Row/column scroll via registres CPS-A | Adapter les offsets |
+| Audio | YM2612 (FM) + PSG, Z80 driver | YM2151 (FM) + OKI (ADPCM), Z80 driver | Réécrire le driver audio |
+
+**Gains visuels attendus :**
+- 3 layers de parallax au lieu de 2 → profondeur de décor supplémentaire
+- 256 sprites vs 80 → plus d'éléments à l'écran simultanément
+- Palette 65536 couleurs vs 512 → dégradés, shading, reflets impossibles sur MD
+- Résolution 384×224 vs 320×224 → image plus large
+
+**Gains audio :**
+- YM2151 : son FM plus propre/brillant que le YM2612 (grain MD en moins)
+- OKI : 4 voix ADPCM simultanées vs 1 canal DAC → SFX plus riches
+
+**Étapes :**
+- [ ] Étudier le désassemblage Sonic 1 (sonicretro), identifier les modules hardware-dépendants
+- [ ] Écrire un driver vidéo CPS1 en 68K (init, scroll, sprites, palette)
+- [ ] Convertir les tiles 8×8 → 16×16 (upscale ou redesign)
+- [ ] Convertir les palettes MD → CPS1
+- [ ] Convertir les niveaux (tile maps) vers le format scroll CPS1
+- [ ] Réécrire le driver audio Z80 pour YM2151 + OKI
+- [ ] Convertir les instruments FM (YM2612 patches → YM2151 patches)
+- [ ] Encoder les SFX en ADPCM OKI
+- [ ] Packager en ROM set MAME-compatible (.zip)
+- [ ] Tester dans ROMstudio
+
+### AI Tile Upscaler
+
+Pipeline d'upscale des tiles pixel art assisté par IA, intégrable dans ROMstudio.
+
+**Cas d'usage :**
+- Portage Mega Drive → CPS1 : tiles 8×8 → 16×16
+- Amélioration de tiles existants (plus de détail, meilleur shading)
+- Feature standalone de ROMstudio ("enhance sprites")
+
+**Pipeline :**
+1. Extraire les tiles depuis la ROM (déjà possible via `tile-encoder.ts`)
+2. Reconstruire le contexte : assembler les tiles adjacents en sprites/blocs complets
+3. Upscale IA ×2 avec modèle spécialisé pixel art (pas de lissage, pas d'anti-aliasing)
+4. Quantizer la sortie vers la palette CPS1 cible (16 couleurs par tile max)
+5. Découper en tiles 16×16 CPS1
+6. Encoder au format GFX ROM CPS1 (via `tile-encoder.ts`)
+7. Review/retouche dans le sprite editor
+8. Preview live dans l'émulateur
+
+**Outils/modèles à évaluer :**
+- Pixelover (spécialisé pixel art upscale)
+- Stable Diffusion + LoRA pixel art
+- ESRGAN avec modèle pixel art (4x-PixelPerfect)
+- Modèle custom entraîné sur des tiles arcade (CPS1, Neo Geo, CPS2)
+
+**Contraintes hardware CPS1 à respecter :**
+- 16 couleurs max par tile (4bpp)
+- Taille fixe 16×16 pixels
+- Pas d'anti-aliasing (contours nets obligatoires)
+- Cohérence entre tiles adjacents (pas de coutures)
+
+**Étapes :**
+- [ ] Benchmark des modèles d'upscale existants sur des tiles Mega Drive/CPS1
+- [ ] Développer le pipeline extract → upscale → quantize → encode
+- [ ] Intégrer dans ROMstudio (bouton "AI Enhance" dans le sprite editor)
+- [ ] Gérer le contexte multi-tiles (sprites composés de plusieurs tiles)
+- [ ] Permettre la retouche manuelle post-upscale
+
+### Éditeur de jeu CPS1 (vision long terme)
+
+Type GB Studio mais pour CPS1. Éditeur visuel pour créer des jeux CPS1 jouables sur émulateur ou hardware réel.
+
+**Approche recommandée : cibler un genre (beat-em-up)**
+- Templates : personnage jouable, ennemis, décors scrollants, boss
+- Runtime 68K fixe, seuls les assets et paramètres changent
+- State machine IA basique (marcher vers joueur, attaquer à portée, reculer)
+- Moins ambitieux qu'un éditeur générique, mais déjà unique au monde
+
+**Briques existantes dans ROMstudio :**
+- Sprite editor (dessin, palette, tiles) ✅
+- Sample editor (OKI ADPCM) ✅
+- ROM export (.zip MAME) ✅
+- Émulateur pour test live ✅
+
+**Briques manquantes :**
+- Éditeur de niveaux / scenes (tile map editor)
+- Système de scripting (visuel ou DSL)
+- Compilateur/assembleur 68K intégré
+- Runtime 68K (game engine CPS1)
+- Éditeur de musique FM (tracker → YM2151)
+- Éditeur de collision maps
+
 ## Infrastructure
 
 - [ ] **GitHub Pages** as alternative hosting (with service worker for COOP/COEP headers)

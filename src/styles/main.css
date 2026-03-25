@@ -180,6 +180,14 @@
 
       .hamburger-link svg { width: 16px; height: 16px; fill: currentColor; }
 
+      .hamburger-version {
+        display: block;
+        padding: 4px 12px;
+        font-size: 0.7rem;
+        color: var(--color-text-dim);
+        font-family: var(--font-mono);
+      }
+
       /* ── Canvas wrapper ────────────────────────────────── */
       #canvas-wrapper {
         position: relative;

@@ -25,6 +25,7 @@
     "vitest": "^4.1.0"
   },
   "dependencies": {
+    "@vercel/analytics": "^2.0.1",
     "jszip": "^3.10.1"
   }
 }

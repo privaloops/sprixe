@@ -1,7 +1,9 @@
 import { defineConfig } from "vite";
-import { readdirSync } from "fs";
-import { join } from "path";
+import { readFileSync, readdirSync } from "fs";
+import { join, resolve } from "path";
 import type { Plugin } from "vite";
+
+const pkg = JSON.parse(readFileSync("package.json", "utf-8"));
 
 /** Vite plugin: serves /api/roms listing .zip files in public/roms/ */
 function romsListPlugin(): Plugin {
@@ -32,6 +34,15 @@ export default defineConfig({
   build: {
     target: "es2022",
     outDir: "dist",
+    rollupOptions: {
+      input: {
+        main: resolve(__dirname, "index.html"),
+        play: resolve(__dirname, "play/index.html"),
+      },
+    },
+  },
+  define: {
+    __APP_VERSION__: JSON.stringify(pkg.version),
   },
   plugins: [romsListPlugin()],
   server: {
