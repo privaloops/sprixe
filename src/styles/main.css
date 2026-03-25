@@ -466,6 +466,7 @@
         border-bottom: 1px solid var(--color-border-subtle);
       }
       .dbg-layer-row input[type="checkbox"] { accent-color: var(--color-accent); margin: 0; }
+      .dbg-grid-cb { accent-color: var(--color-success) !important; width: 12px; height: 12px; }
       .dbg-layer-label { font-size: 0.85rem; font-weight: 600; color: var(--color-text-secondary); flex: 1; cursor: pointer; }
       .dbg-badge { font: 0.65rem "Courier New", monospace; color: var(--color-text-disabled); }
       .dbg-flash-btn {

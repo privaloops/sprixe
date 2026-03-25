@@ -8,6 +8,7 @@
 
 import { SpriteEditor, type EditorTool } from './sprite-editor';
 import { SCREEN_WIDTH, SCREEN_HEIGHT } from '../constants';
+import { LAYER_OBJ, LAYER_SCROLL1, LAYER_SCROLL2, LAYER_SCROLL3, readWord } from '../video/cps1-video';
 import type { Emulator } from '../emulator';
 
 // ---------------------------------------------------------------------------
@@ -50,6 +51,7 @@ export class SpriteEditorUI {
   private painting = false;
   private lastPaintPos: { x: number; y: number } | null = null;
   private overlayRafId = 0;
+  private gridLayers: Map<number, boolean> = new Map();
 
   // Bound handlers
   private readonly boundKeyHandler: (e: KeyboardEvent) => void;
@@ -161,6 +163,10 @@ export class SpriteEditorUI {
 
   getEditor(): SpriteEditor {
     return this.editor;
+  }
+
+  setGridLayers(m: Map<number, boolean>): void {
+    this.gridLayers = m;
   }
 
   destroy(): void {
@@ -308,48 +314,78 @@ export class SpriteEditorUI {
     // so we skip drawing a selection box on the game canvas for now.
   }
 
-  /** Draw bounding boxes for all visible sprites on the overlay. */
+  /** Draw tile bounds for all layers with grid enabled. */
   private drawAllSpriteBounds(): void {
     const video = this.emulator.getVideo();
     if (!video || !this.overlayCtx || !this.overlay) return;
 
     this.clearOverlay();
     const ctx = this.overlayCtx;
-    const objBuf = video.getObjBuffer();
-
-    ctx.strokeStyle = 'rgba(0, 255, 128, 0.35)';
     ctx.lineWidth = 1;
 
-    let lastIdx = 255;
-    for (let i = 0; i < 256; i++) {
-      const off = i * 8;
-      if (off + 7 >= 0x0800) break;
-      const colour = (objBuf[off + 6]! << 8) | objBuf[off + 7]!;
-      if ((colour & 0xFF00) === 0xFF00) {
-        lastIdx = i - 1;
-        break;
+    // OBJ (sprites)
+    if (this.gridLayers.get(LAYER_OBJ)) {
+      ctx.strokeStyle = 'rgba(0, 255, 128, 0.35)';
+      const objBuf = video.getObjBuffer();
+
+      let lastIdx = 255;
+      for (let i = 0; i < 256; i++) {
+        const off = i * 8;
+        if (off + 7 >= 0x0800) break;
+        const colour = (objBuf[off + 6]! << 8) | objBuf[off + 7]!;
+        if ((colour & 0xFF00) === 0xFF00) { lastIdx = i - 1; break; }
+      }
+
+      for (let i = 0; i <= lastIdx; i++) {
+        const off = i * 8;
+        if (off + 7 >= 0x0800) break;
+        const sprX = (objBuf[off]! << 8) | objBuf[off + 1]!;
+        const sprY = (objBuf[off + 2]! << 8) | objBuf[off + 3]!;
+        const colour = (objBuf[off + 6]! << 8) | objBuf[off + 7]!;
+        const nx = (colour & 0xFF00) ? (((colour >> 8) & 0x0F) + 1) : 1;
+        const ny = (colour & 0xFF00) ? (((colour >> 12) & 0x0F) + 1) : 1;
+        const sx = (sprX & 0x1FF) - 64;
+        const sy = (sprY & 0x1FF) - 16;
+        const w = nx * 16;
+        const h = ny * 16;
+        if (sx + w <= 0 || sx >= SCREEN_WIDTH || sy + h <= 0 || sy >= SCREEN_HEIGHT) continue;
+        ctx.strokeRect(sx + 0.5, sy + 0.5, w - 1, h - 1);
       }
     }
 
-    for (let i = 0; i <= lastIdx; i++) {
-      const off = i * 8;
-      if (off + 7 >= 0x0800) break;
+    // Scroll layers — draw tile grid based on scroll position
+    const scrollConfigs: { layerId: number; tileSize: number; scrollXReg: number; scrollYReg: number; color: string }[] = [
+      { layerId: LAYER_SCROLL1, tileSize: 8,  scrollXReg: 0x0C, scrollYReg: 0x0E, color: 'rgba(255, 200, 50, 0.2)' },
+      { layerId: LAYER_SCROLL2, tileSize: 16, scrollXReg: 0x10, scrollYReg: 0x12, color: 'rgba(50, 180, 255, 0.2)' },
+      { layerId: LAYER_SCROLL3, tileSize: 32, scrollXReg: 0x14, scrollYReg: 0x16, color: 'rgba(200, 50, 255, 0.2)' },
+    ];
 
-      const sprX = (objBuf[off]! << 8) | objBuf[off + 1]!;
-      const sprY = (objBuf[off + 2]! << 8) | objBuf[off + 3]!;
-      const colour = (objBuf[off + 6]! << 8) | objBuf[off + 7]!;
+    const cpsaRegs = video.getCpsaRegs();
 
-      const nx = (colour & 0xFF00) ? (((colour >> 8) & 0x0F) + 1) : 1;
-      const ny = (colour & 0xFF00) ? (((colour >> 12) & 0x0F) + 1) : 1;
+    for (const cfg of scrollConfigs) {
+      if (!this.gridLayers.get(cfg.layerId)) continue;
 
-      const sx = (sprX & 0x1FF) - 64;
-      const sy = (sprY & 0x1FF) - 16;
-      const w = nx * 16;
-      const h = ny * 16;
+      const scrollX = (readWord(cpsaRegs, cfg.scrollXReg) + 64) & 0xFFFF; // + CPS_HBEND
+      const scrollY = (readWord(cpsaRegs, cfg.scrollYReg) + 16) & 0xFFFF; // + CPS_VBEND
+      const ts = cfg.tileSize;
 
-      if (sx + w <= 0 || sx >= SCREEN_WIDTH || sy + h <= 0 || sy >= SCREEN_HEIGHT) continue;
+      // First grid line offset (negative = partial tile at left/top edge)
+      const offsetX = -(scrollX % ts);
+      const offsetY = -(scrollY % ts);
 
-      ctx.strokeRect(sx + 0.5, sy + 0.5, w - 1, h - 1);
+      ctx.strokeStyle = cfg.color;
+      for (let x = offsetX; x < SCREEN_WIDTH; x += ts) {
+        ctx.beginPath();
+        ctx.moveTo(x + 0.5, 0);
+        ctx.lineTo(x + 0.5, SCREEN_HEIGHT);
+        ctx.stroke();
+      }
+      for (let y = offsetY; y < SCREEN_HEIGHT; y += ts) {
+        ctx.beginPath();
+        ctx.moveTo(0, y + 0.5);
+        ctx.lineTo(SCREEN_WIDTH, y + 0.5);
+        ctx.stroke();
+      }
     }
   }
 

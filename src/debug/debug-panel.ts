@@ -23,6 +23,7 @@ export class DebugPanel {
   private readonly debugBtn: HTMLElement;
   private readonly layerRows: Map<number, HTMLDivElement> = new Map();
   private readonly layerCheckboxes: Map<number, HTMLInputElement> = new Map();
+  private readonly gridEnabled: Map<number, boolean> = new Map();
   private orderDisplay: HTMLSpanElement | null = null;
   private frameCounter: HTMLSpanElement | null = null;
   private playPauseBtn: HTMLButtonElement | null = null;
@@ -248,6 +249,7 @@ export class DebugPanel {
         const val = parseInt(this.spreadSlider!.value, 10);
         this.renderer.setSpread(val);
         this.spreadValue!.textContent = String(val);
+        if (this.emulator.isPaused()) this.emulator.rerender();
       });
 
       c.appendChild(sec);
@@ -367,6 +369,7 @@ export class DebugPanel {
 
       this.spriteEditorUI = new SpriteEditorUI(this.emulator, this.canvas);
       this.spriteEditorUI.getEditor().setLayerVisibilityFilter((id) => this.renderer.isLayerEnabled(id));
+      this.spriteEditorUI.setGridLayers(this.gridEnabled);
       this.spriteEditorUI.buildInto(content);
 
       c.appendChild(sec);
@@ -431,11 +434,22 @@ export class DebugPanel {
       if (this.emulator.isPaused()) this.emulator.rerender();
     });
 
+    const gridCb = document.createElement("input");
+    gridCb.type = "checkbox";
+    gridCb.checked = layerId === LAYER_OBJ; // sprites grid on by default
+    gridCb.title = "Show tile grid";
+    gridCb.className = "dbg-grid-cb";
+    this.gridEnabled.set(layerId, gridCb.checked);
+    gridCb.addEventListener("change", () => {
+      this.gridEnabled.set(layerId, gridCb.checked);
+      this.spriteEditorUI?.setGridLayers(this.gridEnabled);
+    });
+
     flashBtn.addEventListener("click", () => {
       this.renderer.flashLayer(layerId);
     });
 
-    row.append(cb, label, badge, flashBtn);
+    row.append(cb, label, badge, gridCb, flashBtn);
     return row;
   }
 
