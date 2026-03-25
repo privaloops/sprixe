@@ -13,6 +13,7 @@ import { kcToNoteName, type VizReader } from "./audio-viz";
 import { parsePhraseTable, decodeSample, encodeSample, replaceSampleInRom, OKI_SAMPLE_RATE, type PhraseInfo } from "./oki-codec";
 import JSZip from "jszip";
 import type { Emulator } from "../emulator";
+import { FmPatchEditor } from "./fm-patch-editor";
 
 const FM_CHANNELS = 8;
 const OKI_VOICES = 4;
@@ -84,9 +85,14 @@ export class AudioPanel {
   // Tabs
   private tracksContent: HTMLDivElement | null = null;
   private samplesContent: HTMLDivElement | null = null;
-  private activeTab: "tracks" | "samples" = "tracks";
+  private synthContent: HTMLDivElement | null = null;
+  private activeTab: "tracks" | "samples" | "synth" = "tracks";
   private tracksTabBtn: HTMLButtonElement | null = null;
   private samplesTabBtn: HTMLButtonElement | null = null;
+  private synthTabBtn: HTMLButtonElement | null = null;
+
+  // FM Patch Editor
+  private fmPatchEditor: FmPatchEditor | null = null;
 
   // Sample browser
   private sampleTableBody: HTMLElement | null = null;
@@ -117,6 +123,12 @@ export class AudioPanel {
   toggle(): void { if (this.active) this.close(); else this.open(); }
   isOpen(): boolean { return this.active; }
 
+  /** Open the panel directly on the Synth tab. */
+  openSynth(): void {
+    if (!this.active) this.open();
+    this.switchTab('synth');
+  }
+
   onGameChange(): void {
     this.muted.clear();
     this.soloed.clear();
@@ -125,6 +137,7 @@ export class AudioPanel {
     const viz = this.emulator.getVizReader();
     if (viz) viz.setChannelMask(0xFFF);
     if (this.active) this.startUpdateLoop();
+    this.fmPatchEditor?.onGameChange();
   }
 
   destroy(): void { this.close(); this.container.innerHTML = ""; }
@@ -143,6 +156,7 @@ export class AudioPanel {
     document.body.classList.remove("aud-active");
     this.audBtn.classList.remove("active");
     cancelAnimationFrame(this.updateRafId);
+    this.fmPatchEditor?.onDeactivate();
   }
 
   // -- DOM --
@@ -164,10 +178,14 @@ export class AudioPanel {
     this.samplesTabBtn.textContent = "Samples";
     this.samplesTabBtn.addEventListener("click", () => this.switchTab("samples"));
 
+    this.synthTabBtn = el("button", "aud-tab-btn") as HTMLButtonElement;
+    this.synthTabBtn.textContent = "Synth";
+    this.synthTabBtn.addEventListener("click", () => this.switchTab("synth"));
+
     const closeBtn = el("button", "aud-close");
     closeBtn.textContent = "\u00D7";
     closeBtn.addEventListener("click", () => this.toggle());
-    header.append(title, this.tracksTabBtn, this.samplesTabBtn, closeBtn);
+    header.append(title, this.tracksTabBtn, this.samplesTabBtn, this.synthTabBtn, closeBtn);
     c.appendChild(header);
 
     // -- Tracks tab content --
@@ -210,6 +228,16 @@ export class AudioPanel {
       noteEl.textContent = "--";
       strip.appendChild(noteEl);
       this.noteEls[ch] = noteEl;
+
+      // Edit button — detect patch and open Synth tab
+      const editBtn = el("button", "aud-edit-btn") as HTMLButtonElement;
+      editBtn.textContent = "\u270E";
+      editBtn.title = `Edit FM${ch + 1} patch`;
+      editBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this.editChannelPatch(ch);
+      });
+      strip.appendChild(editBtn);
 
       // Click to select this channel for the keyboard
       strip.addEventListener("click", () => this.selectFmChannel(ch));
@@ -259,6 +287,13 @@ export class AudioPanel {
     this.samplesContent.style.display = "none";
     this.buildSamplesTab();
     c.appendChild(this.samplesContent);
+
+    // -- Synth tab content --
+    this.synthContent = el("div", "aud-tab-content") as HTMLDivElement;
+    this.synthContent.style.display = "none";
+    this.fmPatchEditor = new FmPatchEditor(this.emulator);
+    this.synthContent.appendChild(this.fmPatchEditor.getElement());
+    c.appendChild(this.synthContent);
   }
 
   private buildSamplesTab(): void {
@@ -288,13 +323,28 @@ export class AudioPanel {
     sc.appendChild(table);
   }
 
-  private switchTab(tab: "tracks" | "samples"): void {
+  private switchTab(tab: "tracks" | "samples" | "synth"): void {
     this.activeTab = tab;
     if (this.tracksContent) this.tracksContent.style.display = tab === "tracks" ? "" : "none";
     if (this.samplesContent) this.samplesContent.style.display = tab === "samples" ? "" : "none";
+    if (this.synthContent) this.synthContent.style.display = tab === "synth" ? "" : "none";
     this.tracksTabBtn?.classList.toggle("active", tab === "tracks");
     this.samplesTabBtn?.classList.toggle("active", tab === "samples");
+    this.synthTabBtn?.classList.toggle("active", tab === "synth");
     if (tab === "samples") this.refreshSampleTable();
+    if (tab === "synth") {
+      // Auto-detect: if a FM channel is soloed, edit that channel
+      if (this.fmPatchEditor && this.soloed.size > 0) {
+        const firstSoloed = [...this.soloed].find(ch => ch < 8);
+        if (firstSoloed !== undefined) {
+          this.fmPatchEditor.editChannel(firstSoloed);
+          return;
+        }
+      }
+      this.fmPatchEditor?.onGameChange();
+    } else {
+      this.fmPatchEditor?.onDeactivate();
+    }
   }
 
   private refreshSampleTable(): void {
@@ -339,6 +389,12 @@ export class AudioPanel {
         input.click();
       });
       tdReplace.appendChild(dropZone);
+
+      const micBtn = el("button", "smp-mic-btn") as HTMLButtonElement;
+      micBtn.textContent = "\uD83C\uDFA4";
+      micBtn.title = "Record from microphone";
+      micBtn.addEventListener("click", () => this.toggleMicRecord(phrase.id, micBtn));
+      tdReplace.appendChild(micBtn);
 
       tr.append(tdId, tdDur, tdSize, tdPlay, tdReplace);
       this.sampleTableBody.appendChild(tr);
@@ -531,6 +587,85 @@ export class AudioPanel {
     this.showToast(replaced > 0 ? `Imported ${replaced} sample${replaced > 1 ? "s" : ""}` : "No samples imported", replaced > 0);
   }
 
+  // -- Microphone recording --
+
+  private micStream: MediaStream | null = null;
+  private micRecorder: MediaRecorder | null = null;
+  private micChunks: Blob[] = [];
+  private micActiveBtn: HTMLButtonElement | null = null;
+  private micPhraseId = -1;
+  private micTimeout: ReturnType<typeof setTimeout> | null = null;
+
+  private async toggleMicRecord(phraseId: number, btn: HTMLButtonElement): Promise<void> {
+    // If already recording this one, stop
+    if (this.micRecorder && this.micRecorder.state === "recording" && this.micActiveBtn === btn) {
+      this.micRecorder.stop();
+      return;
+    }
+    // If recording another, stop that first
+    if (this.micRecorder && this.micRecorder.state === "recording") {
+      this.micRecorder.stop();
+    }
+
+    try {
+      this.micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch {
+      this.showToast("Microphone access denied", false);
+      return;
+    }
+
+    this.micPhraseId = phraseId;
+    this.micActiveBtn = btn;
+    this.micChunks = [];
+    this.micRecorder = new MediaRecorder(this.micStream);
+
+    this.micRecorder.addEventListener("dataavailable", (e) => {
+      if (e.data.size > 0) this.micChunks.push(e.data);
+    });
+
+    this.micRecorder.addEventListener("stop", async () => {
+      // Release mic
+      if (this.micTimeout) { clearTimeout(this.micTimeout); this.micTimeout = null; }
+      this.micStream?.getTracks().forEach(t => t.stop());
+      this.micStream = null;
+      btn.classList.remove("recording");
+      btn.textContent = "\uD83C\uDFA4";
+
+      if (this.micChunks.length === 0) return;
+      const blob = new Blob(this.micChunks, { type: this.micChunks[0]!.type });
+      try {
+        const ctx = this.getAudioCtx();
+        const arrayBuf = await blob.arrayBuffer();
+        const audioBuf = await ctx.decodeAudioData(arrayBuf);
+        const pcm = audioBuf.getChannelData(0);
+        const rom = this.emulator.getOkiRom();
+        if (!rom) return;
+        const adpcm = encodeSample(pcm, audioBuf.sampleRate);
+        const result = replaceSampleInRom(rom, this.micPhraseId, adpcm);
+        if (result.success) {
+          this.emulator.updateOkiRom(rom);
+          if (result.truncated) {
+            this.showToast(`Sample #${this.micPhraseId} recorded (truncated: ${result.keptMs}ms / ${result.originalMs}ms)`, true);
+          } else {
+            this.showToast(`Sample #${this.micPhraseId} recorded`, true);
+          }
+          setTimeout(() => this.refreshSampleTable(), 1000);
+        }
+      } catch (err) {
+        this.showToast("Recording encode error", false);
+        console.error("Mic encode error:", err);
+      }
+    });
+
+    this.micRecorder.start();
+    btn.classList.add("recording");
+    btn.textContent = "\u23F9";
+    // Auto-stop after 3s — replaceSampleInRom will truncate to fit the OKI slot
+    this.micTimeout = setTimeout(() => {
+      if (this.micRecorder?.state === "recording") this.micRecorder.stop();
+    }, 3000);
+  }
+
   private extractPhraseId(filename: string): number {
     const match = filename.match(/(\d{1,3})\.wav$/i) ?? filename.match(/sample_(\d{1,3})/i) ?? filename.match(/^(\d{1,3})[_.\-]/);
     if (!match) return -1;
@@ -551,6 +686,13 @@ export class AudioPanel {
     for (let i = 0; i < FM_CHANNELS; i++) {
       this.fmStripEls[i]?.classList.toggle("selected", i === ch);
     }
+  }
+
+  /** Pencil button: detect the patch on this channel and open Synth editor. */
+  private editChannelPatch(ch: number): void {
+    if (!this.fmPatchEditor) return;
+    this.fmPatchEditor.editChannel(ch);
+    this.switchTab("synth");
   }
 
   private updateChannelMask(): void {
