@@ -288,7 +288,6 @@ export class SpriteEditorUI {
 
     const pos = this.screenCoordsFromEvent(e);
     if (!pos) return;
-
     const info = this.editor.selectTileAt(pos.x, pos.y);
     if (info) {
       this.refreshTileGrid();

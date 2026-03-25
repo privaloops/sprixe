@@ -1188,11 +1188,28 @@ export class CPS1Video {
         break;
     }
 
-    const scrollX = (this.readCpsaReg(scrollXReg) + CPS_HBEND) & 0xFFFF;
+    const baseScrollX = (this.readCpsaReg(scrollXReg) + CPS_HBEND) & 0xFFFF;
     const scrollY = (this.readCpsaReg(scrollYReg) + CPS_VBEND) & 0xFFFF;
     const virtualW = 64 * tileW;
     const virtualH = 64 * tileH;
     const tilemapBase = this.vramBaseOffset(baseReg, SCROLL_SIZE);
+
+    // Row scroll for scroll2: per-row X offset (same as render path)
+    let scrollX = baseScrollX;
+    if (layerId === LAYER_SCROLL2) {
+      const videocontrol = this.readCpsaReg(CPSA_VIDEOCONTROL);
+      if ((videocontrol & 0x01) !== 0) {
+        const otherBase = this.vramBaseOffset(CPSA_OTHER_BASE, 0x0800);
+        const otherOffs = this.readCpsaReg(CPSA_ROWSCROLL_OFFS);
+        const otherIdx = (y + CPS_VBEND + otherOffs) & 0x3FF;
+        const otherAddr = otherBase + otherIdx * 2;
+        const rowOffset = otherAddr + 1 < VRAM_SIZE
+          ? ((this.vram[otherAddr]! << 8) | this.vram[otherAddr + 1]!) & 0xFFFF
+          : 0;
+        const rowOffsetSigned = rowOffset > 0x7FFF ? rowOffset - 0x10000 : rowOffset;
+        scrollX = (baseScrollX + rowOffsetSigned) & 0xFFFF;
+      }
+    }
 
     // Map screen pixel to virtual tilemap position
     const vx = ((x + scrollX) & 0xFFFF) % virtualW;
