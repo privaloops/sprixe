@@ -52,6 +52,7 @@ export class SpriteEditorUI {
   private lastPaintPos: { x: number; y: number } | null = null;
   private overlayRafId = 0;
   private gridLayers: Map<number, boolean> = new Map();
+  private _isInteractionBlocked: (() => boolean) | null = null;
 
   // Bound handlers
   private readonly boundKeyHandler: (e: KeyboardEvent) => void;
@@ -169,6 +170,10 @@ export class SpriteEditorUI {
     this.gridLayers = m;
   }
 
+  setInteractionBlocker(fn: (() => boolean) | null): void {
+    this._isInteractionBlocked = fn;
+  }
+
   destroy(): void {
     this.deactivate();
   }
@@ -248,6 +253,8 @@ export class SpriteEditorUI {
   }
 
   private handleOverlayMove(e: MouseEvent): void {
+    if (this._isInteractionBlocked?.()) return;
+
     const pos = this.screenCoordsFromEvent(e);
     if (!pos) return;
 
@@ -273,6 +280,8 @@ export class SpriteEditorUI {
   }
 
   private handleOverlayClick(e: MouseEvent): void {
+    if (this._isInteractionBlocked?.()) return;
+
     const pos = this.screenCoordsFromEvent(e);
     if (!pos) return;
 

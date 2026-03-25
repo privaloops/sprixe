@@ -370,6 +370,7 @@ export class DebugPanel {
 
       this.spriteEditorUI = new SpriteEditorUI(this.emulator, this.canvas);
       this.spriteEditorUI.getEditor().setLayerVisibilityFilter((id) => this.renderer.isLayerEnabled(id));
+      this.spriteEditorUI.setInteractionBlocker(() => this.renderer.isExplodedActive());
       this.spriteEditorUI.setGridLayers(this.gridEnabled);
       this.spriteEditorUI.buildInto(content);
 
