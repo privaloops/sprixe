@@ -217,7 +217,7 @@ initShortcuts({
   toggleDebug: () => toggleDebug(controlsBarDeps),
   toggleAudio: () => toggleAudio(controlsBarDeps),
   toggleSpriteEditor: () => toggleSpriteEditor(controlsBarDeps),
-  toggleSynth: () => { audioPanel?.openSynth(); },
+  toggleSynth: () => { /* synth tab removed */ },
   toggleFullscreen: () => toggleFullscreen(canvasWrapper),
   isCtrlModalOpen: () => ctrlOverlay.classList.contains("open"),
   isSsModalOpen, setStatus,

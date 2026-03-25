@@ -13,7 +13,6 @@ import { kcToNoteName, type VizReader } from "./audio-viz";
 import { parsePhraseTable, decodeSample, encodeSample, replaceSampleInRom, OKI_SAMPLE_RATE, type PhraseInfo } from "./oki-codec";
 import JSZip from "jszip";
 import type { Emulator } from "../emulator";
-import { FmPatchEditor } from "./fm-patch-editor";
 
 const FM_CHANNELS = 8;
 const OKI_VOICES = 4;
@@ -85,16 +84,13 @@ export class AudioPanel {
   // Tabs
   private tracksContent: HTMLDivElement | null = null;
   private samplesContent: HTMLDivElement | null = null;
-  private synthContent: HTMLDivElement | null = null;
-  private activeTab: "tracks" | "samples" | "synth" = "tracks";
+  private activeTab: "tracks" | "samples" = "tracks";
   private tracksTabBtn: HTMLButtonElement | null = null;
   private samplesTabBtn: HTMLButtonElement | null = null;
-  private synthTabBtn: HTMLButtonElement | null = null;
-
-  // FM Patch Editor
-  private fmPatchEditor: FmPatchEditor | null = null;
 
   // Sample browser
+  private sampleSortKey: "id" | "duration" | "size" = "id";
+  private sampleSortAsc = true;
   private sampleTableBody: HTMLElement | null = null;
   private phrases: PhraseInfo[] = [];
   private sampleAudioCtx: AudioContext | null = null;
@@ -123,11 +119,6 @@ export class AudioPanel {
   toggle(): void { if (this.active) this.close(); else this.open(); }
   isOpen(): boolean { return this.active; }
 
-  /** Open the panel directly on the Synth tab. */
-  openSynth(): void {
-    if (!this.active) this.open();
-    this.switchTab('synth');
-  }
 
   onGameChange(): void {
     this.muted.clear();
@@ -137,7 +128,6 @@ export class AudioPanel {
     const viz = this.emulator.getVizReader();
     if (viz) viz.setChannelMask(0xFFF);
     if (this.active) this.startUpdateLoop();
-    this.fmPatchEditor?.onGameChange();
   }
 
   destroy(): void { this.close(); this.container.innerHTML = ""; }
@@ -156,7 +146,6 @@ export class AudioPanel {
     document.body.classList.remove("aud-active");
     this.audBtn.classList.remove("active");
     cancelAnimationFrame(this.updateRafId);
-    this.fmPatchEditor?.onDeactivate();
   }
 
   // -- DOM --
@@ -178,14 +167,10 @@ export class AudioPanel {
     this.samplesTabBtn.textContent = "Samples";
     this.samplesTabBtn.addEventListener("click", () => this.switchTab("samples"));
 
-    this.synthTabBtn = el("button", "aud-tab-btn") as HTMLButtonElement;
-    this.synthTabBtn.textContent = "Synth";
-    this.synthTabBtn.addEventListener("click", () => this.switchTab("synth"));
-
     const closeBtn = el("button", "aud-close");
     closeBtn.textContent = "\u00D7";
     closeBtn.addEventListener("click", () => this.toggle());
-    header.append(title, this.tracksTabBtn, this.samplesTabBtn, this.synthTabBtn, closeBtn);
+    header.append(title, this.tracksTabBtn, this.samplesTabBtn, closeBtn);
     c.appendChild(header);
 
     // -- Tracks tab content --
@@ -228,16 +213,6 @@ export class AudioPanel {
       noteEl.textContent = "--";
       strip.appendChild(noteEl);
       this.noteEls[ch] = noteEl;
-
-      // Edit button — detect patch and open Synth tab
-      const editBtn = el("button", "aud-edit-btn") as HTMLButtonElement;
-      editBtn.textContent = "\u270E";
-      editBtn.title = `Edit FM${ch + 1} patch`;
-      editBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        this.editChannelPatch(ch);
-      });
-      strip.appendChild(editBtn);
 
       // Click to select this channel for the keyboard
       strip.addEventListener("click", () => this.selectFmChannel(ch));
@@ -288,12 +263,6 @@ export class AudioPanel {
     this.buildSamplesTab();
     c.appendChild(this.samplesContent);
 
-    // -- Synth tab content --
-    this.synthContent = el("div", "aud-tab-content") as HTMLDivElement;
-    this.synthContent.style.display = "none";
-    this.fmPatchEditor = new FmPatchEditor(this.emulator);
-    this.synthContent.appendChild(this.fmPatchEditor.getElement());
-    c.appendChild(this.synthContent);
   }
 
   private buildSamplesTab(): void {
@@ -316,35 +285,40 @@ export class AudioPanel {
     // Table
     const table = el("table", "smp-table");
     const thead = el("thead");
-    thead.innerHTML = `<tr><th>#</th><th>Duration</th><th>Size</th><th>Play</th><th>Replace</th></tr>`;
+    const hRow = document.createElement("tr");
+    for (const [label, key] of [["#", "id"], ["Duration", "duration"], ["Size", "size"], ["Play", ""], ["Replace", ""]] as const) {
+      const th = document.createElement("th");
+      th.textContent = label;
+      if (key) {
+        th.style.cursor = "pointer";
+        th.addEventListener("click", () => this.sortSamples(key as "id" | "duration" | "size"));
+      }
+      hRow.appendChild(th);
+    }
+    thead.appendChild(hRow);
     table.appendChild(thead);
     this.sampleTableBody = el("tbody");
     table.appendChild(this.sampleTableBody);
     sc.appendChild(table);
   }
 
-  private switchTab(tab: "tracks" | "samples" | "synth"): void {
+  private switchTab(tab: "tracks" | "samples"): void {
     this.activeTab = tab;
     if (this.tracksContent) this.tracksContent.style.display = tab === "tracks" ? "" : "none";
     if (this.samplesContent) this.samplesContent.style.display = tab === "samples" ? "" : "none";
-    if (this.synthContent) this.synthContent.style.display = tab === "synth" ? "" : "none";
     this.tracksTabBtn?.classList.toggle("active", tab === "tracks");
     this.samplesTabBtn?.classList.toggle("active", tab === "samples");
-    this.synthTabBtn?.classList.toggle("active", tab === "synth");
     if (tab === "samples") this.refreshSampleTable();
-    if (tab === "synth") {
-      // Auto-detect: if a FM channel is soloed, edit that channel
-      if (this.fmPatchEditor && this.soloed.size > 0) {
-        const firstSoloed = [...this.soloed].find(ch => ch < 8);
-        if (firstSoloed !== undefined) {
-          this.fmPatchEditor.editChannel(firstSoloed);
-          return;
-        }
-      }
-      this.fmPatchEditor?.onGameChange();
+  }
+
+  private sortSamples(key: "id" | "duration" | "size"): void {
+    if (this.sampleSortKey === key) {
+      this.sampleSortAsc = !this.sampleSortAsc;
     } else {
-      this.fmPatchEditor?.onDeactivate();
+      this.sampleSortKey = key;
+      this.sampleSortAsc = true;
     }
+    this.refreshSampleTable();
   }
 
   private refreshSampleTable(): void {
@@ -355,6 +329,13 @@ export class AudioPanel {
       return;
     }
     this.phrases = parsePhraseTable(rom);
+    const dir = this.sampleSortAsc ? 1 : -1;
+    const key = this.sampleSortKey;
+    this.phrases.sort((a, b) => {
+      const va = key === "id" ? a.id : key === "duration" ? a.durationMs : a.sizeBytes;
+      const vb = key === "id" ? b.id : key === "duration" ? b.durationMs : b.sizeBytes;
+      return (va - vb) * dir;
+    });
     this.sampleTableBody.innerHTML = "";
 
     for (const phrase of this.phrases) {
@@ -686,13 +667,6 @@ export class AudioPanel {
     for (let i = 0; i < FM_CHANNELS; i++) {
       this.fmStripEls[i]?.classList.toggle("selected", i === ch);
     }
-  }
-
-  /** Pencil button: detect the patch on this channel and open Synth editor. */
-  private editChannelPatch(ch: number): void {
-    if (!this.fmPatchEditor) return;
-    this.fmPatchEditor.editChannel(ch);
-    this.switchTab("synth");
   }
 
   private updateChannelMask(): void {

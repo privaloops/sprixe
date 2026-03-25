@@ -119,12 +119,12 @@ export function encodeSample(pcm: Float32Array, srcRate: number): Uint8Array {
     if (abs > peak) peak = abs;
   }
   if (peak > 0.001) {
-    // Boost to 1.3x peak (intentional overdrive like originals), then soft-clip
-    const gain = 1.3 / peak;
+    // Boost to 1.8x peak (intentional overdrive like originals), then soft-clip
+    const gain = 1.8 / peak;
     for (let i = 0; i < resampled.length; i++) {
       let s = resampled[i]! * gain;
       // tanh soft-clip — pushes everything loud like arcade samples
-      s = Math.tanh(s * 1.5);
+      s = Math.tanh(s * 2.0);
       resampled[i] = s;
     }
   }
