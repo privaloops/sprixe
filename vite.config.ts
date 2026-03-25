@@ -1,6 +1,6 @@
 import { defineConfig } from "vite";
 import { readdirSync } from "fs";
-import { join } from "path";
+import { join, resolve } from "path";
 import type { Plugin } from "vite";
 
 /** Vite plugin: serves /api/roms listing .zip files in public/roms/ */
@@ -32,6 +32,12 @@ export default defineConfig({
   build: {
     target: "es2022",
     outDir: "dist",
+    rollupOptions: {
+      input: {
+        main: resolve(__dirname, "index.html"),
+        play: resolve(__dirname, "play/index.html"),
+      },
+    },
   },
   plugins: [romsListPlugin()],
   server: {
