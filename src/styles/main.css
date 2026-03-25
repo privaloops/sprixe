@@ -747,11 +747,13 @@
       }
       .edit-panel.open { transform: translateX(0); }
       body.edit-active #app { margin-right: 360px; transition: margin-right 0.3s ease; }
+      body.edit-active header { right: 360px; transition: right 0.3s ease; }
       body.edit-active .dbg-panel { right: 360px; }
 
       @media (max-width: 900px) {
         .edit-panel { display: none; }
         body.edit-active #app { margin-right: 0; }
+        body.edit-active header { right: 0; }
       }
 
       .edit-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
