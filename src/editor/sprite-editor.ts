@@ -67,6 +67,9 @@ export class SpriteEditor {
   private onToolChanged: (() => void) | null = null;
   private onColorChanged: (() => void) | null = null;
 
+  /** Optional filter: only select tiles on visible layers. Set by debug panel. */
+  private _isLayerVisible: ((layerId: number) => boolean) | null = null;
+
   constructor(emulator: Emulator) {
     this.emulator = emulator;
   }
@@ -115,8 +118,10 @@ export class SpriteEditor {
     if (!video) return null;
     const paletteBase = video.getPaletteBase();
 
-    // Try sprites first
-    const sprInfo = video.inspectSpriteAt(screenX, screenY, true);
+    const isVisible = this._isLayerVisible ?? (() => true);
+
+    // Try sprites first (if visible)
+    const sprInfo = isVisible(LAYER_OBJ) ? video.inspectSpriteAt(screenX, screenY, true) : null;
     if (sprInfo) {
       this._currentTile = {
         layerId: LAYER_OBJ,
@@ -141,8 +146,8 @@ export class SpriteEditor {
     const layerOrder = video.getLayerOrder();
     for (let slot = layerOrder.length - 1; slot >= 0; slot--) {
       const lid = layerOrder[slot]!;
-      if (lid === LAYER_OBJ) continue; // already checked
-      if (!video.isLayerEnabled(lid)) continue;
+      if (lid === LAYER_OBJ) continue;
+      if (!isVisible(lid)) continue;
 
       const scrInfo = video.inspectScrollAt(screenX, screenY, lid, true);
       if (scrInfo) {
@@ -368,6 +373,7 @@ export class SpriteEditor {
   // -- Callbacks --
 
   setOnTileChanged(cb: (() => void) | null): void { this.onTileChanged = cb; }
+  setLayerVisibilityFilter(fn: ((layerId: number) => boolean) | null): void { this._isLayerVisible = fn; }
   setOnToolChanged(cb: (() => void) | null): void { this.onToolChanged = cb; }
   setOnColorChanged(cb: (() => void) | null): void { this.onColorChanged = cb; }
 

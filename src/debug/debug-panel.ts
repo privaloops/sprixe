@@ -366,6 +366,7 @@ export class DebugPanel {
         "Shortcuts: B=pencil, G=fill, I=eyedropper, X=eraser, [/]=colors", true);
 
       this.spriteEditorUI = new SpriteEditorUI(this.emulator, this.canvas);
+      this.spriteEditorUI.getEditor().setLayerVisibilityFilter((id) => this.renderer.isLayerEnabled(id));
       this.spriteEditorUI.buildInto(content);
 
       c.appendChild(sec);
