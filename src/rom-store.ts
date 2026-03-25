@@ -53,6 +53,66 @@ export class RomStore {
     mutable.set(original);
   }
 
+  /**
+   * Patch a palette color in the program ROM.
+   * Searches for the 32-byte palette pattern in program ROM and patches the specific color.
+   * Returns true if the pattern was found and patched.
+   */
+  patchProgramPalette(vram: Uint8Array, paletteBase: number, paletteIndex: number, colorIndex: number, newWord: number): boolean {
+    // Read the current 32-byte palette from VRAM (this is what the 68K wrote from program ROM)
+    const vramOff = paletteBase + paletteIndex * 32;
+    const colorOff = colorIndex * 2;
+    let found = false;
+    const rom = this.programRom;
+
+    // CPS1 palettes: 16-bit words where bits 15-12 = brightness nibble.
+    // The 68K applies brightness fades at runtime (ADD.W #0x1000 in a loop).
+    // Program ROM stores the BASE palette (before brightness).
+    // Strategy: strip brightness from VRAM values and search for that pattern.
+    const basePattern = new Uint8Array(32);
+    for (let i = 0; i < 32; i += 2) {
+      basePattern[i] = vram[vramOff + i]! & 0x0F;  // strip brightness nibble
+      basePattern[i + 1] = vram[vramOff + i + 1]!;
+    }
+
+    // Search program ROM for base palette (matching low 12 bits of each word)
+    for (let offset = 0; offset <= rom.length - 32; offset += 2) {
+      let match = true;
+      for (let i = 0; i < 32; i += 2) {
+        if ((rom[offset + i]! & 0x0F) !== basePattern[i] || rom[offset + i + 1] !== basePattern[i + 1]) {
+          match = false; break;
+        }
+      }
+      if (match) {
+        // Patch: preserve the ROM's brightness nibble, replace the color nibbles
+        const romBright = rom[offset + colorOff]! & 0xF0;
+        rom[offset + colorOff] = romBright | ((newWord >> 8) & 0x0F);
+        rom[offset + colorOff + 1] = newWord & 0xFF;
+        found = true;
+      }
+    }
+
+    // Fallback: if not found, try exact match (for games without brightness fade)
+    if (!found) {
+      const exactPattern = new Uint8Array(32);
+      for (let i = 0; i < 32; i++) exactPattern[i] = vram[vramOff + i]!;
+
+      for (let offset = 0; offset <= rom.length - 32; offset += 2) {
+        let match = true;
+        for (let i = 0; i < 32; i++) {
+          if (rom[offset + i] !== exactPattern[i]) { match = false; break; }
+        }
+        if (match) {
+          rom[offset + colorOff] = (newWord >> 8) & 0xFF;
+          rom[offset + colorOff + 1] = newWord & 0xFF;
+          found = true;
+        }
+      }
+    }
+
+    return found;
+  }
+
   /** Check if a region has been modified */
   isModified(region: Region): boolean {
     const [mutable, original] = this.getBufferPair(region);
@@ -108,6 +168,10 @@ export class RomStore {
 
     if (this.isModified('graphics')) {
       this.reconstructGraphicsFiles(zip);
+    }
+
+    if (this.isModified('program')) {
+      this.reconstructProgramFiles(zip);
     }
 
     return zip;
@@ -174,6 +238,42 @@ export class RomStore {
 
       for (let r = 0; r < numRoms; r++) {
         zip.file(bank.files[r]!, roms[r]!);
+      }
+    }
+  }
+
+  /**
+   * Reverse assembleProgram() ROM_LOAD16_BYTE interleaving.
+   * Even bytes → even file, odd bytes → odd file.
+   */
+  private reconstructProgramFiles(zip: JSZip): void {
+    const rom = this.programRom;
+    const def = this.gameDef.program;
+
+    // ROM_LOAD16_BYTE entries
+    for (const entry of def.entries) {
+      const evenData = new Uint8Array(entry.size);
+      const oddData = new Uint8Array(entry.size);
+
+      for (let i = 0; i < entry.size; i++) {
+        const src = entry.offset + i * 2;
+        if (src + 1 < rom.length) {
+          evenData[i] = rom[src]!;
+          oddData[i] = rom[src + 1]!;
+        }
+      }
+
+      zip.file(entry.even, evenData);
+      zip.file(entry.odd, oddData);
+    }
+
+    // ROM_LOAD16_WORD_SWAP entries (if any)
+    if (def.wordSwapEntries) {
+      for (const entry of def.wordSwapEntries) {
+        // These files are stored as-is (possibly byte-swapped on load)
+        // Export as big-endian (the format in our programRom buffer)
+        const data = rom.slice(entry.offset, entry.offset + entry.size);
+        zip.file(entry.file, data);
       }
     }
   }

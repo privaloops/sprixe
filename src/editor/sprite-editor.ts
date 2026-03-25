@@ -7,7 +7,7 @@
  */
 
 import { writePixel, readPixel, readTile } from './tile-encoder';
-import { readPalette, writeColor } from './palette-editor';
+import { readPalette, writeColor, encodeColor } from './palette-editor';
 import { gfxromBankMapper, GFXTYPE_SPRITES, LAYER_OBJ, LAYER_SCROLL1, LAYER_SCROLL2, LAYER_SCROLL3 } from '../video/cps1-video';
 import type { SpriteInspectResult, ScrollInspectResult } from '../video/cps1-video';
 import type { Emulator } from '../emulator';
@@ -347,7 +347,16 @@ export class SpriteEditor {
   editPaletteColor(colorIndex: number, r: number, g: number, b: number): void {
     if (!this._currentTile) return;
     const bufs = this.emulator.getBusBuffers();
-    writeColor(bufs.vram, this._currentTile.paletteBase, this._currentTile.paletteIndex, colorIndex, r, g, b);
+    const { paletteBase, paletteIndex } = this._currentTile;
+
+    // Also patch program ROM so the change persists across rounds and in export
+    const store = this.emulator.getRomStore();
+    if (store) {
+      const newWord = encodeColor(r, g, b);
+      store.patchProgramPalette(bufs.vram, paletteBase, paletteIndex, colorIndex, newWord);
+    }
+
+    writeColor(bufs.vram, paletteBase, paletteIndex, colorIndex, r, g, b);
     this.onTileChanged?.();
   }
 

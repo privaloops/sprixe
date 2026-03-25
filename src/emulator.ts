@@ -536,7 +536,7 @@ export class Emulator {
 
     this.bus.setVramWatchCallback((addr, value) => {
       if (hits.length >= maxHits) return;
-      if (addr < 0x910000 || addr > 0x912FFF) return;
+      if (addr < 0x900000 || addr > 0x92FFFF) return;
 
       if ((addr & 1) === 0) {
         pendingHi = { addr, value };
