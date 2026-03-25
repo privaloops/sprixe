@@ -25,6 +25,9 @@ const FM_ROW_H = 32; // px per FM channel strip
 const FM_TOTAL_H = FM_CHANNELS * FM_ROW_H; // 256
 const KB_WIDTH = 44;
 const KEY_H = FM_TOTAL_H / PR_KEYS; // ~7px per key
+const TIMELINE_W = 400; // shared width for all timelines (FM + OKI)
+const RULER_H = 16;     // height of the frame ruler bar
+const MAJOR_TICK = 600;  // big tick + label interval (frames)
 
 const IS_BLACK = [0, 1, 0, 1, 0, 0, 1, 0, 1, 0, 1, 0];
 const NOTE_LABELS = ["C", "", "D", "", "E", "F", "", "G", "", "A", "", "B"];
@@ -62,6 +65,11 @@ export class AudioPanel {
   private readonly fmTimeCanvases: HTMLCanvasElement[] = [];
   private readonly fmTimeCtxs: (CanvasRenderingContext2D | null)[] = [];
 
+  // Frame ruler
+  private rulerCanvas: HTMLCanvasElement | null = null;
+  private rulerCtx: CanvasRenderingContext2D | null = null;
+  private rulerInfoEl: HTMLSpanElement | null = null;
+
   // Shared keyboard canvas — shows notes of the selected FM channel
   private kbCanvas: HTMLCanvasElement | null = null;
   private kbCtx: CanvasRenderingContext2D | null = null;
@@ -90,6 +98,10 @@ export class AudioPanel {
   private readonly soloed = new Set<number>();
 
   private updateRafId = 0;
+
+  // Frame tick tracking for timeline grid
+  private lastFrameCount = 0;
+  private tickAccumulator = 0; // sub-pixel accumulator for frame ticks
 
   constructor(emulator: Emulator) {
     this.emulator = emulator;
@@ -161,6 +173,21 @@ export class AudioPanel {
     // -- Tracks tab content --
     this.tracksContent = el("div", "aud-tab-content") as HTMLDivElement;
 
+    // Frame ruler (above the FM grid)
+    const rulerWrap = el("div", "aud-ruler-wrap") as HTMLDivElement;
+    const rulerCvs = document.createElement("canvas");
+    rulerCvs.width = TIMELINE_W;
+    rulerCvs.height = RULER_H;
+    rulerCvs.className = "aud-ruler";
+    this.rulerCanvas = rulerCvs;
+    this.rulerCtx = rulerCvs.getContext("2d")!;
+    this.rulerCtx.fillStyle = "#141414";
+    this.rulerCtx.fillRect(0, 0, TIMELINE_W, RULER_H);
+    rulerWrap.appendChild(rulerCvs);
+    this.rulerInfoEl = el("span", "aud-ruler-info") as HTMLSpanElement;
+    rulerWrap.appendChild(this.rulerInfoEl);
+    this.tracksContent.appendChild(rulerWrap);
+
     // FM Section — 3-column grid: controls | keyboard | timelines
     const fmGrid = el("div", "aud-fm-grid") as HTMLDivElement;
     fmGrid.style.cssText = `display:grid; grid-template-columns: auto ${KB_WIDTH}px 1fr; grid-template-rows: repeat(${FM_CHANNELS}, ${FM_ROW_H}px); gap:0;`;
@@ -205,13 +232,13 @@ export class AudioPanel {
     // Column 3: per-channel timelines (one canvas per row)
     for (let ch = 0; ch < FM_CHANNELS; ch++) {
       const cvs = document.createElement("canvas");
-      cvs.width = 400;
+      cvs.width = TIMELINE_W;
       cvs.height = FM_ROW_H;
       cvs.className = "aud-fm-timeline";
       cvs.style.cssText = `grid-column:3; grid-row:${ch + 1};`;
       const ctx = cvs.getContext("2d")!;
-      ctx.fillStyle = "#0d0d0d";
-      ctx.fillRect(0, 0, 400, FM_ROW_H);
+      ctx.fillStyle = "#181818";
+      ctx.fillRect(0, 0, TIMELINE_W, FM_ROW_H);
       fmGrid.appendChild(cvs);
       this.fmTimeCanvases[ch] = cvs;
       this.fmTimeCtxs[ch] = ctx;
@@ -348,7 +375,7 @@ export class AudioPanel {
     wave.width = 300; wave.height = 10;
     wave.className = "aud-hit-timeline";
     const wctx = wave.getContext("2d")!;
-    wctx.fillStyle = "#111";
+    wctx.fillStyle = "#1a1a1a";
     wctx.fillRect(0, 0, 300, 10);
     row.appendChild(wave);
     this.waveCanvases[voice] = wave;
@@ -619,7 +646,57 @@ export class AudioPanel {
     const viz = this.emulator.getVizReader();
     if (!viz) return;
 
-    // FM channels — update strips (VU, note name)
+    const curFrame = this.emulator.getFrameCount();
+    const advancing = curFrame > this.lastFrameCount;
+
+    // Scroll 1px per update, only when the game is advancing
+    if (advancing) {
+      // Ruler
+      if (this.rulerCtx && this.rulerCanvas) {
+        const rCtx = this.rulerCtx;
+        rCtx.drawImage(this.rulerCanvas, 1, 0);
+        rCtx.fillStyle = "#141414";
+        rCtx.fillRect(0, 0, 1, RULER_H);
+
+        // Tick at leftmost pixel based on current frame
+        if (curFrame % MAJOR_TICK === 0 && curFrame > 0) {
+          rCtx.fillStyle = "rgba(255,255,255,0.35)";
+          rCtx.fillRect(0, 0, 1, RULER_H);
+        } else if (curFrame % 60 === 0) {
+          rCtx.fillStyle = "rgba(255,255,255,0.18)";
+          rCtx.fillRect(0, RULER_H - 5, 1, 5);
+        }
+      }
+
+      // FM timelines — scroll + clear leftmost pixel
+      for (let ch = 0; ch < FM_CHANNELS; ch++) {
+        const tCtx = this.fmTimeCtxs[ch];
+        const tCvs = this.fmTimeCanvases[ch];
+        if (!tCtx || !tCvs) continue;
+        tCtx.drawImage(tCvs, 1, 0);
+        tCtx.fillStyle = "#181818";
+        tCtx.fillRect(0, 0, 1, FM_ROW_H);
+      }
+
+      // OKI waveforms — scroll + clear leftmost pixel
+      for (let v = 0; v < OKI_VOICES; v++) {
+        const wCvs = this.waveCanvases[v];
+        const wCtx = this.waveCtxs[v];
+        if (!wCtx || !wCvs) continue;
+        wCtx.drawImage(wCvs, 1, 0);
+        wCtx.fillStyle = "#1a1a1a";
+        wCtx.fillRect(0, 0, 1, 10);
+      }
+
+      this.lastFrameCount = curFrame;
+    }
+
+    // FPS + frame counter (DOM, no canvas text)
+    if (this.rulerInfoEl) {
+      this.rulerInfoEl.textContent = `F${curFrame}  ${this.emulator.getFpsDisplay()}fps`;
+    }
+
+    // FM channels — update strips (VU, note name) + draw current pixel
     for (let ch = 0; ch < FM_CHANNELS; ch++) {
       const fm = viz.getFm(ch);
       const color = CH_COLORS[ch]!;
@@ -630,21 +707,16 @@ export class AudioPanel {
       const vuCtx = this.vuCtxs[ch];
       if (vuCtx) this.drawVuMeter(vuCtx, vol, color);
 
-      // Per-channel hit timeline (simple on/off block)
-      const tCtx = this.fmTimeCtxs[ch];
-      const tCvs = this.fmTimeCanvases[ch];
-      if (tCtx && tCvs) {
-        tCtx.drawImage(tCvs, -1, 0);
-        tCtx.fillStyle = "#0d0d0d";
-        tCtx.fillRect(tCvs.width - 1, 0, 1, FM_ROW_H);
-        if (fm.kon) {
+      if (advancing) {
+        const tCtx = this.fmTimeCtxs[ch];
+        if (tCtx && fm.kon) {
           tCtx.fillStyle = color;
-          tCtx.fillRect(tCvs.width - 1, 2, 1, FM_ROW_H - 4);
+          tCtx.fillRect(0, 2, 1, FM_ROW_H - 4);
         }
       }
     }
 
-    // Keyboard + piano roll: show only the selected FM channel
+    // Keyboard + piano roll
     const selCh = this.selectedFmChannel;
     const selFm = viz.getFm(selCh);
     const selColor = CH_COLORS[selCh]!;
@@ -654,7 +726,7 @@ export class AudioPanel {
     }
     this.drawKeyboard(activeNotes);
 
-    // OKI voices
+    // OKI voices — update strips + draw current pixel
     for (let v = 0; v < OKI_VOICES; v++) {
       const oki = viz.getOki(v);
       const idx = FM_CHANNELS + v;
@@ -666,13 +738,25 @@ export class AudioPanel {
       const vuCtx = this.vuCtxs[idx];
       if (vuCtx) this.drawVuMeter(vuCtx, vol, color);
 
-      const wCtx = this.waveCtxs[v];
-      if (wCtx) this.drawWaveform(wCtx, v, oki.playing ? oki.signal : 128, color);
+      if (advancing) {
+        const wCtx = this.waveCtxs[v];
+        if (wCtx) {
+          const signal = oki.playing ? oki.signal : 128;
+          const h = 10;
+          const y = h - (signal / 255) * h;
+          const prevY = this.prevWaveY[v]!;
+          const minY = Math.min(y, prevY);
+          const maxY = Math.max(y, prevY);
+          wCtx.fillStyle = color;
+          wCtx.fillRect(0, minY, 1, Math.max(1, maxY - minY + 1));
+          this.prevWaveY[v] = y;
+        }
+      }
     }
   }
 
   private drawVuMeter(ctx: CanvasRenderingContext2D, level: number, color: string): void {
-    ctx.fillStyle = "#111";
+    ctx.fillStyle = "#1a1a1a";
     ctx.fillRect(0, 0, 4, 16);
     if (level > 0) {
       const barH = (level / 100) * 16;
@@ -681,20 +765,6 @@ export class AudioPanel {
     }
   }
 
-  private drawWaveform(ctx: CanvasRenderingContext2D, voice: number, signal: number, color: string): void {
-    const w = 300;
-    const h = 10;
-    ctx.drawImage(ctx.canvas, -1, 0);
-    ctx.fillStyle = "#111";
-    ctx.fillRect(w - 1, 0, 1, h);
-    const y = h - (signal / 255) * h;
-    const prevY = this.prevWaveY[voice]!;
-    const minY = Math.min(y, prevY);
-    const maxY = Math.max(y, prevY);
-    ctx.fillStyle = color;
-    ctx.fillRect(w - 1, minY, 1, Math.max(1, maxY - minY + 1));
-    this.prevWaveY[voice] = y;
-  }
 }
 
 function el(tag: string, className?: string): HTMLElement {
