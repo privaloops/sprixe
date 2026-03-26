@@ -489,6 +489,8 @@
       }
       .layer-row:hover { background: var(--color-bg-surface); }
       .layer-row-active { background: var(--color-bg-elevated); border: 1px solid var(--color-accent); }
+      .layer-row-dragging { opacity: 0.4; }
+      .layer-row-dragover { border-top: 2px solid var(--color-accent); }
 
       .layer-eye-btn {
         background: none; border: none; cursor: pointer; padding: 0; font-size: 0.7rem;

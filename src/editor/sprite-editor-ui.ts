@@ -83,6 +83,12 @@ export class SpriteEditorUI {
   private draggingLayer = false;
   private dragLastX = 0;
   private dragLastY = 0;
+  private resizingLayer = false;
+  private resizeCorner = ''; // 'tl' | 'tr' | 'bl' | 'br'
+  private resizeStartW = 0;
+  private resizeStartH = 0;
+  private resizeStartX = 0;
+  private resizeStartY = 0;
 
   private get activeGroup(): LayerGroup | undefined { return this.layerGroups[this.activeGroupIndex]; }
   private get activeLayer(): PhotoLayer | undefined { return this.activeGroup?.layers[this.activeLayerIndex]; }
@@ -296,6 +302,25 @@ export class SpriteEditorUI {
         this.quantizeLayer();
         this.refreshLayerPanel();
       },
+      onReorderLayer: (gi, fromIdx, toIdx) => {
+        const group = this.layerGroups[gi];
+        if (!group) return;
+        const layers = group.layers;
+        if (fromIdx < 0 || fromIdx >= layers.length || toIdx < 0 || toIdx >= layers.length) return;
+        const [moved] = layers.splice(fromIdx, 1);
+        if (moved) layers.splice(toIdx, 0, moved);
+        // Update active layer index to follow the moved layer
+        if (this.activeGroupIndex === gi) {
+          if (this.activeLayerIndex === fromIdx) {
+            this.activeLayerIndex = toIdx;
+          } else if (fromIdx < this.activeLayerIndex && toIdx >= this.activeLayerIndex) {
+            this.activeLayerIndex--;
+          } else if (fromIdx > this.activeLayerIndex && toIdx <= this.activeLayerIndex) {
+            this.activeLayerIndex++;
+          }
+        }
+        this.refreshLayerPanel();
+      },
       onMergeGroup: (gi) => {
         this.activeGroupIndex = gi;
         this.mergeAll();
@@ -348,31 +373,72 @@ export class SpriteEditorUI {
     cvs.addEventListener('click', this.boundOverlayClick);
     cvs.addEventListener('mouseleave', this.boundOverlayLeave);
 
-    // Layer interaction: Shift+click = drag, plain click = tool (eraser on RGBA)
+    // Layer interaction: Shift+click = select layer, corner handles = resize, click = drag
     cvs.addEventListener('mousedown', (e) => {
       const pos = this.screenCoordsFromEvent(e);
       if (!pos) return;
+
+      // Shift+click: select the topmost layer under cursor
+      if (e.shiftKey) {
+        const group = this.activeGroup;
+        if (group) {
+          // Search top-to-bottom (last layer = topmost)
+          for (let i = group.layers.length - 1; i >= 0; i--) {
+            const l = group.layers[i]!;
+            if (!l.visible) continue;
+            if (pos.x >= l.offsetX && pos.x < l.offsetX + l.width
+                && pos.y >= l.offsetY && pos.y < l.offsetY + l.height) {
+              this.activeLayerIndex = i;
+              this.refreshLayerPanel();
+              e.preventDefault();
+              e.stopPropagation();
+              return;
+            }
+          }
+        }
+        return;
+      }
+
       const layer = this.activeLayer;
       if (!layer) return;
-      const inBounds = pos.x >= layer.offsetX && pos.x < layer.offsetX + layer.width
-          && pos.y >= layer.offsetY && pos.y < layer.offsetY + layer.height;
+
+      // Check resize handles first (4 corners, tolerance of 5 game pixels)
+      const ht = 5;
+      const lx = layer.offsetX, ly = layer.offsetY;
+      const lw = layer.width, lh = layer.height;
+      const corners: [string, number, number][] = [
+        ['tl', lx, ly], ['tr', lx + lw, ly],
+        ['bl', lx, ly + lh], ['br', lx + lw, ly + lh],
+      ];
+      for (const [corner, cx, cy] of corners) {
+        if (Math.abs(pos.x - cx) <= ht && Math.abs(pos.y - cy) <= ht) {
+          this.resizingLayer = true;
+          this.resizeCorner = corner;
+          this.resizeStartW = lw;
+          this.resizeStartH = lh;
+          this.resizeStartX = pos.x;
+          this.resizeStartY = pos.y;
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
+      }
+
+      const inBounds = pos.x >= lx && pos.x < lx + lw && pos.y >= ly && pos.y < ly + lh;
       if (!inBounds) return;
 
-      if (e.shiftKey) {
-        // Shift+click = drag layer
-        this.draggingLayer = true;
-        this.dragLastX = pos.x;
-        this.dragLastY = pos.y;
-        e.preventDefault();
-        e.stopPropagation();
-      } else {
-        // Tool action on layer pixel
-        this.overlayLayerAction(pos.x, pos.y);
-        e.preventDefault();
-        e.stopPropagation();
-      }
+      // Click on layer = drag to move
+      this.draggingLayer = true;
+      this.dragLastX = pos.x;
+      this.dragLastY = pos.y;
+      e.preventDefault();
+      e.stopPropagation();
     });
     cvs.addEventListener('mouseup', () => {
+      if (this.resizingLayer) {
+        this.resizingLayer = false;
+        this.refreshLayerPanel();
+      }
       if (this.draggingLayer) {
         this.draggingLayer = false;
         this.refreshLayerPanel();
@@ -482,6 +548,42 @@ export class SpriteEditorUI {
 
   private handleOverlayMove(e: MouseEvent): void {
     if (this._isInteractionBlocked?.()) return;
+
+    // Handle layer corner resize
+    if (this.resizingLayer && this.activeLayer) {
+      const pos = this.screenCoordsFromEvent(e);
+      if (pos) {
+        const dx = pos.x - this.resizeStartX;
+        const dy = pos.y - this.resizeStartY;
+        // Use the larger delta to maintain aspect ratio
+        const delta = Math.abs(dx) > Math.abs(dy) ? dx : dy;
+        const sign = this.resizeCorner === 'tl' || this.resizeCorner === 'bl' ? -1 : 1;
+        const scaledDelta = delta * sign;
+
+        const newW = Math.max(4, this.resizeStartW + scaledDelta);
+        const newH = Math.max(4, Math.round(newW * this.resizeStartH / this.resizeStartW));
+
+        if (newW !== this.activeLayer.width) {
+          const newRgba = resizeRgba(this.activeLayer.rgbaOriginal, newW, newH);
+          // Anchor to the opposite corner
+          if (this.resizeCorner === 'tl') {
+            this.activeLayer.offsetX += this.activeLayer.width - newW;
+            this.activeLayer.offsetY += this.activeLayer.height - newH;
+          } else if (this.resizeCorner === 'tr') {
+            this.activeLayer.offsetY += this.activeLayer.height - newH;
+          } else if (this.resizeCorner === 'bl') {
+            this.activeLayer.offsetX += this.activeLayer.width - newW;
+          }
+          // br: offset stays
+          this.activeLayer.rgbaData = newRgba;
+          this.activeLayer.pixels = new Uint8Array(newW * newH);
+          this.activeLayer.width = newW;
+          this.activeLayer.height = newH;
+          this.activeLayer.quantized = false;
+        }
+      }
+      return;
+    }
 
     // Handle layer dragging
     if (this.draggingLayer && this.activeLayer) {
@@ -663,13 +765,26 @@ export class SpriteEditorUI {
         ctx.imageSmoothingEnabled = false;
         ctx.drawImage(tmpCvs, layer.offsetX, layer.offsetY);
 
-        // Draw selection outline for active layer
+        // Draw selection outline + resize handles for active layer
         if (layer === this.activeLayer) {
+          const lx = layer.offsetX;
+          const ly = layer.offsetY;
+          const lw = layer.width;
+          const lh = layer.height;
+
           ctx.strokeStyle = 'rgba(0, 200, 255, 0.7)';
           ctx.lineWidth = 1;
           ctx.setLineDash([3, 3]);
-          ctx.strokeRect(layer.offsetX - 0.5, layer.offsetY - 0.5, layer.width + 1, layer.height + 1);
+          ctx.strokeRect(lx - 0.5, ly - 0.5, lw + 1, lh + 1);
           ctx.setLineDash([]);
+
+          // Resize handles (4 corners)
+          const hs = 3; // handle half-size in game pixels
+          ctx.fillStyle = 'rgba(0, 200, 255, 0.9)';
+          ctx.fillRect(lx - hs, ly - hs, hs * 2, hs * 2);           // top-left
+          ctx.fillRect(lx + lw - hs, ly - hs, hs * 2, hs * 2);      // top-right
+          ctx.fillRect(lx - hs, ly + lh - hs, hs * 2, hs * 2);      // bottom-left
+          ctx.fillRect(lx + lw - hs, ly + lh - hs, hs * 2, hs * 2); // bottom-right
         }
       }
     }

@@ -17,6 +17,7 @@ export interface LayerPanelCallbacks {
   onToggleVisibility(groupIdx: number, layerIdx: number): void;
   onDeleteLayer(groupIdx: number, layerIdx: number): void;
   onQuantizeLayer(groupIdx: number, layerIdx: number): void;
+  onReorderLayer(groupIdx: number, fromIdx: number, toIdx: number): void;
   onMergeGroup(groupIdx: number): void;
   onDropPhoto(groupIdx: number, file: File): void;
 }
@@ -175,6 +176,36 @@ export class LayerPanel {
     const row = document.createElement('div');
     row.className = 'layer-row' + (isActive ? ' layer-row-active' : '');
     row.draggable = true;
+    row.dataset['groupIdx'] = String(groupIdx);
+    row.dataset['layerIdx'] = String(layerIdx);
+
+    // Drag & drop reorder
+    row.addEventListener('dragstart', (e) => {
+      e.dataTransfer?.setData('text/plain', `${groupIdx}:${layerIdx}`);
+      row.classList.add('layer-row-dragging');
+    });
+    row.addEventListener('dragend', () => {
+      row.classList.remove('layer-row-dragging');
+    });
+    row.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      row.classList.add('layer-row-dragover');
+    });
+    row.addEventListener('dragleave', () => {
+      row.classList.remove('layer-row-dragover');
+    });
+    row.addEventListener('drop', (e) => {
+      e.preventDefault();
+      row.classList.remove('layer-row-dragover');
+      const data = e.dataTransfer?.getData('text/plain');
+      if (!data) return;
+      const [fromGi, fromLi] = data.split(':').map(Number);
+      const toGi = groupIdx;
+      const toLi = layerIdx;
+      if (fromGi === toGi && fromLi !== undefined && toLi !== undefined && fromLi !== toLi) {
+        this.callbacks.onReorderLayer(toGi!, fromLi, toLi);
+      }
+    });
 
     // Click to select
     row.onclick = () => this.callbacks.onSelectLayer(groupIdx, layerIdx);
