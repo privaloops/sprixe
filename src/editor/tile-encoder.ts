@@ -153,6 +153,33 @@ export function readPixel(
 }
 
 /**
+ * Read a pixel from a scroll tile, handling the scroll1 interleave quirk.
+ */
+export function readScrollPixel(
+  graphicsRom: Uint8Array,
+  tileCode: number,
+  localX: number,
+  localY: number,
+  charSize: number,
+  tileIndex: number,
+  isScroll1: boolean,
+): number {
+  const rowStride = charSize >= 512 ? ROW_STRIDE_32 : ROW_STRIDE_8;
+  const tileOffset = tileCode * charSize;
+  const groupOffset = isScroll1
+    ? ((tileIndex & 0x20) >> 5) * 4
+    : ((localX >> 3) * 4);
+  const groupBase = tileOffset + localY * rowStride + groupOffset;
+  if (groupBase + 3 >= graphicsRom.length) return 0;
+  const bit = 7 - (localX & 7);
+
+  return ((graphicsRom[groupBase]! >> bit) & 1)
+       | (((graphicsRom[groupBase + 1]! >> bit) & 1) << 1)
+       | (((graphicsRom[groupBase + 2]! >> bit) & 1) << 2)
+       | (((graphicsRom[groupBase + 3]! >> bit) & 1) << 3);
+}
+
+/**
  * Read an entire 16x16 tile as a flat array of palette indices.
  * Returns 256 values (row-major, 16 per row).
  */

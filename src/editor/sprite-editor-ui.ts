@@ -103,6 +103,8 @@ export class SpriteEditorUI {
   private overlayRafId = 0;
   private gridLayers: Map<number, boolean> = new Map();
   private _isInteractionBlocked: (() => boolean) | null = null;
+  private _onHwLayerToggle: ((layerId: number, visible: boolean) => void) | null = null;
+  private _onSpreadChange: ((value: number) => void) | null = null;
 
   // Bound handlers
   private readonly boundKeyHandler: (e: KeyboardEvent) => void;
@@ -224,6 +226,14 @@ export class SpriteEditorUI {
     this._isInteractionBlocked = fn;
   }
 
+  setHwLayerToggle(fn: (layerId: number, visible: boolean) => void): void {
+    this._onHwLayerToggle = fn;
+  }
+
+  setSpreadChange(fn: (value: number) => void): void {
+    this._onSpreadChange = fn;
+  }
+
   destroy(): void {
     this.deactivate();
   }
@@ -330,12 +340,35 @@ export class SpriteEditorUI {
         this.activeGroupIndex = gi;
         this.importPhoto(file);
       },
+      onToggleHwLayer: (layerId, visible) => {
+        this._onHwLayerToggle?.(layerId, visible);
+      },
+      onToggleGrid: (layerId, visible) => {
+        this.gridLayers.set(layerId, visible);
+      },
+      onSpreadChange: (value) => {
+        this._onSpreadChange?.(value);
+      },
     });
   }
 
   private refreshLayerPanel(): void {
     const gfxRom = this.editor.getGfxRom() ?? undefined;
-    this.layerPanel?.refresh(this.layerGroups, this.activeGroupIndex, this.activeLayerIndex, gfxRom);
+    const video = this.emulator.getVideo();
+    const layerOrder = video?.getLayerOrder();
+    const LAYER_SHORT: Record<number, string> = { 0: 'OBJ', 1: 'S1', 2: 'S2', 3: 'S3' };
+    const drawOrder = layerOrder ? layerOrder.map(id => LAYER_SHORT[id] ?? '?').join(' > ') : '';
+
+    // Build HW layer visibility state (approximate — mirrors gridLayers for grid toggle)
+    const hwState = {
+      visible: new Map<number, boolean>(),
+      grid: this.gridLayers,
+      drawOrder,
+    };
+    // Default all visible (we don't track this directly — the renderer does)
+    for (let i = 0; i < 4; i++) hwState.visible.set(i, true);
+
+    this.layerPanel?.refresh(this.layerGroups, this.activeGroupIndex, this.activeLayerIndex, gfxRom, hwState);
   }
 
   // -- Overlay --

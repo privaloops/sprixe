@@ -20,6 +20,9 @@ export interface LayerPanelCallbacks {
   onReorderLayer(groupIdx: number, fromIdx: number, toIdx: number): void;
   onMergeGroup(groupIdx: number): void;
   onDropPhoto(groupIdx: number, file: File): void;
+  onToggleHwLayer(layerId: number, visible: boolean): void;
+  onToggleGrid(layerId: number, visible: boolean): void;
+  onSpreadChange(value: number): void;
 }
 
 // ---------------------------------------------------------------------------
@@ -82,38 +85,62 @@ export class LayerPanel {
     activeGroupIdx: number,
     activeLayerIdx: number,
     gfxRom?: Uint8Array,
+    hwLayerState?: { visible: Map<number, boolean>; grid: Map<number, boolean>; drawOrder: string },
   ): void {
     this.content.innerHTML = '';
 
     // Update memory indicator
     if (gfxRom) {
-      const stats16 = getTileStats(gfxRom, 128); // 16x16 tiles (most common)
+      const stats16 = getTileStats(gfxRom, 128);
       const pct = Math.round(stats16.free / stats16.total * 100);
       this.memIndicator.textContent = `GFX ROM: ${stats16.free}/${stats16.total} tiles free (${pct}%)`;
-    }
-
-    if (groups.length === 0) {
-      const empty = document.createElement('div');
-      empty.className = 'layer-empty';
-      empty.textContent = 'No layers yet. Capture a sprite first.';
-      this.content.appendChild(empty);
-      return;
     }
 
     for (let gi = 0; gi < groups.length; gi++) {
       const group = groups[gi]!;
       const isActiveGroup = gi === activeGroupIdx;
 
-      // Group header
       const groupEl = document.createElement('div');
       groupEl.className = 'layer-group' + (isActiveGroup ? ' layer-group-active' : '');
 
+      // Group header with HW layer controls
       const groupHeader = document.createElement('div');
       groupHeader.className = 'layer-group-header';
-      groupHeader.textContent = group.name;
-      groupHeader.onclick = () => {
-        groupEl.classList.toggle('layer-group-collapsed');
-      };
+
+      const headerLabel = document.createElement('span');
+      headerLabel.textContent = group.name;
+      headerLabel.onclick = () => groupEl.classList.toggle('layer-group-collapsed');
+      groupHeader.appendChild(headerLabel);
+
+      // HW layer visibility + grid toggles
+      const hwLayerId = group.layerId ?? (group.type === 'sprite' ? 0 : -1); // 0 = LAYER_OBJ
+      if (hwLayerId >= 0 && hwLayerState) {
+        const hwControls = document.createElement('span');
+        hwControls.className = 'layer-hw-controls';
+
+        const eyeCb = document.createElement('input');
+        eyeCb.type = 'checkbox';
+        eyeCb.checked = hwLayerState.visible.get(hwLayerId) !== false;
+        eyeCb.title = 'Show/hide layer';
+        eyeCb.className = 'layer-hw-cb';
+        eyeCb.onclick = (e) => { e.stopPropagation(); this.callbacks.onToggleHwLayer(hwLayerId, eyeCb.checked); };
+        hwControls.appendChild(eyeCb);
+
+        const gridCb = document.createElement('input');
+        gridCb.type = 'checkbox';
+        gridCb.checked = hwLayerState.grid.get(hwLayerId) === true;
+        gridCb.title = 'Show tile grid';
+        gridCb.className = 'layer-hw-cb';
+        gridCb.onclick = (e) => { e.stopPropagation(); this.callbacks.onToggleGrid(hwLayerId, gridCb.checked); };
+
+        const gridLabel = document.createElement('span');
+        gridLabel.textContent = 'grid';
+        gridLabel.className = 'layer-hw-grid-label';
+
+        hwControls.append(gridCb, gridLabel);
+        groupHeader.appendChild(hwControls);
+      }
+
       groupEl.appendChild(groupHeader);
 
       // Layer rows
@@ -165,6 +192,32 @@ export class LayerPanel {
 
       this.content.appendChild(groupEl);
     }
+
+    // Draw order
+    if (hwLayerState?.drawOrder) {
+      const orderDiv = document.createElement('div');
+      orderDiv.className = 'layer-draw-order';
+      orderDiv.textContent = `Draw order: ${hwLayerState.drawOrder}`;
+      this.content.appendChild(orderDiv);
+    }
+
+    // 3D Exploded View
+    const sec3d = document.createElement('div');
+    sec3d.className = 'layer-3d-section';
+    const label3d = document.createElement('div');
+    label3d.className = 'layer-section-label';
+    label3d.textContent = '3D Exploded View';
+    sec3d.appendChild(label3d);
+
+    const slider = document.createElement('input');
+    slider.type = 'range';
+    slider.min = '0';
+    slider.max = '100';
+    slider.value = '0';
+    slider.className = 'layer-3d-slider';
+    slider.oninput = () => this.callbacks.onSpreadChange(parseInt(slider.value, 10));
+    sec3d.appendChild(slider);
+    this.content.appendChild(sec3d);
   }
 
   private createLayerRow(

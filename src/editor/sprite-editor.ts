@@ -6,7 +6,7 @@
  * Supports OBJ (sprites) and Scroll 1/2/3 layers.
  */
 
-import { writePixel, readPixel, readTile } from './tile-encoder';
+import { writePixel, writeScrollPixel, readPixel, readScrollPixel, readTile } from './tile-encoder';
 import { readPalette, writeColor, encodeColor } from './palette-editor';
 import { gfxromBankMapper, GFXTYPE_SPRITES, LAYER_OBJ, LAYER_SCROLL1, LAYER_SCROLL2, LAYER_SCROLL3 } from '../video/cps1-video';
 import type { SpriteInspectResult, ScrollInspectResult } from '../video/cps1-video';
@@ -43,6 +43,8 @@ export interface TileContext {
   ny?: number;
   nxs?: number;
   nys?: number;
+  // Scroll-specific (needed for scroll1 interleave)
+  tileIndex?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -162,6 +164,7 @@ export class SpriteEditor {
           flipX: scrInfo.flipX,
           flipY: scrInfo.flipY,
           paletteBase,
+          tileIndex: scrInfo.tileIndex,
         };
         this.onTileChanged?.();
         return this._currentTile;
@@ -226,8 +229,27 @@ export class SpriteEditor {
     const colorIndex = this._tool === 'eraser' ? 15 : this._activeColorIndex;
 
     this.pushUndo(tileCode, charSize, gfxRom);
-    writePixel(gfxRom, tileCode, localX, localY, colorIndex, charSize);
+    this.writeCurrentPixel(gfxRom, localX, localY, colorIndex);
     this.onTileChanged?.();
+  }
+
+  /** Read a pixel from the current tile, handling scroll1 interleave. */
+  private readCurrentPixel(gfxRom: Uint8Array, lx: number, ly: number): number {
+    const t = this._currentTile!;
+    if (t.layerId !== LAYER_OBJ && t.tileIndex !== undefined) {
+      return readScrollPixel(gfxRom, t.tileCode, lx, ly, t.charSize, t.tileIndex, t.layerId === LAYER_SCROLL1);
+    }
+    return readPixel(gfxRom, t.tileCode, lx, ly, t.charSize);
+  }
+
+  /** Write a pixel to the current tile, handling scroll1 interleave. */
+  private writeCurrentPixel(gfxRom: Uint8Array, lx: number, ly: number, color: number): void {
+    const t = this._currentTile!;
+    if (t.layerId !== LAYER_OBJ && t.tileIndex !== undefined) {
+      writeScrollPixel(gfxRom, t.tileCode, lx, ly, color, t.charSize, t.tileIndex, t.layerId === LAYER_SCROLL1);
+    } else {
+      writePixel(gfxRom, t.tileCode, lx, ly, color, t.charSize);
+    }
   }
 
   eyedrop(localX: number, localY: number): void {
@@ -235,7 +257,7 @@ export class SpriteEditor {
     const gfxRom = this.getGfxRom();
     if (!gfxRom) return;
 
-    const color = readPixel(gfxRom, this._currentTile.tileCode, localX, localY, this._currentTile.charSize);
+    const color = this.readCurrentPixel(gfxRom, localX, localY);
     this.setActiveColor(color);
   }
 
@@ -245,7 +267,7 @@ export class SpriteEditor {
     if (!gfxRom) return;
 
     const { tileCode, tileW, tileH, charSize } = this._currentTile;
-    const targetColor = readPixel(gfxRom, tileCode, localX, localY, charSize);
+    const targetColor = this.readCurrentPixel(gfxRom, localX, localY);
     const fillColor = this._tool === 'eraser' ? 15 : this._activeColorIndex;
 
     if (targetColor === fillColor) return;
@@ -258,7 +280,7 @@ export class SpriteEditor {
 
     while (queue.length > 0) {
       const [cx, cy] = queue.pop()!;
-      writePixel(gfxRom, tileCode, cx, cy, fillColor, charSize);
+      this.writeCurrentPixel(gfxRom, cx, cy, fillColor);
 
       for (const [dx, dy] of [[0, 1], [0, -1], [1, 0], [-1, 0]] as const) {
         const nx = cx + dx;
@@ -267,7 +289,7 @@ export class SpriteEditor {
         if (visited[ny * tileW + nx]) continue;
         visited[ny * tileW + nx] = 1;
 
-        if (readPixel(gfxRom, tileCode, nx, ny, charSize) === targetColor) {
+        if (this.readCurrentPixel(gfxRom, nx, ny) === targetColor) {
           queue.push([nx, ny]);
         }
       }
@@ -366,7 +388,19 @@ export class SpriteEditor {
     if (!this._currentTile) return null;
     const gfxRom = this.getGfxRom();
     if (!gfxRom) return null;
-    const { tileCode, tileW, tileH, charSize } = this._currentTile;
+    const { tileCode, tileW, tileH, charSize, layerId, tileIndex } = this._currentTile;
+
+    // For scroll1, read pixel by pixel to handle interleave
+    if (layerId === LAYER_SCROLL1 && tileIndex !== undefined) {
+      const result = new Uint8Array(tileW * tileH);
+      for (let y = 0; y < tileH; y++) {
+        for (let x = 0; x < tileW; x++) {
+          result[y * tileW + x] = readScrollPixel(gfxRom, tileCode, x, y, charSize, tileIndex, true);
+        }
+      }
+      return result;
+    }
+
     return readTile(gfxRom, tileCode, tileW, tileH, charSize);
   }
 
