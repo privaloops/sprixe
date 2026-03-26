@@ -93,8 +93,8 @@ function identifyGame(fileNames: string[]): GameDef | null {
 /**
  * Extract all files from a ZIP as RomFileEntry[].
  */
-async function extractZip(file: File): Promise<RomFileEntry[]> {
-  const arrayBuffer = await file.arrayBuffer();
+async function extractZip(file: File | ArrayBuffer): Promise<RomFileEntry[]> {
+  const arrayBuffer = file instanceof ArrayBuffer ? file : await file.arrayBuffer();
   const zip = await JSZip.loadAsync(arrayBuffer);
   const entries: RomFileEntry[] = [];
 
@@ -295,7 +295,7 @@ function assembleGraphicsNew(
  * @returns The assembled RomSet ready to be loaded into the emulator
  * @throws Error if the game cannot be identified or required ROMs are missing
  */
-export async function loadRomFromZip(file: File): Promise<RomSet> {
+export async function loadRomFromZip(file: File | ArrayBuffer): Promise<RomSet> {
   const entries = await extractZip(file);
 
   if (entries.length === 0) {
