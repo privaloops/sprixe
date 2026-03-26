@@ -16,6 +16,7 @@ import { readPalette } from './palette-editor';
 import { createLayer, createSpriteGroup, createScrollGroup, type PhotoLayer, type LayerGroup } from './layer-model';
 import { LayerPanel } from './layer-panel';
 import { TileAllocator, buildReverseMap, patchTilemapCode, patchTilemapPalette, getTileStats } from './tile-allocator';
+import { findTileReferences } from './tile-refs';
 import type { Emulator } from '../emulator';
 import { pencilCursor, fillCursor, eyedropperCursor, eraserCursor } from './tool-cursors';
 
@@ -1254,6 +1255,25 @@ export class SpriteEditorUI {
     let text = `Tile: 0x${tile.tileCode.toString(16).toUpperCase()} | ${layerName}`;
     if (tile.spriteIndex !== undefined) text += ` #${tile.spriteIndex}`;
     text += ` | Pal: ${tile.paletteIndex} | ${tile.tileW}x${tile.tileH}`;
+
+    // Shared tile count
+    const video = this.emulator.getVideo();
+    if (video) {
+      const bufs = this.emulator.getBusBuffers();
+      const refs = findTileReferences(
+        tile.tileCode,
+        video.getObjBuffer(),
+        bufs.vram,
+        bufs.cpsaRegs,
+        video.getMapperTable(),
+        video.getBankSizes(),
+        video.getBankBases(),
+      );
+      if (refs.length > 1) {
+        text += ` | Shared x${refs.length}`;
+      }
+    }
+
     this.infoBar.textContent = text;
   }
 
