@@ -10,7 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - **Sprite Analyzer** — Character grouping by palette + spatial proximity, red contour overlay, center-tracking across frames
 - **Pose Capture** — Gameplay recording of unique sprite poses with deduplication by tile code hash (mirrors = same pose)
 - **Sprite Sheet Viewer** — Fullscreen pose editor replacing game canvas. Left sidebar with all poses, central zoomed sprite at 4x CSS scale, horizontal tile strip, click-to-edit tiles
-- **Export/Import PNG** — Export any pose as transparent PNG at native resolution. Import PNG with nearest-color quantization to CPS1 16-color palette (pen 15 = transparent)
+- **Export/Import PNG** — Export any pose as transparent PNG at native resolution. Import PNG on individual tiles only with nearest-color quantization to CPS1 16-color palette (pen 15 = transparent)
 - **Photo Import on Scroll Layers** — Multi-layer photo system with Photoshop-like layers. Drop photo → RGBA overlay → resize/move → Atkinson dithering quantization → merge into GFX ROM tiles
 - **Tile Allocator** — Private tile copies to prevent shared-tile corruption on merge. Auto GFX ROM expansion when needed. Reverse bank mapping for scroll1 interleave
 - **Layer Panel** — Left sidebar with per-group layers, visibility toggles (eye icons), drag-drop reorder, quantize/delete per layer, 3D exploded view slider, GFX ROM memory indicator

@@ -1838,8 +1838,20 @@ export class SpriteEditorUI {
     const paletteIdx = this.activeGroup?.spriteCapture?.palette ?? 0;
     const palette = readPalette(bufs.vram, video.getPaletteBase(), paletteIdx);
 
+    // Compute refCount for each tile to show shared indicator
+    const objBuf = video.getObjBuffer();
+    const vram = bufs.vram;
+    const cpsaRegs = video.getCpsaRegs();
+    const mapperTable = video.getMapperTable();
+    const bankSizes = video.getBankSizes();
+    const bankBases = video.getBankBases();
+
     for (let i = 0; i < pose.tiles.length; i++) {
       const t = pose.tiles[i]!;
+
+      // Wrapper div for tile + optional shared badge
+      const tileWrap = el('div', 'sprite-sheet-tile-wrap') as HTMLDivElement;
+
       const tileCvs = document.createElement('canvas');
       tileCvs.width = 16;
       tileCvs.height = 16;
@@ -1864,13 +1876,23 @@ export class SpriteEditorUI {
         }
       }
       tileCtx.putImageData(img, 0, 0);
+      tileWrap.appendChild(tileCvs);
 
-      tileCvs.onclick = () => {
+      // Shared badge
+      const refs = findTileReferences(t.mappedCode, objBuf, vram, cpsaRegs, mapperTable, bankSizes, bankBases);
+      if (refs.length > 1) {
+        const badge = el('div', 'sprite-sheet-tile-shared') as HTMLDivElement;
+        badge.textContent = `×${refs.length}`;
+        badge.title = `Shared: ${refs.length} references`;
+        tileWrap.appendChild(badge);
+      }
+
+      tileWrap.onclick = () => {
         this.sheetSelectedTile = i;
         this.selectSheetTile(i);
       };
 
-      container.appendChild(tileCvs);
+      container.appendChild(tileWrap);
     }
   }
 

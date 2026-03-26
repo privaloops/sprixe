@@ -44,7 +44,7 @@
 - [x] Sprite Analyzer — character grouping (palette + proximity), red contour overlay, center-tracking
 - [x] Pose Capture — gameplay recording of unique sprite poses, deduplication by tile code hash
 - [x] Sprite Sheet Viewer — fullscreen pose editor, sidebar with all poses, zoomed editing at 4x
-- [x] Export/Import PNG — export pose as transparent PNG, import with nearest-color quantization
+- [x] Export/Import PNG — export pose as transparent PNG, import PNG on individual tiles only (not full poses, see docs/spec-tile-import-export.md)
 - [x] Photo Import on Scroll Layers — multi-layer system, Atkinson dithering, world coords positioning
 - [x] Tile Allocator — private tile copies, auto GFX ROM expansion, reverse bank mapping
 - [x] Layer Panel — left sidebar, visibility eye icons, drag-drop reorder, 3D slider, memory indicator
@@ -102,6 +102,7 @@
 - [x] **Photo Import (calque)** — Drop photo → calque RGBA, resize bilinéaire, Atkinson dithering (image-q), déplacement/resize, merge
 - [x] **Multi-calques + panneau gauche** — LayerGroup par layer CPS1, panneau gauche avec visibility/quantize/delete/merge
 - [x] **Tile allocator + GFX ROM expansion** — Allocation de tiles privés pour scroll merge, expansion dynamique ROM, reverse bank mapper
+- [ ] **Shared tile indicator** — Dans le sprite sheet viewer, marquer visuellement les tiles partagées (refCount > 1) pour avertir l'artiste avant édition. Voir docs/spec-tile-import-export.md.
 - [ ] **Custom palette par tile (Plan B)** — Pour les tiles partiellement couverts par une photo sur scroll: calculer une palette optimale de 15 couleurs via median cut qui représente au mieux le mix photo+original. Élimine les artefacts de re-quantization aux bords.
 - [ ] **Recoloration costume** — Palette swap pour changer la couleur des vêtements. Détection de famille de couleurs (même teinte, luminosités différentes), recalcul préservant les rapports de luminosité.
 - [ ] **Sauvegarde des éditions (persistance)** — Diff par région ROM (`graphics`, `program`, `oki`, `audio`) entre `mutableRom` et `originalRom` du RomStore. Stockage IndexedDB (localStorage trop limité). 100 tiles modifiés = ~12.8 KB de diff. Auto-save + restore au chargement du jeu. Slots nommés par jeu.
