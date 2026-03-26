@@ -1558,6 +1558,16 @@ export class SpriteEditorUI {
     title.textContent = `Pose ${this.sheetSelectedPose} / ${poses.length - 1} (${pose.w}\u00D7${pose.h}, ${pose.tiles.length} tiles)`;
     header.appendChild(title);
 
+    const exportBtn = el('button', 'sprite-sheet-back') as HTMLButtonElement;
+    exportBtn.textContent = 'Export PNG';
+    exportBtn.onclick = () => this.exportPosePng();
+    header.appendChild(exportBtn);
+
+    const importBtn = el('button', 'sprite-sheet-back') as HTMLButtonElement;
+    importBtn.textContent = 'Import PNG';
+    importBtn.onclick = () => this.importPosePng();
+    header.appendChild(importBtn);
+
     const backBtn = el('button', 'sprite-sheet-back') as HTMLButtonElement;
     backBtn.textContent = 'Back to game';
     backBtn.onclick = () => this.exitSpriteSheetMode();
@@ -1794,6 +1804,130 @@ export class SpriteEditorUI {
       this.emulator.resume();
       this.emulator.resumeAudio();
     }
+  }
+
+  // -- Pose PNG Export / Import --
+
+  /** Export the selected pose as a transparent PNG. */
+  private exportPosePng(): void {
+    const poses = this.activePoses;
+    const pose = poses[this.sheetSelectedPose];
+    if (!pose) return;
+
+    // Build the preview fresh from GFX ROM
+    const gfxRom = this.editor.getGfxRom();
+    if (!gfxRom) return;
+    const video = this.emulator.getVideo();
+    if (!video) return;
+    const bufs = this.emulator.getBusBuffers();
+    const pal = this.activeGroup?.spriteCapture?.palette ?? 0;
+    const palette = readPalette(bufs.vram, video.getPaletteBase(), pal);
+
+    const sprGroup: SpriteGroupData = {
+      sprites: [], palette: pal,
+      bounds: { x: 0, y: 0, w: pose.w, h: pose.h },
+      tiles: pose.tiles,
+    };
+    const preview = assembleCharacter(gfxRom, sprGroup, palette);
+
+    // Render to canvas and download
+    const cvs = document.createElement('canvas');
+    cvs.width = pose.w;
+    cvs.height = pose.h;
+    cvs.getContext('2d')!.putImageData(preview, 0, 0);
+
+    const link = document.createElement('a');
+    link.download = `pose_${this.sheetSelectedPose}.png`;
+    link.href = cvs.toDataURL('image/png');
+    link.click();
+  }
+
+  /** Import a PNG and write it into the GFX ROM tiles of the selected pose. */
+  private importPosePng(): void {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/png';
+    input.onchange = () => {
+      const file = input.files?.[0];
+      if (file) this.processImportPng(file);
+    };
+    input.click();
+  }
+
+  private async processImportPng(file: File): Promise<void> {
+    const poses = this.activePoses;
+    const pose = poses[this.sheetSelectedPose];
+    if (!pose) return;
+
+    const gfxRom = this.editor.getGfxRom();
+    if (!gfxRom) return;
+    const video = this.emulator.getVideo();
+    if (!video) return;
+    const bufs = this.emulator.getBusBuffers();
+    const pal = this.activeGroup?.spriteCapture?.palette ?? 0;
+    const palette = readPalette(bufs.vram, video.getPaletteBase(), pal);
+
+    // Load the image
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error('Failed to load image'));
+      img.src = url;
+    });
+    URL.revokeObjectURL(url);
+
+    // Draw to canvas to read pixel data
+    const cvs = document.createElement('canvas');
+    cvs.width = img.width;
+    cvs.height = img.height;
+    const ctx = cvs.getContext('2d')!;
+    ctx.drawImage(img, 0, 0);
+    const imgData = ctx.getImageData(0, 0, img.width, img.height);
+
+    // For each tile in the pose, read the corresponding region from the image
+    // and quantize each pixel to the nearest palette color, then write to GFX ROM
+    for (const tile of pose.tiles) {
+      for (let ty = 0; ty < 16; ty++) {
+        for (let tx = 0; tx < 16; tx++) {
+          // Image coords (account for tile flip — write to ROM in unflipped order)
+          const imgX = tile.relX + tx;
+          const imgY = tile.relY + ty;
+          if (imgX < 0 || imgX >= img.width || imgY < 0 || imgY >= img.height) continue;
+
+          const si = (imgY * img.width + imgX) * 4;
+          const r = imgData.data[si]!;
+          const g = imgData.data[si + 1]!;
+          const b = imgData.data[si + 2]!;
+          const a = imgData.data[si + 3]!;
+
+          // Transparent pixel → pen 15
+          if (a < 128) {
+            const romX = tile.flipX ? 15 - tx : tx;
+            const romY = tile.flipY ? 15 - ty : ty;
+            writePixelFn(gfxRom, tile.mappedCode, romX, romY, 15);
+            continue;
+          }
+
+          // Find nearest palette color (skip pen 15 = transparent)
+          let bestIdx = 0;
+          let bestDist = Infinity;
+          for (let c = 0; c < 15; c++) {
+            const [pr, pg, pb] = palette[c] ?? [0, 0, 0];
+            const dist = (r - pr) ** 2 + (g - pg) ** 2 + (b - pb) ** 2;
+            if (dist < bestDist) { bestDist = dist; bestIdx = c; }
+          }
+
+          const romX = tile.flipX ? 15 - tx : tx;
+          const romY = tile.flipY ? 15 - ty : ty;
+          writePixelFn(gfxRom, tile.mappedCode, romX, romY, bestIdx);
+        }
+      }
+    }
+
+    // Refresh everything
+    this.refreshSheetAfterEdit();
+    this.emulator.rerender();
   }
 
   // -- Sprite Analyzer --
