@@ -1575,8 +1575,10 @@ export class SpriteEditorUI {
       this.emulator.suspendAudio();
     }
 
-    // Hide game canvas and overlay
+    // Hide game canvas, overlay, and emu bar
     this.gameCanvas.style.display = 'none';
+    const emuBar = document.getElementById('emu-bar');
+    if (emuBar) emuBar.style.display = 'none';
     if (this.overlay) this.overlay.style.display = 'none';
 
     // Create sheet container (fixed fullscreen, respects layer/debug panels via CSS)
@@ -1968,8 +1970,10 @@ export class SpriteEditorUI {
     this.sheetContainer?.remove();
     this.sheetContainer = null;
 
-    // Show game canvas and overlay
+    // Show game canvas, overlay, and emu bar
     this.gameCanvas.style.display = '';
+    const emuBar = document.getElementById('emu-bar');
+    if (emuBar) emuBar.style.display = '';
     if (this.overlay) this.overlay.style.display = '';
 
     // Resume game only if it wasn't paused before entering the sheet viewer
@@ -2190,6 +2194,7 @@ export class SpriteEditorUI {
       showToast('Tile imported', true);
       this.refreshTileGrid();
       this.emulator.rerender();
+      if (this.spriteSheetMode) this.refreshSheetAfterEdit();
     };
     input.click();
   }
