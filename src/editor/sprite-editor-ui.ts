@@ -12,7 +12,7 @@ import { LAYER_OBJ, LAYER_SCROLL1, LAYER_SCROLL2, LAYER_SCROLL3, readWord, type 
 import { readAllSprites, groupCharacter, poseHash, capturePose, assembleCharacter, type SpriteGroup as SpriteGroupData, type CapturedPose } from './sprite-analyzer';
 import { loadPhotoRgba, resizeRgba, quantizeWithDithering, placePhotoOnTiles } from './photo-import';
 import { readPixel as readPixelFn, writePixel as writePixelFn, writeScrollPixel, readTile as readTileFn } from './tile-encoder';
-import { readPalette } from './palette-editor';
+import { readPalette, rgbToHsl, hslToRgb } from './palette-editor';
 import { createLayer, createSpriteGroup, createScrollGroup, type PhotoLayer, type LayerGroup } from './layer-model';
 import { LayerPanel } from './layer-panel';
 import { findTileReferences } from './tile-refs';
@@ -1349,16 +1349,66 @@ export class SpriteEditorUI {
     transCb.checked = isTransparent;
     transLabel.append(transCb, ' Transparent');
 
-    dialog.append(input, transLabel);
+    // Nuances checkbox (hue shift similar colors)
+    const nuancesLabel = el('label', 'edit-color-trans-label') as HTMLLabelElement;
+    const nuancesCb = document.createElement('input');
+    nuancesCb.type = 'checkbox';
+    nuancesCb.checked = false;
+    nuancesLabel.append(nuancesCb, ' Nuances');
+    nuancesLabel.title = 'Apply hue shift to all similar colors in the palette';
+
+    // Reset button
+    const resetBtn = el('button', 'edit-color-reset-btn') as HTMLButtonElement;
+    resetBtn.textContent = 'Reset';
+    resetBtn.title = 'Reset palette to state before editing';
+
+    dialog.append(input, transLabel, nuancesLabel, resetBtn);
     this.paletteContainer?.appendChild(dialog);
+
+    // Snapshot original RGB for reset
+    const origRgb = palette.map(([cr, cg, cb]) => [cr, cg, cb] as [number, number, number]);
+
+    // Store original palette HSL for hue shift calculation
+    const origHsl = palette.map(([cr, cg, cb]) => rgbToHsl(cr, cg, cb));
+    const [origH] = origHsl[colorIndex] ?? [0, 0, 0];
+    const HUE_TOLERANCE = 30 / 360; // ±30°
 
     input.addEventListener('input', () => {
       const hex = input.value;
       const nr = parseInt(hex.slice(1, 3), 16);
       const ng = parseInt(hex.slice(3, 5), 16);
       const nb = parseInt(hex.slice(5, 7), 16);
-      this.editor.editPaletteColor(colorIndex, nr, ng, nb);
-      // Don't refreshPalette — it would destroy the dialog
+
+      if (nuancesCb.checked) {
+        // Hue shift: apply same hue rotation to all colors with similar hue
+        const [newH] = rgbToHsl(nr, ng, nb);
+        const hueShift = newH - origH;
+
+        for (let i = 0; i < 15; i++) {
+          const [h, s, l] = origHsl[i] ?? [0, 0, 0];
+          if (s < 0.05) continue; // skip near-gray colors
+          const hueDist = Math.abs(h - origH);
+          const wrappedDist = Math.min(hueDist, 1 - hueDist);
+          if (wrappedDist <= HUE_TOLERANCE) {
+            const shiftedH = ((h + hueShift) % 1 + 1) % 1;
+            const [sr, sg, sb] = hslToRgb(shiftedH, s, l);
+            this.editor.editPaletteColor(i, sr, sg, sb);
+          }
+        }
+      } else {
+        this.editor.editPaletteColor(colorIndex, nr, ng, nb);
+      }
+
+      // Update swatch colors in-place (without rebuilding DOM)
+      const updatedPalette = this.editor.getCurrentPalette();
+      const swatches = this.paletteContainer?.querySelectorAll('.edit-swatch');
+      if (swatches) {
+        for (let i = 0; i < Math.min(swatches.length, 15); i++) {
+          const sw = swatches[i] as HTMLDivElement;
+          const [ur, ug, ub] = updatedPalette[i] ?? [0, 0, 0];
+          sw.style.backgroundColor = `rgb(${ur},${ug},${ub})`;
+        }
+      }
     });
 
     transCb.addEventListener('change', () => {
@@ -1374,8 +1424,25 @@ export class SpriteEditorUI {
       transCb.checked = transCb.checked; // preserve state
     });
 
-    // Open native picker immediately
-    input.click();
+    resetBtn.addEventListener('click', () => {
+      for (let i = 0; i < 15; i++) {
+        const [or, og, ob] = origRgb[i] ?? [0, 0, 0];
+        this.editor.editPaletteColor(i, or, og, ob);
+      }
+      // Update swatches
+      const swatches = this.paletteContainer?.querySelectorAll('.edit-swatch');
+      if (swatches) {
+        for (let i = 0; i < Math.min(swatches.length, 15); i++) {
+          const sw = swatches[i] as HTMLDivElement;
+          const [or, og, ob] = origRgb[i] ?? [0, 0, 0];
+          sw.style.backgroundColor = `rgb(${or},${og},${ob})`;
+        }
+      }
+      // Reset color input to original color
+      const [or, og, ob] = origRgb[colorIndex] ?? [0, 0, 0];
+      input.value = `#${hex2(or)}${hex2(og)}${hex2(ob)}`;
+    });
+
   }
 
   private refreshNeighbors(): void {
