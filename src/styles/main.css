@@ -1015,6 +1015,12 @@
         display: flex; align-items: center; gap: 4px;
       }
       .edit-color-trans-label input { cursor: pointer; }
+      .edit-color-reset-btn {
+        padding: 3px 8px; border-radius: 3px; font-size: 0.65rem;
+        border: 1px solid var(--color-border); background: var(--color-surface-alt);
+        color: var(--color-text); cursor: pointer; margin-left: auto;
+      }
+      .edit-color-reset-btn:hover { border-color: var(--color-accent); color: var(--color-accent); }
 
       .edit-neighbors-section { margin-bottom: 18px; }
       .edit-neighbors {
