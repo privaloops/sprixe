@@ -147,7 +147,36 @@ export class SpriteEditor {
     }
 
     // Step 2: Try scroll layers (front-to-back based on layer order)
+    // First pass: opaque pixels only (pen != 15) — respects visual stacking
     const layerOrder = video.getLayerOrder();
+    const makeScrollCtx = (scrInfo: NonNullable<ReturnType<typeof video.inspectScrollAt>>): TileContext => ({
+      layerId: scrInfo.layerId,
+      tileCode: scrInfo.tileCode,
+      rawCode: scrInfo.rawCode,
+      paletteIndex: scrInfo.paletteIndex,
+      gfxRomOffset: scrInfo.gfxRomOffset,
+      tileW: scrInfo.tileW, tileH: scrInfo.tileH,
+      charSize: scrInfo.charSize,
+      flipX: scrInfo.flipX,
+      flipY: scrInfo.flipY,
+      paletteBase,
+      tileIndex: scrInfo.tileIndex,
+    });
+
+    for (let slot = layerOrder.length - 1; slot >= 0; slot--) {
+      const lid = layerOrder[slot]!;
+      if (lid === LAYER_OBJ) continue;
+      if (!isVisible(lid)) continue;
+
+      const scrInfo = video.inspectScrollAt(screenX, screenY, lid, false);
+      if (scrInfo) {
+        this._currentTile = makeScrollCtx(scrInfo);
+        this.onTileChanged?.();
+        return this._currentTile;
+      }
+    }
+
+    // Second pass: include transparent pixels (boundsOnly) — fallback
     for (let slot = layerOrder.length - 1; slot >= 0; slot--) {
       const lid = layerOrder[slot]!;
       if (lid === LAYER_OBJ) continue;
@@ -155,19 +184,7 @@ export class SpriteEditor {
 
       const scrInfo = video.inspectScrollAt(screenX, screenY, lid, true);
       if (scrInfo) {
-        this._currentTile = {
-          layerId: lid,
-          tileCode: scrInfo.tileCode,
-          rawCode: scrInfo.rawCode,
-          paletteIndex: scrInfo.paletteIndex,
-          gfxRomOffset: scrInfo.gfxRomOffset,
-          tileW: scrInfo.tileW, tileH: scrInfo.tileH,
-          charSize: scrInfo.charSize,
-          flipX: scrInfo.flipX,
-          flipY: scrInfo.flipY,
-          paletteBase,
-          tileIndex: scrInfo.tileIndex,
-        };
+        this._currentTile = makeScrollCtx(scrInfo);
         this.onTileChanged?.();
         return this._currentTile;
       }
