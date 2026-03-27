@@ -331,11 +331,36 @@ export class SpriteEditorUI {
       createScrollGroup('Scroll 2', LAYER_SCROLL2),
       createScrollGroup('Scroll 3', LAYER_SCROLL3),
     );
-    // OBJ layer placeholder (for HW visibility/grid toggle in layer panel)
     if (!this.layerGroups.some(g => g.type === 'sprite')) {
       this.layerGroups.push({ type: 'sprite', name: 'Sprites (OBJ)', layers: [] });
     }
     this.activeGroupIndex = 0;
+    this.reorderGroupsByLayerOrder();
+  }
+
+  /** Reorder layer groups to match the CPS-B dynamic layer order (front first). */
+  reorderGroupsByLayerOrder(): void {
+    const video = this.emulator.getVideo();
+    if (!video) return;
+
+    const order = video.getLayerOrder(); // [back, ..., front]
+    const layerIdToRank = new Map<number, number>();
+    for (let i = 0; i < order.length; i++) {
+      // Front = highest rank (order.length - 1 - i → 0 = front)
+      layerIdToRank.set(order[i]!, order.length - 1 - i);
+    }
+
+    const getGroupLayerId = (g: LayerGroup): number => {
+      if (g.type === 'sprite') return LAYER_OBJ;
+      return g.layerId ?? 999;
+    };
+
+    // Stable sort: HW groups by rank (front first), user-created groups at the end
+    const hwGroups = this.layerGroups.filter(g => layerIdToRank.has(getGroupLayerId(g)));
+    const otherGroups = this.layerGroups.filter(g => !layerIdToRank.has(getGroupLayerId(g)));
+    hwGroups.sort((a, b) => (layerIdToRank.get(getGroupLayerId(a)) ?? 99) - (layerIdToRank.get(getGroupLayerId(b)) ?? 99));
+    this.layerGroups.length = 0;
+    this.layerGroups.push(...hwGroups, ...otherGroups);
   }
 
   private ensureLayerPanel(): void {
@@ -411,6 +436,7 @@ export class SpriteEditorUI {
   }
 
   private refreshLayerPanel(): void {
+    this.reorderGroupsByLayerOrder();
     const gfxRom = this.editor.getGfxRom() ?? undefined;
     const video = this.emulator.getVideo();
     const layerOrder = video?.getLayerOrder();
