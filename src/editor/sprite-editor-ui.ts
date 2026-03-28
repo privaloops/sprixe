@@ -3268,9 +3268,16 @@ export class SpriteEditorUI {
     this.sheetContainer?.appendChild(progressOverlay);
 
     try {
+      // Generate only the currently selected pose first (test one before generating all)
+      const testSkeleton = sc.skeletons.get(this.sheetSelectedPose);
+      if (!testSkeleton) { progressOverlay.remove(); showToast('No skeleton for current pose', false); return; }
+      const singlePoseMap = new Map([[this.sheetSelectedPose, testSkeleton]]);
+
+      progressText.textContent = `Generating pose ${this.sheetSelectedPose}...`;
+
       const results = await generateAllPoses(
         sc.userPhoto,
-        sc.skeletons,
+        singlePoseMap,
         pose0.w,
         pose0.h,
         (completed, total) => {
