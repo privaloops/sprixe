@@ -1312,6 +1312,30 @@
       }
       .sprite-sheet-update-pal input { accent-color: var(--color-accent); }
 
+      .pose-gen-progress {
+        position: fixed; inset: 0; z-index: 99999;
+        background: rgba(0, 0, 0, 0.85);
+        display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px;
+      }
+      .pose-gen-text {
+        font: 600 1rem var(--font-system); color: var(--color-text);
+        text-transform: uppercase; letter-spacing: 0.1em;
+      }
+      .pose-gen-bar {
+        width: 300px; height: 6px; background: var(--color-border);
+        border-radius: 3px; overflow: hidden;
+      }
+      .pose-gen-fill {
+        width: 0%; height: 100%; background: var(--color-accent);
+        transition: width 0.3s ease;
+      }
+
+      .skeleton-status {
+        font: 600 0.7rem var(--font-system); color: var(--color-accent);
+        padding: 2px 8px; background: rgba(255, 26, 80, 0.1);
+        border-radius: var(--radius-sm);
+      }
+
       /* Captured Sprites section (inside right debug panel) */
       .edit-captures-section { margin-top: 18px; }
       .edit-captures-list { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; max-height: 300px; overflow-y: auto; }

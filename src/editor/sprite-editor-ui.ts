@@ -20,6 +20,9 @@ import { findTileReferences } from './tile-refs';
 import type { Emulator } from '../emulator';
 import { pencilCursor, fillCursor, eyedropperCursor, eraserCursor, wandCursor } from './tool-cursors';
 import { showToast } from '../ui/toast';
+import { KEYPOINT_NAMES, renderSkeletonOverlay, propagateKeypoints, type Skeleton } from './pose-skeleton';
+import { getFalApiKey, setFalApiKey, generateAllPoses } from './pose-transfer';
+import type { PoseTransferResult } from './pose-transfer';
 import { setTooltip } from '../ui/tooltip';
 import { createStatusBar, setStatus } from '../ui/status-bar';
 
@@ -112,12 +115,16 @@ export class SpriteEditorUI {
   // Sprite Sheet Viewer
   private spriteSheetMode = false;
   private sheetContainer: HTMLDivElement | null = null;
-  private sheetZoomed = false;  // true = viewing single zoomed pose, false = grid view
+  private sheetZoomed = false;
   private sheetSelectedPose = 0;
   private sheetSelectedTile = -1;
   private sheetZoomCanvas: HTMLCanvasElement | null = null;
   private sheetZoomCtx: CanvasRenderingContext2D | null = null;
   private wasPausedBeforeSheet = false;
+
+  // Skeleton annotation mode
+  private skeletonMode = false;
+  private skeletonPlacingIndex = 0; // which keypoint to place next
 
   private get activeGroup(): LayerGroup | undefined { return this.layerGroups[this.activeGroupIndex]; }
   private get activeLayer(): PhotoLayer | undefined { return this.activeGroup?.layers[this.activeLayerIndex]; }
@@ -2329,6 +2336,64 @@ export class SpriteEditorUI {
     exportBtn.onclick = () => this.exportPosePng();
     header.appendChild(exportBtn);
 
+    // Skeleton annotation button
+    const skelBtn = el('button', 'sprite-sheet-back') as HTMLButtonElement;
+    skelBtn.textContent = this.skeletonMode ? 'Exit Skeleton' : 'Skeleton';
+    skelBtn.classList.toggle('active', this.skeletonMode);
+    skelBtn.onclick = () => {
+      this.skeletonMode = !this.skeletonMode;
+      if (this.skeletonMode) {
+        this.skeletonPlacingIndex = 0;
+        const sc = this.activeGroup?.spriteCapture;
+        if (sc && !sc.skeletons) sc.skeletons = new Map();
+      }
+      this.renderSheetZoomedView();
+    };
+    header.appendChild(skelBtn);
+
+    // Skeleton mode controls
+    if (this.skeletonMode) {
+      const sc = this.activeGroup?.spriteCapture;
+      const currentSkeleton = sc?.skeletons?.get(this.sheetSelectedPose);
+      const isComplete = (currentSkeleton?.length ?? 0) >= 17;
+
+      // Status label
+      const skelStatus = el('span', 'skeleton-status') as HTMLSpanElement;
+      if (!isComplete) {
+        skelStatus.textContent = `Click: ${KEYPOINT_NAMES[this.skeletonPlacingIndex] ?? 'done'}`;
+      } else {
+        skelStatus.textContent = `${currentSkeleton!.length} keypoints placed`;
+      }
+      header.appendChild(skelStatus);
+
+      // Reset button (always visible in skeleton mode)
+      const resetSkelBtn = el('button', 'sprite-sheet-back') as HTMLButtonElement;
+      resetSkelBtn.textContent = 'Reset';
+      resetSkelBtn.onclick = () => {
+        const sc2 = this.activeGroup?.spriteCapture;
+        if (sc2?.skeletons) {
+          sc2.skeletons.delete(this.sheetSelectedPose);
+          this.skeletonPlacingIndex = 0;
+          this.renderSheetZoomedView();
+        }
+      };
+      header.appendChild(resetSkelBtn);
+
+      if (isComplete) {
+        // Propagate button
+        const propBtn = el('button', 'sprite-sheet-back') as HTMLButtonElement;
+        propBtn.textContent = 'Propagate All';
+        propBtn.onclick = () => this.propagateSkeletons();
+        header.appendChild(propBtn);
+
+        // Generate button (needs API key + user photo)
+        const genBtn = el('button', 'sprite-sheet-back') as HTMLButtonElement;
+        genBtn.textContent = 'Generate Poses';
+        genBtn.onclick = () => this.startPoseGeneration();
+        header.appendChild(genBtn);
+      }
+    }
+
     // Sprite photo layer controls (shown when layers exist)
     const hasPhotoLayers = (this.activeGroup?.layers.length ?? 0) > 0;
     if (hasPhotoLayers) {
@@ -2384,7 +2449,7 @@ export class SpriteEditorUI {
     // Zoomed canvas — native resolution, CSS x2 (each CPS1 pixel = 2 CSS pixels)
     const zoomSection = el('div', 'sprite-sheet-zoom');
     const scale = 1; // canvas at native CPS1 resolution
-    const cssScale = 4; // CSS display scale — each CPS1 pixel = 4 CSS pixels
+    const cssScale = this.skeletonMode ? 8 : 4; // x8 in skeleton mode for precision
     const zoomCvs = document.createElement('canvas');
     zoomCvs.width = pose.w;
     zoomCvs.height = pose.h;
@@ -2406,6 +2471,57 @@ export class SpriteEditorUI {
       const rect = zoomCvs.getBoundingClientRect();
       const px = Math.floor((e.clientX - rect.left) / cssScale);
       const py = Math.floor((e.clientY - rect.top) / cssScale);
+
+      // Skeleton mode: place or drag keypoint
+      if (this.skeletonMode) {
+        const sc = this.activeGroup?.spriteCapture;
+        if (!sc?.skeletons) return;
+        let skeleton = sc.skeletons.get(this.sheetSelectedPose);
+        if (!skeleton) {
+          skeleton = [];
+          sc.skeletons.set(this.sheetSelectedPose, skeleton);
+        }
+
+        // Check if clicking near an existing keypoint → drag it (only when all 17 placed)
+        const dragIdx = skeleton.length >= 17
+          ? skeleton.findIndex(kp => Math.abs(kp.x - px) <= 3 && Math.abs(kp.y - py) <= 3)
+          : -1;
+        if (dragIdx >= 0) {
+          const dragKp = skeleton[dragIdx]!;
+          const onDragMove = (me: MouseEvent) => {
+            const r2 = zoomCvs.getBoundingClientRect();
+            dragKp.x = Math.floor((me.clientX - r2.left) / cssScale);
+            dragKp.y = Math.floor((me.clientY - r2.top) / cssScale);
+            this.renderSheetZoomedPose();
+          };
+          const onDragUp = () => {
+            document.removeEventListener('mousemove', onDragMove);
+            document.removeEventListener('mouseup', onDragUp);
+          };
+          document.addEventListener('mousemove', onDragMove);
+          document.addEventListener('mouseup', onDragUp);
+          e.preventDefault();
+          return;
+        }
+
+        // Place next keypoint
+        if (this.skeletonPlacingIndex < 17) {
+          skeleton.push({ x: px, y: py, name: KEYPOINT_NAMES[this.skeletonPlacingIndex]! });
+          this.skeletonPlacingIndex++;
+          this.renderSheetZoomedPose();
+          // Update status label in header
+          const statusEl = this.sheetContainer?.querySelector('.skeleton-status');
+          if (statusEl) {
+            statusEl.textContent = this.skeletonPlacingIndex < 17
+              ? `Click: ${KEYPOINT_NAMES[this.skeletonPlacingIndex]}`
+              : '17 keypoints placed';
+          }
+          // Show propagate/generate buttons when all placed
+          if (this.skeletonPlacingIndex >= 17) this.renderSheetZoomedView();
+        }
+        e.preventDefault();
+        return;
+      }
 
       const layer = this.activeGroup?.layers[this.activeLayerIndex];
       if (layer) {
@@ -2485,7 +2601,8 @@ export class SpriteEditorUI {
         resizingPhotoLayer = false;
         if (dragMoved) return; // don't select tile if we dragged
       }
-      // Click to select tile (only if not dragging)
+      // Click to select tile (only if not dragging, not in skeleton mode)
+      if (this.skeletonMode) return;
       const rect = zoomCvs.getBoundingClientRect();
       const px = Math.floor((e.clientX - rect.left) / cssScale);
       const py = Math.floor((e.clientY - rect.top) / cssScale);
@@ -2543,14 +2660,16 @@ export class SpriteEditorUI {
       if (file?.type.startsWith('image/')) this.handleSpritePhotoDrop(file);
     });
 
-    // Tile strip (horizontal row)
-    const tilesLabel = el('div', 'edit-section-label');
-    tilesLabel.textContent = 'Tiles (click to edit)';
-    zoomSection.appendChild(tilesLabel);
+    // Tile strip (hidden in skeleton mode)
+    if (!this.skeletonMode) {
+      const tilesLabel = el('div', 'edit-section-label');
+      tilesLabel.textContent = 'Tiles (click to edit)';
+      zoomSection.appendChild(tilesLabel);
 
-    const tilesGrid = el('div', 'sprite-sheet-tiles');
-    this.renderSheetTileGrid(tilesGrid, pose);
-    zoomSection.appendChild(tilesGrid);
+      const tilesGrid = el('div', 'sprite-sheet-tiles');
+      this.renderSheetTileGrid(tilesGrid, pose);
+      zoomSection.appendChild(tilesGrid);
+    }
 
     main.appendChild(zoomSection);
     container.appendChild(main);
@@ -2653,11 +2772,22 @@ export class SpriteEditorUI {
       }
     }
 
-    // Draw tile grid overlay (16x16 boundaries)
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
-    ctx.lineWidth = 0.5;
-    for (const t of pose.tiles) {
-      ctx.strokeRect(t.relX + 0.5, t.relY + 0.5, 15, 15);
+    // Draw skeleton overlay if in skeleton mode
+    if (this.skeletonMode) {
+      const sc = this.activeGroup?.spriteCapture;
+      const skeleton = sc?.skeletons?.get(this.sheetSelectedPose);
+      if (skeleton && skeleton.length > 0) {
+        renderSkeletonOverlay(ctx, skeleton, this.skeletonPlacingIndex < 17 ? this.skeletonPlacingIndex - 1 : -1);
+      }
+    }
+
+    // Draw tile grid overlay (16x16 boundaries) — hidden in skeleton mode
+    if (!this.skeletonMode) {
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+      ctx.lineWidth = 0.5;
+      for (const t of pose.tiles) {
+        ctx.strokeRect(t.relX + 0.5, t.relY + 0.5, 15, 15);
+      }
     }
 
     // Draw active photo layer selection outline + resize handles
@@ -2683,8 +2813,8 @@ export class SpriteEditorUI {
       ctx.fillRect(lx + lw - hs, ly + lh - hs, hs * 2, hs * 2);
     }
 
-    // Draw selected tile highlight (dashed outline, no fill)
-    if (this.sheetSelectedTile >= 0 && this.sheetSelectedTile < pose.tiles.length) {
+    // Draw selected tile highlight (dashed outline, no fill) — hidden in skeleton mode
+    if (!this.skeletonMode && this.sheetSelectedTile >= 0 && this.sheetSelectedTile < pose.tiles.length) {
       const t = pose.tiles[this.sheetSelectedTile]!;
       ctx.strokeStyle = '#ff1a50';
       ctx.lineWidth = 1;
@@ -3019,6 +3149,182 @@ export class SpriteEditorUI {
   }
 
   /** Quantize the active sprite photo layer. Optionally update palette from image colors. */
+  /** Propagate skeleton from current pose to all other poses. */
+  private propagateSkeletons(): void {
+    const sc = this.activeGroup?.spriteCapture;
+    if (!sc?.skeletons) return;
+    const baseSkeleton = sc.skeletons.get(this.sheetSelectedPose);
+    if (!baseSkeleton || baseSkeleton.length < 17) {
+      showToast('Place all 17 keypoints on base pose first', false);
+      return;
+    }
+
+    const basePose = sc.poses[this.sheetSelectedPose];
+    if (!basePose) return;
+
+    const gfxRom = this.editor.getGfxRom();
+    if (!gfxRom) return;
+
+    // Build pixel array from base pose preview
+    const basePixels = new Uint8Array(basePose.w * basePose.h);
+    const basePreview = basePose.preview;
+    for (let i = 0; i < basePixels.length; i++) {
+      basePixels[i] = basePreview.data[i * 4 + 3]! > 128 ? 1 : 0; // simple opacity mask
+    }
+
+    // Use actual palette indices for better matching
+    const video = this.emulator.getVideo();
+    if (!video) return;
+    const bufs = this.emulator.getBusBuffers();
+    const palette = readPalette(bufs.vram, video.getPaletteBase(), sc.palette);
+
+    // Build palette-indexed pixel arrays from previews
+    const buildPalettePixels = (preview: ImageData, w: number, h: number): Uint8Array => {
+      const pixels = new Uint8Array(w * h);
+      for (let i = 0; i < w * h; i++) {
+        const r = preview.data[i * 4]!;
+        const g = preview.data[i * 4 + 1]!;
+        const b = preview.data[i * 4 + 2]!;
+        const a = preview.data[i * 4 + 3]!;
+        if (a < 128) { pixels[i] = 0; continue; }
+        // Find nearest palette color
+        let bestIdx = 0;
+        let bestDist = Infinity;
+        for (let c = 0; c < 15; c++) {
+          const [pr, pg, pb] = palette[c] ?? [0, 0, 0];
+          const dist = (r - pr) ** 2 + (g - pg) ** 2 + (b - pb) ** 2;
+          if (dist < bestDist) { bestDist = dist; bestIdx = c; }
+        }
+        pixels[i] = bestIdx + 1; // +1 so 0 stays transparent
+      }
+      return pixels;
+    };
+
+    const baseIdx = buildPalettePixels(basePose.preview, basePose.w, basePose.h);
+
+    let propagated = 0;
+    for (let i = 0; i < sc.poses.length; i++) {
+      if (i === this.sheetSelectedPose) continue; // skip base
+      const pose = sc.poses[i]!;
+      const targetIdx = buildPalettePixels(pose.preview, pose.w, pose.h);
+
+      const newSkeleton = propagateKeypoints(
+        baseSkeleton, baseIdx, targetIdx,
+        basePose.w, basePose.h, pose.w, pose.h,
+      );
+      sc.skeletons.set(i, newSkeleton);
+      propagated++;
+    }
+
+    showToast(`Propagated skeleton to ${propagated} poses`, true);
+    this.renderSheetZoomedView();
+  }
+
+  /** Start the pose generation flow: ask for API key and user photo, then generate. */
+  private async startPoseGeneration(): Promise<void> {
+    const sc = this.activeGroup?.spriteCapture;
+    if (!sc?.skeletons) return;
+
+    // Check API key
+    let apiKey = getFalApiKey();
+    if (!apiKey) {
+      apiKey = prompt('Enter your fal.ai API key (get one at fal.ai/dashboard):') ?? '';
+      if (!apiKey) return;
+      setFalApiKey(apiKey);
+    }
+
+    // Ask for user photo if not set
+    if (!sc.userPhoto) {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/png,image/jpeg,image/webp';
+      const file = await new Promise<File | null>((resolve) => {
+        input.onchange = () => resolve(input.files?.[0] ?? null);
+        input.click();
+      });
+      if (!file) return;
+
+      // Convert to data URL
+      const reader = new FileReader();
+      const dataUrl = await new Promise<string>((resolve) => {
+        reader.onload = () => resolve(reader.result as string);
+        reader.readAsDataURL(file);
+      });
+      sc.userPhoto = dataUrl;
+    }
+
+    // Generate poses
+    const pose0 = sc.poses[0];
+    if (!pose0) return;
+
+    // Create persistent progress overlay
+    const progressOverlay = el('div', 'pose-gen-progress') as HTMLDivElement;
+    const progressText = el('div', 'pose-gen-text') as HTMLDivElement;
+    progressText.textContent = 'Connecting to fal.ai...';
+    const progressBar = el('div', 'pose-gen-bar') as HTMLDivElement;
+    const progressFill = el('div', 'pose-gen-fill') as HTMLDivElement;
+    progressBar.appendChild(progressFill);
+    progressOverlay.append(progressText, progressBar);
+    this.sheetContainer?.appendChild(progressOverlay);
+
+    try {
+      const results = await generateAllPoses(
+        sc.userPhoto,
+        sc.skeletons,
+        pose0.w,
+        pose0.h,
+        (completed, total) => {
+          progressText.textContent = `Generating pose ${completed}/${total}...`;
+          progressFill.style.width = `${Math.round(completed / total * 100)}%`;
+        },
+      );
+
+      // For each result, load as photo layer and auto-apply to the pose
+      for (const result of results) {
+        const pose = sc.poses[result.poseIndex];
+        if (!pose) continue;
+
+        // Load the generated image
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        await new Promise<void>((resolve, reject) => {
+          img.onload = () => resolve();
+          img.onerror = () => reject();
+          img.src = result.imageUrl;
+        });
+
+        const cvs = document.createElement('canvas');
+        cvs.width = pose.w;
+        cvs.height = pose.h;
+        const ctx = cvs.getContext('2d')!;
+        ctx.drawImage(img, 0, 0, pose.w, pose.h);
+        const rgba = ctx.getImageData(0, 0, pose.w, pose.h);
+
+        // Quantize and write to tiles
+        const palette = readPalette(
+          this.emulator.getBusBuffers().vram,
+          this.emulator.getVideo()!.getPaletteBase(),
+          sc.palette,
+        );
+        const quantized = quantizeWithDithering(rgba, palette);
+
+        const gfxRom = this.editor.getGfxRom();
+        if (!gfxRom) continue;
+
+        placePhotoOnTiles(gfxRom, pose.tiles, quantized, 0, 0, pose.w, pose.h);
+      }
+
+      this.refreshSheetAfterEdit();
+      this.refreshCapturesPanel();
+      this.emulator.rerender();
+      progressOverlay.remove();
+      showToast(`Done! ${results.length} poses generated and applied`, true);
+    } catch (err) {
+      progressOverlay.remove();
+      showToast(`Generation failed: ${(err as Error).message}`, false);
+    }
+  }
+
   private quantizeSpritePhotoLayer(updatePalette: boolean): void {
     const group = this.activeGroup;
     if (!group?.spriteCapture) return;

@@ -4,6 +4,7 @@
  */
 
 import type { CapturedPose } from './sprite-analyzer';
+import type { Skeleton } from './pose-skeleton';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -33,6 +34,9 @@ export interface LayerGroup {
     poses: CapturedPose[];
     palette: number;
     selectedPoseIndex: number;
+    skeletons?: Map<number, Skeleton>;
+    userPhoto?: string;         // data URL of user's reference photo
+    userSkeleton?: Skeleton;
   };
   layers: PhotoLayer[];
 }
