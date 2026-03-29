@@ -198,28 +198,30 @@ export class SpriteEditorUI {
     if (this.built) return;
     this.built = true;
 
-    // Info bar
+    // Info bar hidden — tile inspector moved to Aseprite workflow
     this.infoBar = el('div', 'edit-info') as HTMLDivElement;
+    this.infoBar.style.display = 'none';
     container.appendChild(this.infoBar);
 
     // Action buttons removed — editing happens in Aseprite now
 
-    // Tile grid canvas
+    // Tile grid hidden — editing happens in Aseprite
     const tileSection = el('div', 'edit-tile-section');
+    tileSection.style.display = 'none';
     const cvs = document.createElement('canvas');
     cvs.width = GRID_SIZE;
     cvs.height = GRID_SIZE;
     cvs.className = 'edit-tile-canvas';
     this.tileCanvas = cvs;
     this.tileCtx = cvs.getContext('2d')!;
-    this.bindTileCanvasEvents(cvs);
     tileSection.appendChild(cvs);
     container.appendChild(tileSection);
 
     // Tools bar removed — editing happens in Aseprite now
 
-    // Palette
+    // Palette hidden — read-only viewing not needed, editing in Aseprite
     this.paletteContainer = el('div', 'edit-palette') as HTMLDivElement;
+    this.paletteContainer.style.display = 'none';
     container.appendChild(this.paletteContainer);
 
     // Tile neighbors removed — editing happens in Aseprite now
