@@ -2876,46 +2876,51 @@ export class SpriteEditorUI {
     const asePalette: AsepritePaletteEntry[] = palette.map(([r, g, b]) => ({ r, g, b, a: 255 }));
     if (asePalette[15]) asePalette[15] = { r: 0, g: 0, b: 0, a: 0 }; // transparent pen
 
-    // Deduplicate tiles by tileCode (same visual tile)
-    const uniqueTiles = new Map<number, ScrollTile>();
+    // Place tiles at their real tilemap positions
+    // Find bounding box in tile coordinates
+    let minCol = 64, minRow = 64, maxCol = 0, maxRow = 0;
     for (const tile of set.tiles) {
-      if (!uniqueTiles.has(tile.tileCode)) {
-        uniqueTiles.set(tile.tileCode, tile);
-      }
+      if (tile.tileCol < minCol) minCol = tile.tileCol;
+      if (tile.tileRow < minRow) minRow = tile.tileRow;
+      if (tile.tileCol > maxCol) maxCol = tile.tileCol;
+      if (tile.tileRow > maxRow) maxRow = tile.tileRow;
     }
 
-    // Build a sprite sheet: all unique tiles in a grid
-    const tilesArr = [...uniqueTiles.values()];
-    const cols = Math.ceil(Math.sqrt(tilesArr.length));
-    const rows = Math.ceil(tilesArr.length / cols);
-    const sheetW = cols * set.tileW;
-    const sheetH = rows * set.tileH;
+    const gridCols = maxCol - minCol + 1;
+    const gridRows = maxRow - minRow + 1;
+    const sheetW = gridCols * set.tileW;
+    const sheetH = gridRows * set.tileH;
 
     const pixels = new Uint8Array(sheetW * sheetH).fill(15); // transparent
 
-    const manifestTiles: Array<{ address: string; sheetX: number; sheetY: number; tileCode: number }> = [];
+    const manifestTiles: Array<{ address: string; col: number; row: number; tileCode: number; flipX: boolean; flipY: boolean }> = [];
 
-    for (let i = 0; i < tilesArr.length; i++) {
-      const tile = tilesArr[i]!;
-      const col = i % cols;
-      const row = Math.floor(i / cols);
-      const destX = col * set.tileW;
-      const destY = row * set.tileH;
+    for (const tile of set.tiles) {
+      const destX = (tile.tileCol - minCol) * set.tileW;
+      const destY = (tile.tileRow - minRow) * set.tileH;
 
       const tilePixels = readTileFn(gfxRom, tile.tileCode, tile.tileW, tile.tileH, tile.charSize);
 
       for (let ty = 0; ty < tile.tileH; ty++) {
         for (let tx = 0; tx < tile.tileW; tx++) {
-          const palIdx = tilePixels[ty * tile.tileW + tx]!;
-          pixels[(destY + ty) * sheetW + (destX + tx)] = palIdx;
+          const srcX = tile.flipX ? tile.tileW - 1 - tx : tx;
+          const srcY = tile.flipY ? tile.tileH - 1 - ty : ty;
+          const palIdx = tilePixels[srcY * tile.tileW + srcX]!;
+          if (palIdx === 15) continue; // transparent
+          const dx = destX + tx, dy = destY + ty;
+          if (dx >= 0 && dx < sheetW && dy >= 0 && dy < sheetH) {
+            pixels[dy * sheetW + dx] = palIdx;
+          }
         }
       }
 
       manifestTiles.push({
         address: '0x' + (tile.tileCode * tile.charSize).toString(16).toUpperCase(),
-        sheetX: destX,
-        sheetY: destY,
+        col: tile.tileCol,
+        row: tile.tileRow,
         tileCode: tile.tileCode,
+        flipX: tile.flipX,
+        flipY: tile.flipY,
       });
     }
 
@@ -2940,9 +2945,9 @@ export class SpriteEditorUI {
       manifest,
     });
 
-    const filename = `${manifest.game}_scroll${set.layerId}_pal${set.palette}_${tilesArr.length}tiles.aseprite`;
+    const filename = `${manifest.game}_scroll${set.layerId}_pal${set.palette}_${set.tiles.length}tiles.aseprite`;
     downloadAseprite(data, filename);
-    showToast(`Exported ${tilesArr.length} unique tiles to ${filename}`, true);
+    showToast(`Exported ${set.tiles.length} tiles (${sheetW}×${sheetH}) to ${filename}`, true);
   }
 
   // -- Pose PNG Export / Import --

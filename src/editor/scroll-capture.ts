@@ -7,7 +7,7 @@
  */
 
 import type { CPS1Video } from '../video/cps1-video';
-import { LAYER_SCROLL1, LAYER_SCROLL2, LAYER_SCROLL3 } from '../video/cps1-video';
+import { LAYER_SCROLL1, LAYER_SCROLL2, LAYER_SCROLL3, tilemap0Scan, tilemap1Scan, tilemap2Scan } from '../video/cps1-video';
 import { SCREEN_WIDTH, SCREEN_HEIGHT } from '../constants';
 
 // ---------------------------------------------------------------------------
@@ -57,6 +57,33 @@ export interface ScrollCaptureSession {
 }
 
 // ---------------------------------------------------------------------------
+// Inverse tilemap scan — build col/row lookup from tileIndex
+// ---------------------------------------------------------------------------
+
+function buildInverseScan(scanFn: (col: number, row: number) => number): Map<number, [number, number]> {
+  const map = new Map<number, [number, number]>();
+  for (let row = 0; row < 64; row++) {
+    for (let col = 0; col < 64; col++) {
+      map.set(scanFn(col, row), [col, row]);
+    }
+  }
+  return map;
+}
+
+const inverseScan1 = buildInverseScan(tilemap0Scan);
+const inverseScan2 = buildInverseScan(tilemap1Scan);
+const inverseScan3 = buildInverseScan(tilemap2Scan);
+
+function getInverseScan(layerId: number): Map<number, [number, number]> {
+  switch (layerId) {
+    case LAYER_SCROLL1: return inverseScan1;
+    case LAYER_SCROLL2: return inverseScan2;
+    case LAYER_SCROLL3: return inverseScan3;
+    default: return inverseScan2;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Capture logic
 // ---------------------------------------------------------------------------
 
@@ -99,14 +126,19 @@ export function captureScrollFrame(
       // and gives us tilemapOffset, we can derive col/row from tileIndex
       // tileIndex = scanFn(col, row) — but we don't have the inverse
       // Instead, use tilemapOffset which is unique per tile position
-      const key = `${info.tilemapOffset}`;
+      // Derive col/row from tileIndex using inverse scan lookup
+      const inverseScan = getInverseScan(layerId);
+      const colRow = inverseScan.get(info.tileIndex);
+      if (!colRow) continue;
+      const [tileCol, tileRow] = colRow;
+      const key = `${tileCol},${tileRow}`;
 
       if (!session.tileMap.has(key)) {
         const tile: ScrollTile = {
           tileCode: info.tileCode,
           key,
-          tileCol: 0, // we use tilemapOffset as unique key instead
-          tileRow: 0,
+          tileCol,
+          tileRow,
           palette: info.paletteIndex,
           flipX: info.flipX,
           flipY: info.flipY,
