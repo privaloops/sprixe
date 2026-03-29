@@ -2840,28 +2840,180 @@ export class SpriteEditorUI {
     if (!this.scrollSetsList) return;
     this.scrollSetsList.innerHTML = '';
 
-    for (let i = 0; i < this.scrollSets.length; i++) {
-      const set = this.scrollSets[i]!;
-      const card = el('div', 'edit-capture-card') as HTMLDivElement;
-      card.style.cursor = 'pointer';
-
-      const name = el('div', 'edit-capture-name');
-      name.textContent = `${scrollLayerName(set.layerId)} · Pal ${set.palette} · ${set.tiles.length} tiles`;
-      card.appendChild(name);
-
-      // Export button
-      const exportBtn = el('button', 'ctrl-btn') as HTMLButtonElement;
-      exportBtn.textContent = 'Export .aseprite';
-      exportBtn.style.fontSize = '10px';
-      exportBtn.style.padding = '2px 4px';
-      exportBtn.onclick = (e) => {
-        e.stopPropagation();
-        this.exportScrollSet(set);
-      };
-      card.appendChild(exportBtn);
-
-      this.scrollSetsList.appendChild(card);
+    // Group sets by layer
+    const byLayer = new Map<number, ScrollSet[]>();
+    for (const set of this.scrollSets) {
+      const list = byLayer.get(set.layerId) ?? [];
+      list.push(set);
+      byLayer.set(set.layerId, list);
     }
+
+    for (const [layerId, sets] of byLayer) {
+      const layerCard = el('div', 'edit-capture-card') as HTMLDivElement;
+
+      const header = el('div', 'edit-capture-name');
+      const totalTiles = sets.reduce((n, s) => n + s.tiles.length, 0);
+      header.textContent = `${scrollLayerName(layerId)} · ${sets.length} palette(s) · ${totalTiles} tiles`;
+      layerCard.appendChild(header);
+
+      const btns = el('div') as HTMLDivElement;
+      btns.style.display = 'flex';
+      btns.style.gap = '4px';
+      btns.style.marginTop = '4px';
+
+      // Export full decor (merged palettes)
+      const exportAllBtn = el('button', 'ctrl-btn') as HTMLButtonElement;
+      exportAllBtn.textContent = 'Export Full Decor';
+      exportAllBtn.style.fontSize = '10px';
+      exportAllBtn.style.padding = '2px 4px';
+      exportAllBtn.onclick = (e) => {
+        e.stopPropagation();
+        this.exportScrollMerged(sets);
+      };
+      btns.appendChild(exportAllBtn);
+
+      // Individual palette exports
+      for (const set of sets) {
+        const btn = el('button', 'ctrl-btn') as HTMLButtonElement;
+        btn.textContent = `Pal ${set.palette}`;
+        btn.style.fontSize = '10px';
+        btn.style.padding = '2px 4px';
+        setTooltip(btn, `Export palette ${set.palette} only (${set.tiles.length} tiles)`);
+        btn.onclick = (e) => { e.stopPropagation(); this.exportScrollSet(set); };
+        btns.appendChild(btn);
+      }
+
+      layerCard.appendChild(btns);
+      this.scrollSetsList.appendChild(layerCard);
+    }
+  }
+
+  /** Export all scroll sets of a layer as one image with merged mega-palette (up to 256 colors). */
+  private exportScrollMerged(sets: ScrollSet[]): void {
+    if (sets.length === 0) return;
+    const gfxRom = this.editor.getGfxRom();
+    if (!gfxRom) { showToast('No GFX ROM loaded', false); return; }
+    const video = this.emulator.getVideo();
+    if (!video) return;
+    const bufs = this.emulator.getBusBuffers();
+
+    const tileW = sets[0]!.tileW;
+    const tileH = sets[0]!.tileH;
+    const layerId = sets[0]!.layerId;
+
+    // Collect all unique palettes and build mega-palette
+    const paletteIndices = [...new Set(sets.map(s => s.palette))].sort((a, b) => a - b);
+    if (paletteIndices.length > 16) {
+      showToast(`Too many palettes (${paletteIndices.length}) — max 16 for 256-color limit`, false);
+      return;
+    }
+
+    // Map: CPS1 palette index → slot (0-15) in mega-palette
+    const palSlot = new Map<number, number>();
+    const megaPalette: AsepritePaletteEntry[] = [];
+
+    for (let slot = 0; slot < paletteIndices.length; slot++) {
+      const palIdx = paletteIndices[slot]!;
+      palSlot.set(palIdx, slot);
+      const colors = readPalette(bufs.vram, video.getPaletteBase(), palIdx);
+      for (let c = 0; c < 16; c++) {
+        const [r, g, b] = colors[c] ?? [0, 0, 0];
+        // Pen 15 of each sub-palette = transparent
+        if (c === 15) {
+          megaPalette.push({ r: 0, g: 0, b: 0, a: 0 });
+        } else {
+          megaPalette.push({ r, g, b, a: 255 });
+        }
+      }
+    }
+
+    // Pad to power of 2 if needed (Aseprite likes it)
+    while (megaPalette.length < 256) {
+      megaPalette.push({ r: 0, g: 0, b: 0, a: 0 });
+    }
+
+    // Find bounding box across ALL sets
+    let minCol = 64, minRow = 64, maxCol = 0, maxRow = 0;
+    for (const set of sets) {
+      for (const tile of set.tiles) {
+        if (tile.tileCol < minCol) minCol = tile.tileCol;
+        if (tile.tileRow < minRow) minRow = tile.tileRow;
+        if (tile.tileCol > maxCol) maxCol = tile.tileCol;
+        if (tile.tileRow > maxRow) maxRow = tile.tileRow;
+      }
+    }
+
+    const gridCols = maxCol - minCol + 1;
+    const gridRows = maxRow - minRow + 1;
+    const sheetW = gridCols * tileW;
+    const sheetH = gridRows * tileH;
+
+    // Use first palette's pen 15 slot as global transparent index
+    const transparentIndex = 15; // pen 15 of slot 0
+    const pixels = new Uint8Array(sheetW * sheetH).fill(transparentIndex);
+
+    const manifestTiles: Array<{ address: string; col: number; row: number; tileCode: number; palette: number; paletteSlot: number; flipX: boolean; flipY: boolean }> = [];
+
+    for (const set of sets) {
+      const slot = palSlot.get(set.palette) ?? 0;
+      const indexOffset = slot * 16; // offset into mega-palette
+
+      for (const tile of set.tiles) {
+        const destX = (tile.tileCol - minCol) * tileW;
+        const destY = (tile.tileRow - minRow) * tileH;
+
+        const tilePixels = readTileFn(gfxRom, tile.tileCode, tile.tileW, tile.tileH, tile.charSize);
+
+        for (let ty = 0; ty < tile.tileH; ty++) {
+          for (let tx = 0; tx < tile.tileW; tx++) {
+            const srcX = tile.flipX ? tile.tileW - 1 - tx : tx;
+            const srcY = tile.flipY ? tile.tileH - 1 - ty : ty;
+            const palIdx = tilePixels[srcY * tile.tileW + srcX]!;
+            if (palIdx === 15) continue; // transparent pen
+            const dx = destX + tx, dy = destY + ty;
+            if (dx >= 0 && dx < sheetW && dy >= 0 && dy < sheetH) {
+              pixels[dy * sheetW + dx] = indexOffset + palIdx;
+            }
+          }
+        }
+
+        manifestTiles.push({
+          address: '0x' + (tile.tileCode * tile.charSize).toString(16).toUpperCase(),
+          col: tile.tileCol,
+          row: tile.tileRow,
+          tileCode: tile.tileCode,
+          palette: set.palette,
+          paletteSlot: slot,
+          flipX: tile.flipX,
+          flipY: tile.flipY,
+        });
+      }
+    }
+
+    const manifest = {
+      type: 'scroll_merged',
+      game: (this.emulator as any).gameDef?.name ?? 'unknown',
+      layerId,
+      layerName: scrollLayerName(layerId),
+      palettes: paletteIndices.map((palIdx, slot) => ({ palette: palIdx, slot, indexOffset: slot * 16 })),
+      tileW, tileH,
+      gridOrigin: { col: minCol, row: minRow },
+      tiles: manifestTiles,
+    };
+
+    const data = writeAseprite({
+      width: sheetW,
+      height: sheetH,
+      palette: megaPalette,
+      frames: [{ pixels, duration: 0 }],
+      transparentIndex,
+      layerName: `${scrollLayerName(layerId)} full`,
+      manifest,
+    });
+
+    const filename = `${manifest.game}_scroll${layerId}_full_${manifestTiles.length}tiles.aseprite`;
+    downloadAseprite(data, filename);
+    showToast(`Exported full decor: ${manifestTiles.length} tiles, ${paletteIndices.length} palettes, ${sheetW}×${sheetH}px`, true);
   }
 
   private exportScrollSet(set: ScrollSet): void {
