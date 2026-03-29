@@ -246,36 +246,7 @@ export class LayerPanel {
 
       groupEl.appendChild(actions);
 
-      // Drop zone (only for scroll groups — sprite groups use the captures panel)
-      if (group.type !== 'sprite') {
-        const dropZone = document.createElement('div');
-        dropZone.className = 'layer-drop-zone';
-        dropZone.textContent = '+ Drop or click to add image';
-        setTooltip(dropZone, 'Drop image or click to import photo');
-
-        const fileInput = document.createElement('input');
-        fileInput.type = 'file';
-        fileInput.accept = 'image/*';
-        fileInput.style.display = 'none';
-        fileInput.onchange = () => {
-          const file = fileInput.files?.[0];
-          if (file) this.callbacks.onDropPhoto(gi, file);
-          fileInput.value = '';
-        };
-        dropZone.appendChild(fileInput);
-        dropZone.addEventListener('click', () => fileInput.click());
-        dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('layer-drop-active'); });
-        dropZone.addEventListener('dragleave', () => { dropZone.classList.remove('layer-drop-active'); });
-        dropZone.addEventListener('drop', (e) => {
-          e.preventDefault();
-          dropZone.classList.remove('layer-drop-active');
-          const file = (e as DragEvent).dataTransfer?.files[0];
-          if (file?.type.startsWith('image/')) {
-            this.callbacks.onDropPhoto(gi, file);
-          }
-        });
-        groupEl.appendChild(dropZone);
-      }
+      // Drop zone removed — editing happens in Aseprite
 
       this.content.appendChild(groupEl);
     }
