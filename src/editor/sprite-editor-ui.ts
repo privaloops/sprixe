@@ -3091,7 +3091,23 @@ export class SpriteEditorUI {
             }
 
             if (poses.length > 0) {
-              this.restorePoses(poses);
+              // Check for existing sprite set with same palette + tileHashes → replace it
+              const importHashes = new Set(poses.map(p => p.tileHash));
+              const existingIdx = this.layerGroups.findIndex(g => {
+                const sc = g.spriteCapture;
+                if (!sc || sc.palette !== manifest.palette) return false;
+                if (sc.poses.length !== poses.length) return false;
+                return sc.poses.every(p => importHashes.has(p.tileHash));
+              });
+
+              if (existingIdx >= 0) {
+                // Replace existing sprite set
+                const existing = this.layerGroups[existingIdx]!;
+                existing.spriteCapture!.poses = poses;
+                showToast(`Updated existing sprite set (palette ${manifest.palette})`, true);
+              } else {
+                this.restorePoses(poses);
+              }
               this.refreshCapturesPanel();
             }
           }
