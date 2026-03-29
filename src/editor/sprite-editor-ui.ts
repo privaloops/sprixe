@@ -3108,22 +3108,57 @@ export class SpriteEditorUI {
       tilesetToRom.set(entry.idx, { tileCode: entry.tileCode, charSize });
     }
 
-    // Write modified tiles back to GFX ROM
+    // Write tiles back to GFX ROM
+    // Strategy: use the tilemap to find current tile index per cell,
+    // then read from the tileset. This handles the case where Aseprite
+    // created new tiles (Auto mode) — the tilemap points to the new tile.
     let tilesWritten = 0;
+    const writtenCodes = new Set<number>();
 
-    for (const [tsIdx, romInfo] of tilesetToRom) {
-      if (tsIdx >= tileset.tiles.length) continue;
-      const tilePixels = tileset.tiles[tsIdx]!;
+    if (ase.tilemap && manifest.grid) {
+      // Use grid mapping: for each cell, find original tileCode + current tileset tile
+      const grid = manifest.grid as number[];
+      const { widthInTiles, heightInTiles, data: tmData } = ase.tilemap;
+      const gridCols = manifest.gridCols as number;
+      const gridRows = manifest.gridRows as number;
 
-      // Convert mega-palette indices back to CPS1 local indices (0-15)
-      for (let ty = 0; ty < tileH; ty++) {
-        for (let tx = 0; tx < tileW; tx++) {
-          const megaIdx = tilePixels[ty * tileW + tx]!;
-          const localIdx = indexToLocal(megaIdx);
-          writePixelFn(gfxRom, romInfo.tileCode, tx, ty, localIdx);
+      for (let gy = 0; gy < Math.min(gridRows, heightInTiles); gy++) {
+        for (let gx = 0; gx < Math.min(gridCols, widthInTiles); gx++) {
+          const origCode = grid[gy * gridCols + gx];
+          if (origCode === undefined || origCode < 0) continue;
+          if (writtenCodes.has(origCode)) continue;
+
+          // Read current tile index from tilemap (may differ from original if Aseprite created new tiles)
+          const tmVal = tmData[gy * widthInTiles + gx]!;
+          const currentTileIdx = tmVal & 0x1FFFFFFF;
+          if (currentTileIdx === 0 || currentTileIdx >= tileset.tiles.length) continue;
+
+          const tilePixels = tileset.tiles[currentTileIdx]!;
+          for (let ty = 0; ty < tileH; ty++) {
+            for (let tx = 0; tx < tileW; tx++) {
+              const megaIdx = tilePixels[ty * tileW + tx]!;
+              const localIdx = indexToLocal(megaIdx);
+              writePixelFn(gfxRom, origCode, tx, ty, localIdx);
+            }
+          }
+          writtenCodes.add(origCode);
+          tilesWritten++;
         }
       }
-      tilesWritten++;
+    } else {
+      // Fallback: use tileset entries from manifest (original behavior)
+      for (const [tsIdx, romInfo] of tilesetToRom) {
+        if (tsIdx >= tileset.tiles.length) continue;
+        const tilePixels = tileset.tiles[tsIdx]!;
+        for (let ty = 0; ty < tileH; ty++) {
+          for (let tx = 0; tx < tileW; tx++) {
+            const megaIdx = tilePixels[ty * tileW + tx]!;
+            const localIdx = indexToLocal(megaIdx);
+            writePixelFn(gfxRom, romInfo.tileCode, tx, ty, localIdx);
+          }
+        }
+        tilesWritten++;
+      }
     }
 
     // Sync palettes if modified in Aseprite (mega-palette → CPS1 palettes)
