@@ -248,7 +248,7 @@ export class SpriteEditorUI {
     capturesHeader.appendChild(importAseBtn);
     this.capturesSection.appendChild(capturesHeader);
     const capturesHint = el('div', 'edit-capture-hint') as HTMLDivElement;
-    capturesHint.textContent = 'Use REC in layer panel to capture';
+    capturesHint.style.display = 'none';
     this.capturesSection.appendChild(capturesHint);
     this.capturesList = el('div', 'edit-captures-list') as HTMLDivElement;
     this.capturesSection.appendChild(this.capturesList);
@@ -1841,7 +1841,7 @@ export class SpriteEditorUI {
       }
       return;
     }
-    setStatus('E to close');
+    setStatus('');
   }
 
   private refreshUndoButtons(): void {
