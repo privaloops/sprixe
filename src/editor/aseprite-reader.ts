@@ -14,6 +14,15 @@ import pako from 'pako';
 // Types
 // ---------------------------------------------------------------------------
 
+export interface AsepriteTilesetData {
+  id: number;
+  tileW: number;
+  tileH: number;
+  numTiles: number;
+  /** All tile pixel data (including empty tile 0). Each tile = tileW * tileH bytes. */
+  tiles: Uint8Array[];
+}
+
 export interface AsepriteFile {
   width: number;
   height: number;
@@ -22,6 +31,10 @@ export interface AsepriteFile {
   numFrames: number;
   palette: Array<{ r: number; g: number; b: number; a: number }>;
   frames: AsepriteFrameData[];
+  /** Tilesets found in the file. */
+  tilesets: AsepriteTilesetData[];
+  /** Tilemap data (if any): DWORD per cell, row-major. */
+  tilemap: { widthInTiles: number; heightInTiles: number; data: Uint32Array } | null;
   /** First user data text found (our JSON manifest). */
   userDataText: string | null;
   manifest: any | null;
@@ -75,6 +88,8 @@ export function readAseprite(buffer: ArrayBuffer): AsepriteFile {
     width, height, colorDepth, transparentIndex, numFrames,
     palette: [],
     frames: [],
+    tilesets: [],
+    tilemap: null,
     userDataText: null,
     manifest: null,
   };
@@ -158,8 +173,49 @@ export function readAseprite(buffer: ArrayBuffer): AsepriteFile {
             if (linkedFrame < result.frames.length) {
               framePixels = result.frames[linkedFrame]!.pixels;
             }
+          } else if (celType === 3) {
+            // Compressed tilemap
+            const tmW = readWord();  // width in tiles
+            const tmH = readWord();  // height in tiles
+            const bitsPerTile = readWord(); // 32
+            skip(4 + 4 + 4 + 4); // tile ID mask, X flip mask, Y flip mask, D flip mask
+            skip(10); // reserved
+            const compLen = chunkDataEnd - pos;
+            const compData = new Uint8Array(buffer, pos, compLen);
+            const rawTm = pako.inflate(compData);
+            // Convert to Uint32Array
+            const tmData = new Uint32Array(tmW * tmH);
+            const tmView = new DataView(rawTm.buffer, rawTm.byteOffset, rawTm.byteLength);
+            for (let i = 0; i < tmW * tmH; i++) {
+              tmData[i] = tmView.getUint32(i * 4, true);
+            }
+            result.tilemap = { widthInTiles: tmW, heightInTiles: tmH, data: tmData };
           }
-          // Type 0 (raw) and type 3 (tilemap) not handled
+          break;
+        }
+
+        case 0x2023: { // Tileset
+          const tilesetId = readDword();
+          const tsFlags = readDword();
+          const numTiles = readDword();
+          const tsTileW = readWord();
+          const tsTileH = readWord();
+          skip(2); // base index
+          skip(14); // reserved
+          readString(); // tileset name
+
+          const tiles: Uint8Array[] = [];
+          if (tsFlags & 2) { // embedded tiles
+            const compLen = readDword();
+            const compData = new Uint8Array(buffer, pos, compLen);
+            const rawData = pako.inflate(compData);
+            const tileSize = tsTileW * tsTileH;
+            for (let t = 0; t < numTiles; t++) {
+              tiles.push(rawData.slice(t * tileSize, (t + 1) * tileSize));
+            }
+          }
+
+          result.tilesets.push({ id: tilesetId, tileW: tsTileW, tileH: tsTileH, numTiles, tiles });
           break;
         }
 

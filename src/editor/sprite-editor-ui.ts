@@ -3115,6 +3115,78 @@ export class SpriteEditorUI {
     showToast(`Exported ${set.tiles.length} tiles (${sheetW}×${sheetH}) to ${filename}`, true);
   }
 
+  // -- Scroll Tilemap Import --
+
+  private importScrollTilemap(ase: ReturnType<typeof readAseprite>, manifest: any, gfxRom: Uint8Array): void {
+    const tileset = ase.tilesets[0];
+    if (!tileset || tileset.tiles.length === 0) {
+      showToast('No tileset found in .aseprite file', false);
+      return;
+    }
+
+    const { tileW, tileH } = manifest;
+    const palettes = manifest.palettes as Array<{ palette: number; slot: number; indexOffset: number }>;
+    if (!palettes?.length) {
+      showToast('No palette mapping in manifest', false);
+      return;
+    }
+
+    // Build reverse map: mega-palette index → { cps1Palette, localIndex }
+    // Each slot of 16 indices maps to a CPS1 palette
+    const indexToLocal = (megaIdx: number): number => {
+      // Find which palette slot this index belongs to
+      for (const p of palettes) {
+        if (megaIdx >= p.indexOffset && megaIdx < p.indexOffset + 16) {
+          return megaIdx - p.indexOffset;
+        }
+      }
+      return megaIdx; // fallback
+    };
+
+    // Build a map: tileCode → unique tileset indices that reference it
+    // The manifest.tiles array has tileCode for each grid position
+    // We need to know which tileset tile corresponds to which ROM tile
+    const manifestTiles = manifest.tiles as Array<{ address: string; tileCode: number; paletteSlot: number }>;
+
+    // Build a map from tileset index → ROM tileCode + paletteSlot
+    // Each unique (tileCode, paletteSlot) got a tileset index during export
+    const tilesetToRom = new Map<number, { tileCode: number; charSize: number }>();
+    const seen = new Set<string>();
+    let tilesetIdx = 1; // 1-based (tile 0 = empty)
+
+    for (const mt of manifestTiles) {
+      const key = `${mt.tileCode}:${mt.paletteSlot}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        const romAddr = typeof mt.address === 'string' ? parseInt(mt.address, 16) : mt.address;
+        const charSize = tileW * tileH <= 64 ? 64 : tileW * tileH <= 128 ? 128 : 512;
+        tilesetToRom.set(tilesetIdx, { tileCode: Math.floor(romAddr / charSize), charSize });
+        tilesetIdx++;
+      }
+    }
+
+    // Write modified tiles back to GFX ROM
+    let tilesWritten = 0;
+
+    for (const [tsIdx, romInfo] of tilesetToRom) {
+      if (tsIdx >= tileset.tiles.length) continue;
+      const tilePixels = tileset.tiles[tsIdx]!;
+
+      // Convert mega-palette indices back to CPS1 local indices (0-15)
+      for (let ty = 0; ty < tileH; ty++) {
+        for (let tx = 0; tx < tileW; tx++) {
+          const megaIdx = tilePixels[ty * tileW + tx]!;
+          const localIdx = indexToLocal(megaIdx);
+          writePixelFn(gfxRom, romInfo.tileCode, tx, ty, localIdx);
+        }
+      }
+      tilesWritten++;
+    }
+
+    this.emulator.rerender();
+    showToast(`Scroll import: ${tilesWritten} unique tiles written to ROM`, true);
+  }
+
   // -- Pose PNG Export / Import --
 
   /** Export the selected pose as a transparent PNG. */
@@ -3263,6 +3335,12 @@ export class SpriteEditorUI {
         const manifest = ase.manifest;
         const gfxRom = this.editor.getGfxRom();
         if (!gfxRom) { showToast('No GFX ROM loaded', false); return; }
+
+        // Route to scroll tilemap import if manifest type is scroll
+        if (manifest.type === 'scroll_tilemap') {
+          this.importScrollTilemap(ase, manifest, gfxRom);
+          return;
+        }
 
         let tilesWritten = 0;
         let framesWritten = 0;
