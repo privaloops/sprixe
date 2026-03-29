@@ -2908,8 +2908,8 @@ export class SpriteEditorUI {
     const asePalette: AsepritePaletteEntry[] = cps1Palette.map(([r, g, b]) => ({
       r, g, b, a: 255,
     }));
-    // Index 0 = transparent
-    asePalette[0] = { r: 0, g: 0, b: 0, a: 0 };
+    // CPS1 pen 15 = transparent
+    if (asePalette[15]) asePalette[15] = { r: 0, g: 0, b: 0, a: 0 };
 
     // Build frames: one per captured pose
     const aseFrames: AsepriteFrame[] = [];
@@ -2918,7 +2918,7 @@ export class SpriteEditorUI {
     for (let i = 0; i < poses.length; i++) {
       const pose = poses[i]!;
       // Assemble indexed pixels (palette indices) for this pose
-      const pixels = new Uint8Array(frameW * frameH); // 0 = transparent
+      const pixels = new Uint8Array(frameW * frameH).fill(15); // 15 = CPS1 transparent pen
 
       for (const tile of pose.tiles) {
         const tilePixels = readTileFn(gfxRom, tile.mappedCode);
@@ -2927,7 +2927,7 @@ export class SpriteEditorUI {
             const srcX = tile.flipX ? 15 - tx : tx;
             const srcY = tile.flipY ? 15 - ty : ty;
             const palIdx = tilePixels[srcY * 16 + srcX]!;
-            if (palIdx === 0) continue; // transparent
+            if (palIdx === 15) continue; // CPS1 transparent pen is index 15
             const destX = tile.relX + tx;
             const destY = tile.relY + ty;
             if (destX >= 0 && destX < frameW && destY >= 0 && destY < frameH) {
@@ -2967,7 +2967,7 @@ export class SpriteEditorUI {
       height: frameH,
       palette: asePalette,
       frames: aseFrames,
-      transparentIndex: 0,
+      transparentIndex: 15, // CPS1 transparent pen
       layerName: manifest.character,
       manifest,
     });

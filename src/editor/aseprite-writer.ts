@@ -197,12 +197,13 @@ function buildFrame(chunks: Uint8Array[], duration: number): Uint8Array {
 
   const frameSize = 16 + dataSize; // 16-byte frame header
   const w = new BufWriter();
+  const numChunks = chunks.length;
   w.dword(frameSize);
   w.word(0xF1FA);          // magic
-  w.word(0xFFFF);          // old chunk count (use new field)
+  w.word(numChunks <= 0xFFFF ? numChunks : 0xFFFF); // old chunk count
   w.word(duration);        // frame duration ms
   w.zeros(2);              // reserved
-  w.dword(chunks.length);  // new chunk count
+  w.dword(numChunks);      // new chunk count
   for (const c of chunks) w.bytes(c);
   return w.toUint8Array();
 }

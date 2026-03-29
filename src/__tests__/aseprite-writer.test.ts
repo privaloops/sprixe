@@ -75,8 +75,21 @@ describe('aseprite-writer', () => {
     };
 
     const data = writeAseprite(opts);
-    const ase = parse(data);
 
+    // Verify frame structure: walk through the binary and check frame sizes
+    const view = new DataView(data.buffer);
+    let offset = 128; // after header
+    for (let f = 0; f < 3; f++) {
+      const frameSize = view.getUint32(offset, true);
+      const frameMagic = view.getUint16(offset + 4, true);
+      expect(frameMagic).toBe(0xF1FA);
+      expect(frameSize).toBeGreaterThan(16);
+      // Next frame starts at offset + frameSize
+      offset += frameSize;
+    }
+    expect(offset).toBe(data.length); // all frames consumed = correct sizes
+
+    const ase = parse(data);
     expect(ase.numFrames).toBe(3);
     expect(ase.frames.length).toBe(3);
   });
@@ -132,6 +145,40 @@ describe('aseprite-writer', () => {
     const view = new DataView(data.buffer);
     const headerSize = view.getUint32(0, true);
     expect(headerSize).toBe(data.length);
+  });
+
+  it('should handle realistic CPS1 export (64x96, 16 colors, 26 frames)', () => {
+    const palette = Array.from({ length: 16 }, (_, i) => ({
+      r: i * 16, g: 128 - i * 8, b: i * 4,
+    }));
+    const frames = Array.from({ length: 26 }, (_, f) => ({
+      pixels: new Uint8Array(64 * 96).fill(f % 16),
+      duration: 100,
+    }));
+
+    const data = writeAseprite({
+      width: 64,
+      height: 96,
+      palette,
+      frames,
+      transparentIndex: 0,
+      manifest: { game: 'sf2', character: 'ryu', frames: [] },
+    });
+
+    // Verify frame structure
+    const view = new DataView(data.buffer);
+    let offset = 128;
+    for (let f = 0; f < 26; f++) {
+      const frameSize = view.getUint32(offset, true);
+      const frameMagic = view.getUint16(offset + 4, true);
+      expect(frameMagic).toBe(0xF1FA);
+      offset += frameSize;
+    }
+    expect(offset).toBe(data.length);
+
+    const ase = parse(data);
+    expect(ase.numFrames).toBe(26);
+    expect(ase.frames.length).toBe(26);
   });
 
   it('should decompress cel pixels correctly', () => {
