@@ -265,21 +265,7 @@ export class SpriteEditorUI {
     scrollHeader.appendChild(scrollLabel);
     scrollSection.appendChild(scrollHeader);
 
-    // Capture buttons for each scroll layer
-    const scrollBtns = el('div', 'edit-scroll-btns') as HTMLDivElement;
-    scrollBtns.style.display = 'flex';
-    scrollBtns.style.gap = '4px';
-    scrollBtns.style.padding = '4px 0';
-    for (const [label, layerId] of [['BG1', 1], ['BG2', 2], ['BG3', 3]] as const) {
-      const btn = el('button', 'ctrl-btn') as HTMLButtonElement;
-      btn.textContent = `Capture ${label}`;
-      btn.style.fontSize = '10px';
-      btn.style.padding = '2px 6px';
-      setTooltip(btn, `Start/stop capturing ${label} tiles as you scroll`);
-      btn.onclick = () => this.toggleScrollCapture(layerId, btn);
-      scrollBtns.appendChild(btn);
-    }
-    scrollSection.appendChild(scrollBtns);
+    // Capture buttons moved to layer panel (REC buttons)
 
     this.scrollSetsList = el('div', 'edit-scroll-list') as HTMLDivElement;
     scrollSection.appendChild(this.scrollSetsList);
@@ -495,6 +481,13 @@ export class SpriteEditorUI {
       },
       onSpreadChange: (value) => {
         this._onSpreadChange?.(value);
+      },
+      onToggleRecSprites: () => {
+        this.toggleAllSpriteCapture();
+      },
+      onToggleRecScroll: (layerId) => {
+        // Find or create the button to toggle (reuse existing scroll capture logic)
+        this.toggleScrollCaptureFromPanel(layerId);
       },
     });
   }
@@ -2805,6 +2798,41 @@ export class SpriteEditorUI {
 
   // -- Scroll Capture --
 
+  /** Toggle capture of ALL sprite palettes (called from REC button in layer panel). */
+  private allSpriteCaptureActive = false;
+
+  private toggleAllSpriteCapture(): void {
+    if (this.allSpriteCaptureActive) {
+      // Stop all sprite captures
+      this.stopAllCaptures();
+      this.allSpriteCaptureActive = false;
+      this.refreshCapturesPanel();
+      showToast('Sprite capture stopped', true);
+    } else {
+      // Start capturing all visible sprite palettes
+      this.allSpriteCaptureActive = true;
+      showToast('Recording all sprites — play the game to capture poses', true);
+    }
+  }
+
+  /** Toggle scroll capture from the layer panel REC button. */
+  private toggleScrollCaptureFromPanel(layerId: number): void {
+    if (this.scrollSessions.has(layerId)) {
+      // Stop
+      const session = this.scrollSessions.get(layerId)!;
+      this.scrollSessions.delete(layerId);
+      const sets = buildScrollSets(session);
+      this.scrollSets.push(...sets);
+      this.refreshScrollSetsList();
+      showToast(`Captured ${session.tileMap.size} tiles → ${sets.length} scroll set(s)`, true);
+    } else {
+      // Start
+      const session = createScrollSession(layerId);
+      this.scrollSessions.set(layerId, session);
+      showToast(`Recording ${scrollLayerName(layerId)} — scroll around to capture`, true);
+    }
+  }
+
   private toggleScrollCapture(layerId: number, btn: HTMLButtonElement): void {
     if (this.scrollSessions.has(layerId)) {
       // Stop capture
@@ -4364,10 +4392,21 @@ export class SpriteEditorUI {
    * for all active palette sessions.
    */
   private captureFrame(): void {
-    if (this.activeSessions.size === 0) return;
-
     const video = this.emulator.getVideo();
     if (!video) return;
+
+    // Auto-capture all sprite palettes when REC Sprites is active
+    if (this.allSpriteCaptureActive) {
+      const allSprites = readAllSprites(video);
+      const visiblePalettes = new Set(allSprites.map(s => s.palette));
+      for (const pal of visiblePalettes) {
+        if (!this.activeSessions.has(pal)) {
+          this.activeSessions.set(pal, { poses: [], seenHashes: new Set<string>(), refTileCount: 0 });
+        }
+      }
+    }
+
+    if (this.activeSessions.size === 0) return;
 
     let changed = false;
     for (const palette of this.activeSessions.keys()) {
