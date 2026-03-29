@@ -50,8 +50,14 @@ export interface ScrollSet {
 
 export interface ScrollCaptureSession {
   layerId: number;
-  /** All captured tiles keyed by "tileCol,tileRow" for deduplication */
+  /** All captured tiles keyed by "virtualCol,tileRow" (virtualCol extends beyond 64 on wrap) */
   tileMap: Map<string, ScrollTile>;
+  /** Current VRAM content: col,row → tileCode (to detect streaming changes) */
+  vramContent: Map<string, number>;
+  /** Column offset when wrap is detected (extends the virtual canvas) */
+  colOffset: number;
+  /** Last seen left-most column on screen (to detect scroll direction) */
+  lastLeftCol: number;
   tileW: number;
   tileH: number;
 }
@@ -92,6 +98,9 @@ export function createScrollSession(layerId: number): ScrollCaptureSession {
   return {
     layerId,
     tileMap: new Map(),
+    vramContent: new Map(),
+    colOffset: 0,
+    lastLeftCol: -1,
     tileW,
     tileH: tileW,
   };
@@ -109,7 +118,25 @@ export function captureScrollFrame(
   const { layerId, tileW, tileH } = session;
   let newTiles = 0;
 
-  // Sample at the center of each tile-sized cell on screen
+  const inverseScan = getInverseScan(layerId);
+
+  // First: find leftmost visible column this frame (to detect wrap)
+  let frameLeftCol = 64;
+  {
+    const info = video.inspectScrollAt(tileW >> 1, tileH >> 1, layerId, true);
+    if (info && info.tileCode !== -1) {
+      const cr = inverseScan.get(info.tileIndex);
+      if (cr) frameLeftCol = cr[0];
+    }
+  }
+
+  // Detect wrap: left column jumped backwards significantly
+  if (session.lastLeftCol >= 0 && frameLeftCol < session.lastLeftCol && session.lastLeftCol - frameLeftCol > 32) {
+    session.colOffset += 64;
+  }
+  if (frameLeftCol < 64) session.lastLeftCol = frameLeftCol;
+
+  // Capture all visible tiles
   for (let sy = 0; sy < SCREEN_HEIGHT; sy += tileH) {
     for (let sx = 0; sx < SCREEN_WIDTH; sx += tileW) {
       const px = Math.min(sx + (tileW >> 1), SCREEN_WIDTH - 1);
@@ -118,26 +145,19 @@ export function captureScrollFrame(
       const info = video.inspectScrollAt(px, py, layerId, true);
       if (!info || info.tileCode === -1) continue;
 
-      // Derive tilemap column/row from screen position + localX/localY
-      // The virtual position of the pixel is: screen_pos + scroll_offset
-      // The tile starts at: virtual_pos - local_pos
-      // The tile col/row: tile_start / tileW
-      // Since inspectScrollAt already computes tileCol/tileRow internally
-      // and gives us tilemapOffset, we can derive col/row from tileIndex
-      // tileIndex = scanFn(col, row) — but we don't have the inverse
-      // Instead, use tilemapOffset which is unique per tile position
-      // Derive col/row from tileIndex using inverse scan lookup
-      const inverseScan = getInverseScan(layerId);
       const colRow = inverseScan.get(info.tileIndex);
       if (!colRow) continue;
       const [tileCol, tileRow] = colRow;
-      const key = `${tileCol},${tileRow}`;
+
+      // Virtual column: raw col + wrap offset
+      const virtualCol = tileCol + session.colOffset;
+      const key = `${virtualCol},${tileRow}`;
 
       if (!session.tileMap.has(key)) {
         const tile: ScrollTile = {
           tileCode: info.tileCode,
           key,
-          tileCol,
+          tileCol: virtualCol,
           tileRow,
           palette: info.paletteIndex,
           flipX: info.flipX,
