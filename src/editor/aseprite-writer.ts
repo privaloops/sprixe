@@ -293,7 +293,7 @@ export function writeAseprite(opts: AsepriteOptions): Uint8Array {
 // ---------------------------------------------------------------------------
 
 export function downloadAseprite(data: Uint8Array, filename: string): void {
-  const blob = new Blob([data], { type: 'application/octet-stream' });
+  const blob = new Blob([data.buffer as ArrayBuffer], { type: 'application/octet-stream' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;

@@ -20,6 +20,7 @@ import { findTileReferences } from './tile-refs';
 import type { Emulator } from '../emulator';
 import { pencilCursor, fillCursor, eyedropperCursor, eraserCursor, wandCursor } from './tool-cursors';
 import { showToast } from '../ui/toast';
+import { writeAseprite, downloadAseprite, type AsepriteFrame, type AsepritePaletteEntry } from './aseprite-writer';
 import { setTooltip } from '../ui/tooltip';
 import { createStatusBar, setStatus } from '../ui/status-bar';
 
@@ -2329,6 +2330,12 @@ export class SpriteEditorUI {
     exportBtn.onclick = () => this.exportPosePng();
     header.appendChild(exportBtn);
 
+    const exportAseBtn = el('button', 'sprite-sheet-back') as HTMLButtonElement;
+    exportAseBtn.textContent = 'Export .aseprite';
+    setTooltip(exportAseBtn, 'Export all poses as .aseprite file (for editing in Aseprite)');
+    exportAseBtn.onclick = () => this.exportAseprite();
+    header.appendChild(exportAseBtn);
+
     // Sprite photo layer controls (shown when layers exist)
     const hasPhotoLayers = (this.activeGroup?.layers.length ?? 0) > 0;
     if (hasPhotoLayers) {
@@ -2877,6 +2884,97 @@ export class SpriteEditorUI {
     link.download = `pose_${this.sheetSelectedPose}.png`;
     link.href = cvs.toDataURL('image/png');
     link.click();
+  }
+
+  /** Export all captured poses as a single .aseprite file with ROM manifest. */
+  private exportAseprite(): void {
+    const poses = this.activePoses;
+    if (poses.length === 0) { showToast('No poses captured', false); return; }
+
+    const gfxRom = this.editor.getGfxRom();
+    if (!gfxRom) { showToast('No GFX ROM loaded', false); return; }
+    const video = this.emulator.getVideo();
+    if (!video) return;
+    const bufs = this.emulator.getBusBuffers();
+    const palIndex = this.activeGroup?.spriteCapture?.palette ?? 0;
+    const cps1Palette = readPalette(bufs.vram, video.getPaletteBase(), palIndex);
+
+    // Use the first pose dimensions as the canvas size (all poses should match)
+    const pose0 = poses[0]!;
+    const frameW = pose0.w;
+    const frameH = pose0.h;
+
+    // Build Aseprite palette from CPS1 palette (16 colors as [R,G,B] tuples)
+    const asePalette: AsepritePaletteEntry[] = cps1Palette.map(([r, g, b]) => ({
+      r, g, b, a: 255,
+    }));
+    // Index 0 = transparent
+    asePalette[0] = { r: 0, g: 0, b: 0, a: 0 };
+
+    // Build frames: one per captured pose
+    const aseFrames: AsepriteFrame[] = [];
+    const manifestFrames: Array<{ id: string; tiles: Array<{ address: string; x: number; y: number; flipX: boolean; flipY: boolean }> }> = [];
+
+    for (let i = 0; i < poses.length; i++) {
+      const pose = poses[i]!;
+      // Assemble indexed pixels (palette indices) for this pose
+      const pixels = new Uint8Array(frameW * frameH); // 0 = transparent
+
+      for (const tile of pose.tiles) {
+        const tilePixels = readTileFn(gfxRom, tile.mappedCode);
+        for (let ty = 0; ty < 16; ty++) {
+          for (let tx = 0; tx < 16; tx++) {
+            const srcX = tile.flipX ? 15 - tx : tx;
+            const srcY = tile.flipY ? 15 - ty : ty;
+            const palIdx = tilePixels[srcY * 16 + srcX]!;
+            if (palIdx === 0) continue; // transparent
+            const destX = tile.relX + tx;
+            const destY = tile.relY + ty;
+            if (destX >= 0 && destX < frameW && destY >= 0 && destY < frameH) {
+              pixels[destY * frameW + destX] = palIdx;
+            }
+          }
+        }
+      }
+
+      aseFrames.push({ pixels, duration: 100 });
+
+      // Manifest entry for this frame
+      manifestFrames.push({
+        id: `pose_${i}`,
+        tiles: pose.tiles.map(t => ({
+          address: '0x' + (t.mappedCode * 128).toString(16).toUpperCase(),
+          x: t.relX,
+          y: t.relY,
+          flipX: t.flipX,
+          flipY: t.flipY,
+        })),
+      });
+    }
+
+    // Build manifest
+    const manifest = {
+      game: (this.emulator as any).gameDef?.name ?? 'unknown',
+      character: `palette_${palIndex}`,
+      palette: palIndex,
+      frameSize: { w: frameW, h: frameH },
+      frames: manifestFrames,
+    };
+
+    // Write .aseprite
+    const data = writeAseprite({
+      width: frameW,
+      height: frameH,
+      palette: asePalette,
+      frames: aseFrames,
+      transparentIndex: 0,
+      layerName: manifest.character,
+      manifest,
+    });
+
+    const filename = `${manifest.game}_${manifest.character}_${poses.length}poses.aseprite`;
+    downloadAseprite(data, filename);
+    showToast(`Exported ${poses.length} poses to ${filename}`, true);
   }
 
   /** Import a PNG and write it into the GFX ROM tiles of the selected pose. */
