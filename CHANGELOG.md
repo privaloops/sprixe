@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed
+- **Refactor `sprite-editor-ui.ts`** — Split from 4629 LOC into 5 focused modules: `aseprite-io.ts` (import/export), `capture-session.ts` (pose/scroll capture), `sheet-viewer.ts` (fullscreen viewer), `photo-layer-ops.ts` (quantize/merge/composite). Main file reduced to ~2200 LOC. Dead code removed (~450 LOC)
+
 ### Added
 - **`.romstudio` save/load** — JSON save format with sparse ROM diffs (GFX, Program, OKI) + captured poses. Ctrl+S / Ctrl+O, drag & drop support. Auto-save to IndexedDB with 2s debounce, restore prompt on reload
 - **ROM round-trip E2E test** — Loads ROM, modifies tiles/palettes/samples, exports ZIP, re-imports, verifies conformity. MAME headless validation (local only)
