@@ -8,8 +8,8 @@
 
 import { SpriteEditor, type EditorTool } from './sprite-editor';
 import { SCREEN_WIDTH, SCREEN_HEIGHT } from '../constants';
-import { LAYER_OBJ, LAYER_SCROLL1, LAYER_SCROLL2, LAYER_SCROLL3, readWord, type CPS1Video } from '../video/cps1-video';
-import { readAllSprites, groupCharacter, poseHash, capturePose, assembleCharacter, type SpriteGroup as SpriteGroupData, type CapturedPose } from './sprite-analyzer';
+import { LAYER_OBJ, LAYER_SCROLL1, LAYER_SCROLL2, LAYER_SCROLL3, readWord } from '../video/cps1-video';
+import { readAllSprites, groupCharacter, assembleCharacter, type SpriteGroup as SpriteGroupData, type CapturedPose } from './sprite-analyzer';
 import { loadPhotoRgba, resizeRgba, quantizeWithDithering, placePhotoOnTiles, generatePalette } from './photo-import';
 import { encodeColor } from './palette-editor';
 import { readPixel as readPixelFn, writePixel as writePixelFn, writeScrollPixel, readTile as readTileFn } from './tile-encoder';
@@ -22,7 +22,8 @@ import { pencilCursor, fillCursor, eyedropperCursor, eraserCursor, wandCursor } 
 import { showToast } from '../ui/toast';
 import type { AsepriteFile } from './aseprite-reader';
 import { exportSpriteAseprite, exportScrollAseprite, importAsepriteFile, importScrollTilemap as importScrollTilemapIO } from './aseprite-io';
-import { createScrollSession, captureScrollFrame, buildScrollSets, scrollLayerName, type ScrollCaptureSession, type ScrollSet } from './scroll-capture';
+import { buildScrollSets, scrollLayerName, type ScrollSet } from './scroll-capture';
+import { CaptureManager } from './capture-session';
 import { setTooltip } from '../ui/tooltip';
 import { createStatusBar, setStatus } from '../ui/status-bar';
 
@@ -63,16 +64,12 @@ export class SpriteEditorUI {
   private captureStatus: HTMLDivElement | null = null;
   private selectedPoseIndex = 0;
 
-  // Capture state — multiple simultaneous captures keyed by palette
-  private activeSessions = new Map<number, { poses: CapturedPose[]; seenHashes: Set<string>; refTileCount: number }>();
-  private captureCounter = 0;
+  // Capture manager (sprite + scroll capture sessions)
+  private capture!: CaptureManager;
 
-  // Scroll capture
-  private scrollSessions = new Map<number, ScrollCaptureSession>();
-  private scrollSets: ScrollSet[] = [];
+  // Scroll UI state
   private scrollHighlightOverlay: HTMLCanvasElement | null = null;
   private highlightedScrollSet: ScrollSet | null = null;
-  private scrollTickCounter = 0;
   private activeScrollSet: ScrollSet | null = null;
 
   // Head editor
@@ -160,6 +157,7 @@ export class SpriteEditorUI {
     this.emulator = emulator;
     this.gameCanvas = canvas;
     this.editor = new SpriteEditor(emulator);
+    this.capture = new CaptureManager(emulator, this.editor, this.layerGroups, () => this.refreshLayerPanel());
 
     this.boundKeyHandler = (e) => this.handleKey(e);
     this.boundKeyUpHandler = (e) => this.handleKeyUp(e);
@@ -482,8 +480,8 @@ export class SpriteEditorUI {
     }
 
     // Include live scroll sets from active capture sessions
-    const allScrollSets = [...this.scrollSets];
-    for (const session of this.scrollSessions.values()) {
+    const allScrollSets = [...this.capture.scrollSets];
+    for (const session of this.capture.scrollSessions.values()) {
       allScrollSets.push(...buildScrollSets(session));
     }
 
@@ -1086,13 +1084,13 @@ export class SpriteEditorUI {
     }
 
     // Red bounds + REC indicator for sprites being captured
-    if (this.activeSessions.size > 0) {
+    if (this.capture.activeSessions.size > 0) {
       const allSprites = readAllSprites(video);
       const visited = new Set<number>();
       ctx.lineWidth = 2;
       ctx.strokeStyle = 'rgba(255, 50, 80, 0.8)';
       for (const sprite of allSprites) {
-        if (!this.activeSessions.has(sprite.palette)) continue;
+        if (!this.capture.activeSessions.has(sprite.palette)) continue;
         if (visited.has(sprite.index)) continue;
         const group = groupCharacter(allSprites, sprite.index);
         if (!group) continue;
@@ -2754,77 +2752,16 @@ export class SpriteEditorUI {
 
   // -- Scroll Capture --
 
-  /** Toggle capture of ALL sprite palettes (called from REC button in layer panel). */
-  private allSpriteCaptureActive = false;
-
   private toggleAllSpriteCapture(): void {
-    if (this.allSpriteCaptureActive) {
-      // Stop all sprite captures
-      this.stopAllCaptures();
-      this.allSpriteCaptureActive = false;
-      this.refreshLayerPanel();
-      showToast('Sprite capture stopped', true);
-    } else {
-      // Start capturing all visible sprite palettes
-      this.allSpriteCaptureActive = true;
-      showToast('Recording all sprites — play the game to capture poses', true);
-    }
+    this.capture.toggleAllSpriteCapture();
   }
 
-  /** Toggle scroll capture from the layer panel REC button. */
   private toggleScrollCaptureFromPanel(layerId: number): void {
-    if (this.scrollSessions.has(layerId)) {
-      // Stop
-      const session = this.scrollSessions.get(layerId)!;
-      this.scrollSessions.delete(layerId);
-      const sets = buildScrollSets(session);
-      this.scrollSets.push(...sets);
-      this.refreshLayerPanel();
-      this.refreshLayerPanel();
-      showToast(`Captured ${session.tileMap.size} tiles → ${sets.length} scroll set(s)`, true);
-    } else {
-      // Start
-      const session = createScrollSession(layerId);
-      this.scrollSessions.set(layerId, session);
-      showToast(`Recording ${scrollLayerName(layerId)} — scroll around to capture`, true);
-    }
+    this.capture.toggleScrollCaptureFromPanel(layerId);
   }
 
-  private toggleScrollCapture(layerId: number, btn: HTMLButtonElement): void {
-    if (this.scrollSessions.has(layerId)) {
-      // Stop capture
-      const session = this.scrollSessions.get(layerId)!;
-      this.scrollSessions.delete(layerId);
-      btn.textContent = `Capture ${layerId === 1 ? 'BG1' : layerId === 2 ? 'BG2' : 'BG3'}`;
-      btn.classList.remove('active');
-
-      const sets = buildScrollSets(session);
-      this.scrollSets.push(...sets);
-      this.refreshLayerPanel();
-      this.refreshLayerPanel();
-      showToast(`Captured ${session.tileMap.size} tiles → ${sets.length} scroll set(s)`, true);
-    } else {
-      // Start capture
-      const session = createScrollSession(layerId);
-      this.scrollSessions.set(layerId, session);
-      btn.textContent = `Stop ${layerId === 1 ? 'BG1' : layerId === 2 ? 'BG2' : 'BG3'}`;
-      btn.classList.add('active');
-      showToast(`Recording ${scrollLayerName(layerId)} — scroll around to capture tiles`, true);
-    }
-  }
-
-  /** Called each frame to capture scroll tiles for active sessions. */
   captureScrollTick(): void {
-    const video = this.emulator.getVideo();
-    if (!video) return;
-    for (const session of this.scrollSessions.values()) {
-      captureScrollFrame(session, video);
-    }
-    // Refresh layer panel every ~60 frames (~1s) during capture
-    if (this.scrollSessions.size > 0 && ++this.scrollTickCounter >= 60) {
-      this.scrollTickCounter = 0;
-      this.refreshLayerPanel();
-    }
+    this.capture.captureScrollTick();
   }
 
 
@@ -3396,55 +3333,12 @@ export class SpriteEditorUI {
 
   // -- Pose Capture --
 
-  /** Toggle capture for the sprite at the given OBJ index. */
   private toggleCaptureForSprite(spriteIndex: number): void {
-    const video = this.emulator.getVideo();
-    if (!video) return;
-
-    const allSprites = readAllSprites(video);
-    const group = groupCharacter(allSprites, spriteIndex);
-    if (!group) return;
-
-    const palette = group.palette;
-
-    if (this.activeSessions.has(palette)) {
-      // Stop capturing this palette
-      this.stopCaptureForPalette(palette);
-    } else {
-      // Start capturing this palette, remembering the initial group size
-      this.activeSessions.set(palette, { poses: [], seenHashes: new Set<string>(), refTileCount: group.sprites.length });
-      // Capture the initial pose(s)
-      this.captureGroupsForPalette(video, palette);
-      showToast(`Recording sprite (palette ${palette})`, true);
-    }
-
-    this.refreshLayerPanel();
+    this.capture.toggleCaptureForSprite(spriteIndex);
   }
 
-  /** Stop capture for a specific palette and save the group. */
-  private stopCaptureForPalette(palette: number): void {
-    const session = this.activeSessions.get(palette);
-    if (!session) return;
-    this.activeSessions.delete(palette);
-
-    if (session.poses.length > 0) {
-      this.captureCounter++;
-      const name = `Sprite #${this.captureCounter}`;
-      this.layerGroups.push(createSpriteGroup(name, session.poses, palette));
-      this.refreshLayerPanel();
-      showToast(`Captured ${session.poses.length} pose${session.poses.length !== 1 ? 's' : ''} → ${name}`, true);
-    } else {
-      showToast('No poses captured', false);
-    }
-
-    this.refreshLayerPanel();
-  }
-
-  /** Stop all active captures. */
   private stopAllCaptures(): void {
-    for (const palette of [...this.activeSessions.keys()]) {
-      this.stopCaptureForPalette(palette);
-    }
+    this.capture.stopAllCaptures();
   }
 
   /** Show the first captured pose in a large canvas with selection + pixel editing. */
@@ -3981,82 +3875,8 @@ export class SpriteEditorUI {
     }
   }
 
-  /**
-   * Called every frame from the overlay loop. Captures unique poses
-   * for all active palette sessions.
-   */
   private captureFrame(): void {
-    const video = this.emulator.getVideo();
-    if (!video) return;
-
-    // Auto-capture all sprite palettes when REC Sprites is active
-    if (this.allSpriteCaptureActive) {
-      const allSprites = readAllSprites(video);
-      const visiblePalettes = new Set(allSprites.map(s => s.palette));
-      for (const pal of visiblePalettes) {
-        if (!this.activeSessions.has(pal)) {
-          this.activeSessions.set(pal, { poses: [], seenHashes: new Set<string>(), refTileCount: 0 });
-        }
-      }
-    }
-
-    if (this.activeSessions.size === 0) return;
-
-    let changed = false;
-    for (const palette of this.activeSessions.keys()) {
-      if (this.captureGroupsForPalette(video, palette)) changed = true;
-    }
-
-    if (changed) this.refreshLayerPanel();
-  }
-
-  /** Capture all connected sprite groups for a palette. Returns true if new poses were found. */
-  private captureGroupsForPalette(video: CPS1Video, palette: number): boolean {
-    const session = this.activeSessions.get(palette);
-    if (!session) return false;
-
-    const allSprites = readAllSprites(video);
-    const samePalette = allSprites.filter(s => s.palette === palette);
-    if (samePalette.length === 0) return false;
-
-    const gfxRom = this.editor.getGfxRom();
-    if (!gfxRom) return false;
-    const bufs = this.emulator.getBusBuffers();
-
-    // Find all connected groups for this palette
-    const visited = new Set<number>();
-    const groups: SpriteGroupData[] = [];
-    for (const sprite of samePalette) {
-      if (visited.has(sprite.index)) continue;
-      const group = groupCharacter(allSprites, sprite.index);
-      if (!group) continue;
-      for (const s of group.sprites) visited.add(s.index);
-      groups.push(group);
-    }
-
-    if (groups.length === 0) return false;
-
-    // Pick the group closest in tile count to the initial capture (filters fragments + multi-char merges)
-    const ref = session.refTileCount;
-    let bestGroup: SpriteGroupData | null = null;
-    let bestDiff = Infinity;
-    for (const g of groups) {
-      const diff = Math.abs(g.sprites.length - ref);
-      if (diff < bestDiff) {
-        bestDiff = diff;
-        bestGroup = g;
-      }
-    }
-
-    if (!bestGroup) return false;
-
-    const hash = poseHash(bestGroup);
-    if (session.seenHashes.has(hash)) return false;
-    session.seenHashes.add(hash);
-
-    const pal = readPalette(bufs.vram, video.getPaletteBase(), bestGroup.palette);
-    session.poses.push(capturePose(gfxRom, bestGroup, pal));
-    return true;
+    this.capture.captureFrame();
   }
 
   // -- Photo Import --
