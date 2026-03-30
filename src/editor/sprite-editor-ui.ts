@@ -12,7 +12,7 @@ import { LAYER_OBJ, LAYER_SCROLL1, LAYER_SCROLL2, LAYER_SCROLL3, readWord } from
 import { readAllSprites, groupCharacter, assembleCharacter, type SpriteGroup as SpriteGroupData, type CapturedPose } from './sprite-analyzer';
 import { loadPhotoRgba, resizeRgba, quantizeWithDithering, placePhotoOnTiles, generatePalette } from './photo-import';
 import { encodeColor } from './palette-editor';
-import { readPixel as readPixelFn, writePixel as writePixelFn, writeScrollPixel, readTile as readTileFn } from './tile-encoder';
+import { readPixel as readPixelFn, writePixel as writePixelFn, writeScrollPixel } from './tile-encoder';
 import { readPalette, rgbToHsl, hslToRgb } from './palette-editor';
 import { createLayer, createSpriteGroup, createScrollGroup, type PhotoLayer, type LayerGroup } from './layer-model';
 import { LayerPanel } from './layer-panel';
@@ -22,8 +22,9 @@ import { pencilCursor, fillCursor, eyedropperCursor, eraserCursor, wandCursor } 
 import { showToast } from '../ui/toast';
 import type { AsepriteFile } from './aseprite-reader';
 import { exportSpriteAseprite, exportScrollAseprite, importAsepriteFile, importScrollTilemap as importScrollTilemapIO } from './aseprite-io';
-import { buildScrollSets, scrollLayerName, type ScrollSet } from './scroll-capture';
+import { buildScrollSets, type ScrollSet } from './scroll-capture';
 import { CaptureManager } from './capture-session';
+import { SheetViewer, type SheetViewerHost } from './sheet-viewer';
 import { setTooltip } from '../ui/tooltip';
 import { createStatusBar, setStatus } from '../ui/status-bar';
 
@@ -67,10 +68,8 @@ export class SpriteEditorUI {
   // Capture manager (sprite + scroll capture sessions)
   private capture!: CaptureManager;
 
-  // Scroll UI state
-  private scrollHighlightOverlay: HTMLCanvasElement | null = null;
-  private highlightedScrollSet: ScrollSet | null = null;
-  private activeScrollSet: ScrollSet | null = null;
+  // Sheet viewer (fullscreen sprite sheet + scroll set viewer)
+  private sheet!: SheetViewer;
 
   // Head editor
   private headSection: HTMLDivElement | null = null;
@@ -95,21 +94,11 @@ export class SpriteEditorUI {
   private resizeStartX = 0;
   private resizeStartY = 0;
 
-  // Sprite Sheet Viewer
-  private spriteSheetMode = false;
-  private sheetContainer: HTMLDivElement | null = null;
-  private sheetZoomed = false;  // true = viewing single zoomed pose, false = grid view
-  private sheetSelectedPose = 0;
-  private sheetSelectedTile = -1;
-  private sheetZoomCanvas: HTMLCanvasElement | null = null;
-  private sheetZoomCtx: CanvasRenderingContext2D | null = null;
-  private wasPausedBeforeSheet = false;
-
-  private get activeGroup(): LayerGroup | undefined { return this.layerGroups[this.activeGroupIndex]; }
-  private get activeLayer(): PhotoLayer | undefined { return this.activeGroup?.layers[this.activeLayerIndex]; }
-  private get activePoses(): CapturedPose[] { return this.activeGroup?.spriteCapture?.poses ?? []; }
+  get activeGroup(): LayerGroup | undefined { return this.layerGroups[this.activeGroupIndex]; }
+  get activeLayer(): PhotoLayer | undefined { return this.activeGroup?.layers[this.activeLayerIndex]; }
+  get activePoses(): CapturedPose[] { return this.activeGroup?.spriteCapture?.poses ?? []; }
   private get activePoseIndex(): number { return this.activeGroup?.spriteCapture?.selectedPoseIndex ?? 0; }
-  private get activePose(): CapturedPose | undefined { return this.activePoses[this.activePoseIndex]; }
+  get activePose(): CapturedPose | undefined { return this.activePoses[this.activePoseIndex]; }
   private get hasLayers(): boolean { return (this.activeGroup?.layers.length ?? 0) > 0; }
 
   // State
@@ -158,6 +147,7 @@ export class SpriteEditorUI {
     this.gameCanvas = canvas;
     this.editor = new SpriteEditor(emulator);
     this.capture = new CaptureManager(emulator, this.editor, this.layerGroups, () => this.refreshLayerPanel());
+    this.sheet = new SheetViewer(this as unknown as SheetViewerHost);
 
     this.boundKeyHandler = (e) => this.handleKey(e);
     this.boundKeyUpHandler = (e) => this.handleKeyUp(e);
@@ -169,7 +159,7 @@ export class SpriteEditorUI {
       this.refreshTileGrid();
       this.emulator.rerender();
       this.emulator.getRomStore()?.onModified?.();
-      if (this.spriteSheetMode) this.refreshSheetAfterEdit();
+      if (this.sheet.spriteSheetMode) this.sheet.refreshSheetAfterEdit();
       this.refreshLayerPanel();
     });
     this.editor.setOnColorChanged(() => this.refreshPalette());
@@ -295,7 +285,7 @@ export class SpriteEditorUI {
   }
 
   deactivate(): void {
-    if (this.spriteSheetMode) this.exitSpriteSheetMode();
+    if (this.sheet.spriteSheetMode) this.sheet.exitSpriteSheetMode();
     // Preserve tile selection across deactivate/activate
     const savedTile = this.editor.currentTile;
     this.editor.deactivate();
@@ -429,16 +419,16 @@ export class SpriteEditorUI {
       onOpenSpriteSheet: (groupIdx) => {
         this.activeGroupIndex = groupIdx;
         this.activeLayerIndex = -1;
-        this.enterSpriteSheetMode();
+        this.sheet.enterSpriteSheetMode();
       },
       onExportScrollSet: (set) => {
         this.exportScrollSingle(set);
       },
       onHighlightScrollSet: (set) => {
-        this.enterScrollSetMode(set);
+        this.sheet.enterScrollSetMode(set);
       },
       onRenderScrollThumb: (set) => {
-        return this.renderScrollSetThumbnail(set);
+        return this.sheet.renderScrollSetThumbnail(set);
       },
       onImportAseprite: () => {
         this.importAseprite();
@@ -1340,7 +1330,7 @@ export class SpriteEditorUI {
 
   // -- Rendering --
 
-  private refreshTileGrid(): void {
+  refreshTileGrid(): void {
     const ctx = this.tileCtx;
     if (!ctx || !this.tileCanvas) return;
 
@@ -1404,7 +1394,7 @@ export class SpriteEditorUI {
     }
   }
 
-  private refreshPalette(): void {
+  refreshPalette(): void {
     if (!this.paletteContainer) return;
     this.paletteContainer.innerHTML = '';
 
@@ -1606,7 +1596,7 @@ export class SpriteEditorUI {
 
   }
 
-  private refreshInfoBar(): void {
+  refreshInfoBar(): void {
     if (!this.infoBar) return;
     const tile = this.editor.currentTile;
     if (!tile) {
@@ -1640,8 +1630,8 @@ export class SpriteEditorUI {
     this.infoBar.textContent = text;
   }
 
-  private updateStatus(): void {
-    if (this.spriteSheetMode) {
+  updateStatus(): void {
+    if (this.sheet.spriteSheetMode) {
       setStatus('Up/Down: browse poses — Left/Right: browse tiles — Escape: back');
       return;
     }
@@ -1664,8 +1654,8 @@ export class SpriteEditorUI {
     if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
 
     // Sprite sheet mode keyboard handling
-    if (this.spriteSheetMode) {
-      this.handleSheetKey(e);
+    if (this.sheet.spriteSheetMode) {
+      this.sheet.handleSheetKey(e);
       return;
     }
 
@@ -1796,961 +1786,9 @@ export class SpriteEditorUI {
     }
   }
 
-  // -- Sprite Sheet Viewer --
+  // Sheet viewer methods moved to sheet-viewer.ts
 
-  /** Handle keyboard events while in sprite sheet mode. */
-  private handleSheetKey(e: KeyboardEvent): void {
-    const poses = this.activePoses;
-
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      this.exitSpriteSheetMode();
-      return;
-    }
-
-    // Arrow keys navigate tiles within the zoomed pose
-    const pose = poses[this.sheetSelectedPose];
-    if (!pose) return;
-    const tileCount = pose.tiles.length;
-
-    switch (e.key) {
-      case 'ArrowRight':
-        e.preventDefault();
-        if (tileCount > 0) {
-          this.sheetSelectedTile = Math.min(this.sheetSelectedTile + 1, tileCount - 1);
-          this.selectSheetTile(this.sheetSelectedTile);
-        }
-        break;
-      case 'ArrowLeft':
-        e.preventDefault();
-        if (tileCount > 0) {
-          this.sheetSelectedTile = Math.max(this.sheetSelectedTile - 1, 0);
-          this.selectSheetTile(this.sheetSelectedTile);
-        }
-        break;
-      case 'ArrowDown':
-        e.preventDefault();
-        // Navigate to next pose in sidebar
-        if (this.sheetSelectedPose < poses.length - 1) {
-          this.selectPoseInSheet(this.sheetSelectedPose + 1);
-        }
-        break;
-      case 'ArrowUp':
-        e.preventDefault();
-        // Navigate to previous pose in sidebar
-        if (this.sheetSelectedPose > 0) {
-          this.selectPoseInSheet(this.sheetSelectedPose - 1);
-        }
-        break;
-      default:
-        this.handleToolShortcut(e);
-        break;
-    }
-  }
-
-  /** Forward tool shortcuts while in sheet zoomed view. */
-  private handleToolShortcut(e: KeyboardEvent): void {
-    // Layer controls: Shift+arrows = move, +/- = resize
-    const layer = this.activeGroup?.layers[this.activeLayerIndex];
-    if (layer) {
-      if (e.shiftKey && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
-        e.preventDefault();
-        if (e.key === 'ArrowUp') layer.offsetY--;
-        else if (e.key === 'ArrowDown') layer.offsetY++;
-        else if (e.key === 'ArrowLeft') layer.offsetX--;
-        else if (e.key === 'ArrowRight') layer.offsetX++;
-        this.renderSheetZoomedPose();
-        return;
-      }
-      if (e.key === '+' || e.key === '=') {
-        e.preventDefault();
-        const newW = layer.width + 1;
-        const newH = layer.height + 1;
-        layer.rgbaData = resizeRgba(layer.rgbaOriginal, newW, newH);
-        layer.width = newW;
-        layer.height = newH;
-        this.renderSheetZoomedPose();
-        return;
-      }
-      if (e.key === '-') {
-        e.preventDefault();
-        const newW = Math.max(4, layer.width - 1);
-        const newH = Math.max(4, layer.height - 1);
-        layer.rgbaData = resizeRgba(layer.rgbaOriginal, newW, newH);
-        layer.width = newW;
-        layer.height = newH;
-        this.renderSheetZoomedPose();
-        return;
-      }
-    }
-
-    switch (e.key) {
-      case 'b': case 'B':
-        this.editor.setTool('pencil'); e.preventDefault(); break;
-      case 'g': case 'G':
-        this.editor.setTool('fill'); e.preventDefault(); break;
-      case 'i': case 'I':
-        this.editor.setTool('eyedropper'); e.preventDefault(); break;
-      case 'x': case 'X':
-        this.editor.setTool('eraser'); e.preventDefault(); break;
-      case 'w': case 'W':
-        this.editor.setTool('wand'); e.preventDefault(); break;
-      case 'Delete': case 'Backspace':
-        this.editor.eraseTile();
-        if (this.spriteSheetMode) this.refreshSheetAfterEdit();
-        e.preventDefault(); break;
-      case 'z': case 'Z':
-        if (e.ctrlKey || e.metaKey) {
-          if (e.shiftKey) this.editor.redo(); else this.editor.undo();
-          e.preventDefault();
-        }
-        break;
-      case '[':
-        this.editor.setActiveColor((this.editor.activeColorIndex - 1 + 16) % 16);
-        this.refreshPalette(); e.preventDefault(); break;
-      case ']':
-        this.editor.setActiveColor((this.editor.activeColorIndex + 1) % 16);
-        this.refreshPalette(); e.preventDefault(); break;
-    }
-  }
-
-  /**
-   * Enter the fullscreen sprite sheet viewer mode.
-   * Called after pose capture completes.
-   */
-  private enterSpriteSheetMode(): void {
-    const poses = this.activePoses;
-    if (poses.length === 0) return;
-
-    // Clean up any existing sheet container from a previous session
-    if (this.sheetContainer) {
-      this.sheetContainer.remove();
-      this.sheetContainer = null;
-    }
-
-    this.spriteSheetMode = true;
-    this.sheetZoomed = true;
-    this.sheetSelectedPose = 0;
-    this.sheetSelectedTile = -1;
-    this.sheetZoomCanvas = null;
-    this.sheetZoomCtx = null;
-
-    // Pause the game (frames + audio), remembering prior state
-    this.wasPausedBeforeSheet = this.emulator.isPaused();
-    if (!this.wasPausedBeforeSheet) {
-      this.emulator.pause();
-      this.emulator.suspendAudio();
-    }
-
-    // Hide game canvas, overlay, and emu bar
-    this.gameCanvas.style.display = 'none';
-    const emuBar = document.getElementById('emu-bar');
-    if (emuBar) emuBar.style.display = 'none';
-    if (this.overlay) this.overlay.style.display = 'none';
-
-    // Create sheet container (fixed fullscreen, respects layer/debug panels via CSS)
-    const container = document.createElement('div');
-    container.className = 'sprite-sheet-viewer';
-    this.sheetContainer = container;
-    document.body.appendChild(container);
-
-    // Refresh all previews from current GFX ROM state, then show edit view
-    this.refreshAllPosePreviews();
-    this.renderSheetZoomedView();
-    this.updateStatus();
-  }
-
-  // ---------------------------------------------------------------------------
-  // Scroll Set Viewer (reuses sprite sheet viewer container)
-  // ---------------------------------------------------------------------------
-
-  private enterScrollSetMode(set: ScrollSet): void {
-    // Exit existing modes
-    if (this.spriteSheetMode) this.exitSpriteSheetMode();
-    if (this.sheetContainer) {
-      this.sheetContainer.remove();
-      this.sheetContainer = null;
-    }
-
-    this.activeScrollSet = set;
-    this.spriteSheetMode = true; // reuse the same flag for Escape handling
-
-    // Pause
-    this.wasPausedBeforeSheet = this.emulator.isPaused();
-    if (!this.wasPausedBeforeSheet) {
-      this.emulator.pause();
-      this.emulator.suspendAudio();
-    }
-
-    // Hide game
-    this.gameCanvas.style.display = 'none';
-    const emuBar = document.getElementById('emu-bar');
-    if (emuBar) emuBar.style.display = 'none';
-    if (this.overlay) this.overlay.style.display = 'none';
-
-    const container = document.createElement('div');
-    container.className = 'sprite-sheet-viewer';
-    this.sheetContainer = container;
-    document.body.appendChild(container);
-
-    this.renderScrollSetView();
-  }
-
-  private renderScrollSetView(): void {
-    const container = this.sheetContainer;
-    const set = this.activeScrollSet;
-    if (!container || !set) return;
-    container.innerHTML = '';
-
-    const gfxRom = this.editor.getGfxRom();
-    if (!gfxRom) return;
-    const video = this.emulator.getVideo();
-    if (!video) return;
-    const bufs = this.emulator.getBusBuffers();
-
-    const { tileW, tileH, palette: palIdx, tiles, layerId } = set;
-    const colors = readPalette(bufs.vram, video.getPaletteBase(), palIdx);
-
-    // No sidebar for scroll sets
-    const main = el('div', 'sprite-sheet-main');
-
-    // Header
-    const header = el('div', 'sprite-sheet-header');
-    const title = document.createElement('h3');
-    title.textContent = `${scrollLayerName(layerId)} · Palette #${palIdx} · ${tiles.length} tiles`;
-    header.appendChild(title);
-
-    const exportBtn = el('button', 'sprite-sheet-back') as HTMLButtonElement;
-    exportBtn.textContent = 'Export .aseprite';
-    setTooltip(exportBtn, 'Export as Aseprite tilemap (16 colors)');
-    exportBtn.onclick = () => this.exportScrollSingle(set);
-    header.appendChild(exportBtn);
-
-    const backBtn = el('button', 'sprite-sheet-back') as HTMLButtonElement;
-    backBtn.textContent = 'Close';
-    setTooltip(backBtn, 'Back to game — Escape');
-    backBtn.onclick = () => this.exitSpriteSheetMode();
-    header.appendChild(backBtn);
-    main.appendChild(header);
-
-    // Scroll reconstitution (assembled tiles on grid)
-    const zoomSection = el('div', 'sprite-sheet-zoom');
-
-    // Bounding box
-    let minCol = Infinity, minRow = Infinity, maxCol = -Infinity, maxRow = -Infinity;
-    for (const tile of tiles) {
-      if (tile.tileCol < minCol) minCol = tile.tileCol;
-      if (tile.tileRow < minRow) minRow = tile.tileRow;
-      if (tile.tileCol > maxCol) maxCol = tile.tileCol;
-      if (tile.tileRow > maxRow) maxRow = tile.tileRow;
-    }
-    const gridCols = maxCol - minCol + 1;
-    const gridRows = maxRow - minRow + 1;
-    const w = gridCols * tileW;
-    const h = gridRows * tileH;
-
-    const cssScale = Math.max(2, Math.min(4, Math.floor(800 / Math.max(w, h))));
-    const cvs = document.createElement('canvas');
-    cvs.width = w;
-    cvs.height = h;
-    cvs.style.width = `${w * cssScale}px`;
-    cvs.style.height = `${h * cssScale}px`;
-    cvs.style.imageRendering = 'pixelated';
-    const ctx = cvs.getContext('2d')!;
-
-    // Render all tiles
-    const imgData = ctx.createImageData(w, h);
-    const data = imgData.data;
-    for (const tile of tiles) {
-      const gx = tile.tileCol - minCol;
-      const gy = tile.tileRow - minRow;
-      const pixels = readTileFn(gfxRom, tile.tileCode, tile.tileW, tile.tileH, tile.charSize);
-      for (let ty = 0; ty < tileH; ty++) {
-        for (let tx = 0; tx < tileW; tx++) {
-          let lx = tx, ly = ty;
-          if (tile.flipX) lx = tileW - 1 - tx;
-          if (tile.flipY) ly = tileH - 1 - ty;
-          const colorIdx = pixels[ly * tileW + lx]!;
-          if (colorIdx === 15) continue;
-          const [r, g, b] = colors[colorIdx] ?? [0, 0, 0];
-          const px = gx * tileW + tx;
-          const py = gy * tileH + ty;
-          const off = (py * w + px) * 4;
-          data[off] = r;
-          data[off + 1] = g;
-          data[off + 2] = b;
-          data[off + 3] = 255;
-        }
-      }
-    }
-    ctx.putImageData(imgData, 0, 0);
-    zoomSection.appendChild(cvs);
-
-    // Tile strip below
-    const tilesLabel = el('div', 'edit-section-label');
-    tilesLabel.textContent = `Tiles (${tiles.length})`;
-    tilesLabel.style.marginTop = '12px';
-    zoomSection.appendChild(tilesLabel);
-
-    const tilesGrid = el('div', 'sprite-sheet-tiles');
-    const seenCodes = new Set<number>();
-    for (const tile of tiles) {
-      if (seenCodes.has(tile.tileCode)) continue;
-      seenCodes.add(tile.tileCode);
-
-      const tileCanvas = document.createElement('canvas');
-      tileCanvas.width = tileW;
-      tileCanvas.height = tileH;
-      tileCanvas.style.width = `${tileW * 2}px`;
-      tileCanvas.style.height = `${tileH * 2}px`;
-      tileCanvas.style.imageRendering = 'pixelated';
-      tileCanvas.style.border = '1px solid #333';
-      tileCanvas.style.cursor = 'pointer';
-      const tCtx = tileCanvas.getContext('2d')!;
-      const tImg = tCtx.createImageData(tileW, tileH);
-      const tData = tImg.data;
-      const pixels = readTileFn(gfxRom, tile.tileCode, tile.tileW, tile.tileH, tile.charSize);
-      for (let i = 0; i < tileW * tileH; i++) {
-        const colorIdx = pixels[i]!;
-        if (colorIdx === 15) continue;
-        const [r, g, b] = colors[colorIdx] ?? [0, 0, 0];
-        tData[i * 4] = r;
-        tData[i * 4 + 1] = g;
-        tData[i * 4 + 2] = b;
-        tData[i * 4 + 3] = 255;
-      }
-      tCtx.putImageData(tImg, 0, 0);
-      tilesGrid.appendChild(tileCanvas);
-    }
-    zoomSection.appendChild(tilesGrid);
-
-    main.appendChild(zoomSection);
-    container.appendChild(main);
-  }
-
-  /** Render the pose grid view inside the sheet container. */
-  private renderSheetGrid(): void {
-    const container = this.sheetContainer;
-    if (!container) return;
-    container.innerHTML = '';
-
-    const poses = this.activePoses;
-
-    // Main content area (no sidebar in grid mode)
-    const main = el('div', 'sprite-sheet-main');
-
-    // Header
-    const header = el('div', 'sprite-sheet-header');
-    const title = document.createElement('h3');
-    title.textContent = `${poses.length} captured pose${poses.length !== 1 ? 's' : ''}`;
-    header.appendChild(title);
-
-    const backBtn = el('button', 'sprite-sheet-back') as HTMLButtonElement;
-    backBtn.textContent = 'Close';
-    setTooltip(backBtn, 'Back to game — Escape');
-    backBtn.onclick = () => this.exitSpriteSheetMode();
-    header.appendChild(backBtn);
-    main.appendChild(header);
-
-    // Grid
-    const grid = el('div', 'sprite-sheet-grid');
-
-    for (let i = 0; i < poses.length; i++) {
-      const pose = poses[i]!;
-      const cell = el('div', 'sprite-sheet-cell') as HTMLDivElement;
-      setTooltip(cell, 'Click to zoom into this pose');
-      if (i === this.sheetSelectedPose) cell.classList.add('selected');
-
-      cell.onclick = () => {
-        this.sheetSelectedPose = i;
-        this.selectPoseInSheet(i);
-      };
-
-      const cvs = document.createElement('canvas');
-      cvs.width = pose.w;
-      cvs.height = pose.h;
-      const ctx = cvs.getContext('2d')!;
-      ctx.putImageData(pose.preview, 0, 0);
-      cell.appendChild(cvs);
-
-      // Index badge
-      const idxBadge = el('div', 'pose-index');
-      idxBadge.textContent = `${i}`;
-      cell.appendChild(idxBadge);
-
-      // Tile count badge
-      const tileBadge = el('div', 'pose-tiles');
-      tileBadge.textContent = `${pose.tiles.length}t`;
-      cell.appendChild(tileBadge);
-
-      grid.appendChild(cell);
-    }
-
-    main.appendChild(grid);
-    container.appendChild(main);
-  }
-
-  /**
-   * Zoom into a single pose for editing.
-   */
-  private selectPoseInSheet(index: number): void {
-    const poses = this.activePoses;
-    const pose = poses[index];
-    if (!pose) return;
-
-    this.sheetSelectedPose = index;
-    this.sheetZoomed = true;
-    this.sheetSelectedTile = -1;
-
-    // Update spriteCapture's selectedPoseIndex
-    const group = this.activeGroup;
-    if (group?.spriteCapture) {
-      group.spriteCapture.selectedPoseIndex = index;
-    }
-    this.selectedPoseIndex = index;
-
-    this.renderSheetZoomedView();
-  }
-
-  /** Render the zoomed pose view with tile grid below + pose sidebar on the left. */
-  private renderSheetZoomedView(): void {
-    const container = this.sheetContainer;
-    if (!container) return;
-    container.innerHTML = '';
-
-    const poses = this.activePoses;
-    const pose = poses[this.sheetSelectedPose];
-    if (!pose) return;
-
-    // Left sidebar: all poses stacked vertically
-    const sidebar = el('div', 'sprite-sheet-sidebar');
-    for (let i = 0; i < poses.length; i++) {
-      const p = poses[i]!;
-      const cell = el('div', 'sprite-sheet-sidebar-cell') as HTMLDivElement;
-      if (i === this.sheetSelectedPose) cell.classList.add('selected');
-
-      const cvs = document.createElement('canvas');
-      cvs.width = p.w;
-      cvs.height = p.h;
-      cvs.getContext('2d')!.putImageData(p.preview, 0, 0);
-      cell.appendChild(cvs);
-
-      const badge = el('div', 'pose-index');
-      badge.textContent = `${i}`;
-      cell.appendChild(badge);
-
-      setTooltip(cell, 'Switch to this pose — Up/Down arrows');
-      cell.onclick = () => this.selectPoseInSheet(i);
-      sidebar.appendChild(cell);
-    }
-    container.appendChild(sidebar);
-
-    // Main content area
-    const main = el('div', 'sprite-sheet-main');
-
-    // Header
-    const header = el('div', 'sprite-sheet-header');
-    const title = document.createElement('h3');
-    title.textContent = `Pose ${this.sheetSelectedPose} / ${poses.length - 1} (${pose.w}\u00D7${pose.h}, ${pose.tiles.length} tiles)`;
-    header.appendChild(title);
-
-    const exportAseBtn = el('button', 'sprite-sheet-back') as HTMLButtonElement;
-    exportAseBtn.textContent = 'Export .aseprite';
-    setTooltip(exportAseBtn, 'Export all poses as .aseprite file (for editing in Aseprite)');
-    exportAseBtn.onclick = () => this.exportAseprite();
-    header.appendChild(exportAseBtn);
-
-    // Sprite photo layer controls (shown when layers exist)
-    const hasPhotoLayers = (this.activeGroup?.layers.length ?? 0) > 0;
-    if (hasPhotoLayers) {
-      const activeLayer = this.activeGroup?.layers[this.activeLayerIndex];
-      const isQuantized = activeLayer?.quantized ?? false;
-
-      if (!isQuantized) {
-        const updatePalLabel = el('label', 'sprite-sheet-update-pal') as HTMLLabelElement;
-        const updatePalCb = document.createElement('input');
-        updatePalCb.type = 'checkbox';
-        updatePalCb.id = 'update-palette-cb';
-        const updatePalText = document.createElement('span');
-        updatePalText.textContent = 'Update palette';
-        updatePalLabel.append(updatePalCb, updatePalText);
-        header.appendChild(updatePalLabel);
-
-        const quantizeBtn = el('button', 'sprite-sheet-back') as HTMLButtonElement;
-        quantizeBtn.textContent = 'Quantize';
-        quantizeBtn.onclick = () => {
-          this.quantizeSpritePhotoLayer(updatePalCb.checked);
-          this.renderSheetZoomedView();
-        };
-        header.appendChild(quantizeBtn);
-      } else {
-        const mergeBtn = el('button', 'sprite-sheet-back') as HTMLButtonElement;
-        mergeBtn.textContent = 'Merge';
-        mergeBtn.onclick = () => {
-          this.mergeSpritePhotoLayer();
-          this.renderSheetZoomedView();
-        };
-        header.appendChild(mergeBtn);
-      }
-
-      const removeBtn = el('button', 'sprite-sheet-back') as HTMLButtonElement;
-      removeBtn.textContent = 'Remove Photo';
-      removeBtn.onclick = () => {
-        if (this.activeGroup) {
-          this.activeGroup.layers.splice(this.activeLayerIndex, 1);
-          this.activeLayerIndex = -1;
-          this.renderSheetZoomedView();
-        }
-      };
-      header.appendChild(removeBtn);
-    }
-
-    const backBtn = el('button', 'sprite-sheet-back') as HTMLButtonElement;
-    backBtn.textContent = 'Close';
-    setTooltip(backBtn, 'Back to game — Escape');
-    backBtn.onclick = () => this.exitSpriteSheetMode();
-    header.appendChild(backBtn);
-    main.appendChild(header);
-
-    // Zoomed canvas — native resolution, CSS x2 (each CPS1 pixel = 2 CSS pixels)
-    const zoomSection = el('div', 'sprite-sheet-zoom');
-    const scale = 1; // canvas at native CPS1 resolution
-    const cssScale = 4; // CSS display scale — each CPS1 pixel = 4 CSS pixels
-    const zoomCvs = document.createElement('canvas');
-    zoomCvs.width = pose.w;
-    zoomCvs.height = pose.h;
-    zoomCvs.style.width = `${pose.w * cssScale}px`;
-    zoomCvs.style.height = `${pose.h * cssScale}px`;
-    this.sheetZoomCanvas = zoomCvs;
-    this.sheetZoomCtx = zoomCvs.getContext('2d')!;
-    this.sheetZoomCtx.imageSmoothingEnabled = false;
-
-    // Mouse interaction: drag/resize layer or click to select tile
-    let draggingPhotoLayer = false;
-    let resizingPhotoLayer = false;
-    let resizeCorner = '';
-    let dragStartX = 0;
-    let dragStartY = 0;
-    let dragMoved = false;
-
-    zoomCvs.addEventListener('mousedown', (e) => {
-      const rect = zoomCvs.getBoundingClientRect();
-      const px = Math.floor((e.clientX - rect.left) / cssScale);
-      const py = Math.floor((e.clientY - rect.top) / cssScale);
-
-      const layer = this.activeGroup?.layers[this.activeLayerIndex];
-      if (layer) {
-        const lx = layer.offsetX;
-        const ly = layer.offsetY;
-        const lw = layer.width;
-        const lh = layer.height;
-        const ht = 3; // corner handle tolerance in CPS1 pixels
-
-        // Check corner handles first → resize
-        const corners: [string, number, number][] = [
-          ['tl', lx, ly], ['tr', lx + lw, ly],
-          ['bl', lx, ly + lh], ['br', lx + lw, ly + lh],
-        ];
-        for (const [corner, cx, cy] of corners) {
-          if (Math.abs(px - cx) <= ht && Math.abs(py - cy) <= ht) {
-            resizingPhotoLayer = true;
-            resizeCorner = corner;
-            dragStartX = px;
-            dragStartY = py;
-            dragMoved = false;
-            e.preventDefault();
-            return;
-          }
-        }
-
-        // Click inside layer → drag
-        if (px >= lx && px < lx + lw && py >= ly && py < ly + lh) {
-          draggingPhotoLayer = true;
-          dragStartX = px;
-          dragStartY = py;
-          dragMoved = false;
-          e.preventDefault();
-          return;
-        }
-      }
-    });
-
-    const onMove = (e: MouseEvent) => {
-      const layer = this.activeGroup?.layers[this.activeLayerIndex];
-      if (!layer) return;
-      const rect = zoomCvs.getBoundingClientRect();
-      const px = Math.floor((e.clientX - rect.left) / cssScale);
-      const py = Math.floor((e.clientY - rect.top) / cssScale);
-      const dx = px - dragStartX;
-      const dy = py - dragStartY;
-      if (dx === 0 && dy === 0) return;
-      dragMoved = true;
-
-      if (resizingPhotoLayer) {
-        // Resize from corner handle — maintain aspect ratio
-        const delta = Math.abs(dx) > Math.abs(dy) ? dx : dy;
-        const sign = (resizeCorner === 'tl' || resizeCorner === 'bl') ? -1 : 1;
-        const origW = layer.rgbaOriginal.width;
-        const origH = layer.rgbaOriginal.height;
-        const newW = Math.max(4, layer.width + delta * sign);
-        const newH = Math.max(4, Math.round(newW * origH / origW));
-        if (resizeCorner.includes('l')) layer.offsetX += layer.width - newW;
-        if (resizeCorner.includes('t')) layer.offsetY += layer.height - newH;
-        layer.rgbaData = resizeRgba(layer.rgbaOriginal, newW, newH);
-        layer.width = newW;
-        layer.height = newH;
-      } else if (draggingPhotoLayer) {
-        layer.offsetX += dx;
-        layer.offsetY += dy;
-      } else {
-        return;
-      }
-      dragStartX = px;
-      dragStartY = py;
-      this.renderSheetZoomedPose();
-    };
-
-    const onUp = (e: MouseEvent) => {
-      if (draggingPhotoLayer || resizingPhotoLayer) {
-        draggingPhotoLayer = false;
-        resizingPhotoLayer = false;
-        if (dragMoved) return; // don't select tile if we dragged
-      }
-      // Click to select tile (only if not dragging)
-      const rect = zoomCvs.getBoundingClientRect();
-      const px = Math.floor((e.clientX - rect.left) / cssScale);
-      const py = Math.floor((e.clientY - rect.top) / cssScale);
-
-      const tileIdx = pose.tiles.findIndex(t =>
-        px >= t.relX && px < t.relX + 16 && py >= t.relY && py < t.relY + 16,
-      );
-      if (tileIdx !== -1) {
-        this.sheetSelectedTile = tileIdx;
-        this.selectSheetTile(tileIdx);
-      }
-    };
-
-    // Use document for move/up so drag works even outside canvas
-    zoomCvs.addEventListener('mousedown', () => {
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp, { once: true });
-    });
-    zoomCvs.addEventListener('mouseup', () => {
-      document.removeEventListener('mousemove', onMove);
-    });
-
-    this.renderSheetZoomedPose();
-    zoomSection.appendChild(zoomCvs);
-
-    // Hint text when no photo layer
-    if (!hasPhotoLayers) {
-      const hint = el('div', 'edit-capture-hint') as HTMLDivElement;
-      hint.textContent = 'Export to Aseprite to edit';
-      zoomSection.appendChild(hint);
-    }
-
-    // Drop zone disabled — editing happens in Aseprite
-
-    // Tile strip (horizontal row)
-    const tilesLabel = el('div', 'edit-section-label');
-    tilesLabel.textContent = 'Tiles';
-    zoomSection.appendChild(tilesLabel);
-
-    const tilesGrid = el('div', 'sprite-sheet-tiles');
-    this.renderSheetTileGrid(tilesGrid, pose);
-    zoomSection.appendChild(tilesGrid);
-
-    main.appendChild(zoomSection);
-    container.appendChild(main);
-  }
-
-  /** Refresh all sheet visuals after a tile edit. */
-  private refreshSheetAfterEdit(): void {
-    this.refreshAllPosePreviews();
-    this.renderSheetZoomedPose();
-    this.refreshSheetSidebar();
-    // Refresh tile grid
-    const tilesGrid = this.sheetContainer?.querySelector('.sprite-sheet-tiles');
-    const pose = this.activePoses[this.sheetSelectedPose];
-    if (tilesGrid && pose) this.renderSheetTileGrid(tilesGrid as HTMLElement, pose);
-  }
-
-  /** Re-read ALL pose previews from the current GFX ROM. */
-  private refreshAllPosePreviews(): void {
-    const ag = this.activeGroup;
-    if (!ag?.spriteCapture) return;
-    const video = this.emulator.getVideo();
-    if (!video) return;
-    const gfxRom = this.editor.getGfxRom();
-    if (!gfxRom) return;
-    const bufs = this.emulator.getBusBuffers();
-    const pal = ag.spriteCapture.palette;
-    const palette = readPalette(bufs.vram, video.getPaletteBase(), pal);
-
-    for (const pose of ag.spriteCapture.poses) {
-      const sprGroup: SpriteGroupData = {
-        sprites: [], palette: pal,
-        bounds: { x: 0, y: 0, w: pose.w, h: pose.h },
-        tiles: pose.tiles,
-      };
-      pose.preview = assembleCharacter(gfxRom, sprGroup, palette);
-    }
-  }
-
-  /** Re-render the zoomed pose preview canvas (called on tile changes). */
-  private renderSheetZoomedPose(): void {
-    const ctx = this.sheetZoomCtx;
-    const cvs = this.sheetZoomCanvas;
-    if (!ctx || !cvs) return;
-
-    const poses = this.activePoses;
-    const pose = poses[this.sheetSelectedPose];
-    if (!pose) return;
-
-    // Rebuild preview directly from GFX ROM (not from cached pose.preview)
-    const gfxRom = this.editor.getGfxRom();
-    if (!gfxRom) return;
-    const video = this.emulator.getVideo();
-    if (!video) return;
-    const bufs = this.emulator.getBusBuffers();
-    const ag = this.activeGroup;
-    const pal = ag?.spriteCapture?.palette ?? 0;
-    const palette = readPalette(bufs.vram, video.getPaletteBase(), pal);
-
-    const sprGroup: SpriteGroupData = {
-      sprites: [], palette: pal,
-      bounds: { x: 0, y: 0, w: pose.w, h: pose.h },
-      tiles: pose.tiles,
-    };
-    const freshPreview = assembleCharacter(gfxRom, sprGroup, palette);
-
-    const tmp = document.createElement('canvas');
-    tmp.width = pose.w;
-    tmp.height = pose.h;
-    tmp.getContext('2d')!.putImageData(freshPreview, 0, 0);
-
-    ctx.clearRect(0, 0, cvs.width, cvs.height);
-    ctx.drawImage(tmp, 0, 0);
-
-    // Draw photo layers on top of sprite
-    const group = this.activeGroup;
-    if (group) {
-      for (const layer of group.layers) {
-        if (!layer.visible) continue;
-        const layerCvs = document.createElement('canvas');
-        layerCvs.width = layer.width;
-        layerCvs.height = layer.height;
-        const layerCtx = layerCvs.getContext('2d')!;
-        if (layer.quantized) {
-          const palArr = readPalette(bufs.vram, video.getPaletteBase(), pal);
-          const imgData = new ImageData(layer.width, layer.height);
-          for (let i = 0; i < layer.pixels.length; i++) {
-            const ci = layer.pixels[i]!;
-            if (ci === 0) continue;
-            const [r, g, b] = palArr[ci] ?? [0, 0, 0];
-            imgData.data[i * 4] = r;
-            imgData.data[i * 4 + 1] = g;
-            imgData.data[i * 4 + 2] = b;
-            imgData.data[i * 4 + 3] = 255;
-          }
-          layerCtx.putImageData(imgData, 0, 0);
-        } else {
-          layerCtx.putImageData(layer.rgbaData, 0, 0);
-        }
-        ctx.drawImage(layerCvs, layer.offsetX, layer.offsetY);
-      }
-    }
-
-    // Draw tile grid overlay (16x16 boundaries)
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
-    ctx.lineWidth = 0.5;
-    for (const t of pose.tiles) {
-      ctx.strokeRect(t.relX + 0.5, t.relY + 0.5, 15, 15);
-    }
-
-    // Draw active photo layer selection outline + resize handles
-    const activeLayer = group?.layers[this.activeLayerIndex];
-    if (activeLayer) {
-      const lx = activeLayer.offsetX;
-      const ly = activeLayer.offsetY;
-      const lw = activeLayer.width;
-      const lh = activeLayer.height;
-
-      ctx.strokeStyle = 'rgba(0, 200, 255, 0.7)';
-      ctx.lineWidth = 1;
-      ctx.setLineDash([3, 3]);
-      ctx.strokeRect(lx - 0.5, ly - 0.5, lw + 1, lh + 1);
-      ctx.setLineDash([]);
-
-      // Resize handles (4 corners)
-      const hs = 2;
-      ctx.fillStyle = 'rgba(0, 200, 255, 0.9)';
-      ctx.fillRect(lx - hs, ly - hs, hs * 2, hs * 2);
-      ctx.fillRect(lx + lw - hs, ly - hs, hs * 2, hs * 2);
-      ctx.fillRect(lx - hs, ly + lh - hs, hs * 2, hs * 2);
-      ctx.fillRect(lx + lw - hs, ly + lh - hs, hs * 2, hs * 2);
-    }
-
-    // Draw selected tile highlight (dashed outline, no fill)
-    if (this.sheetSelectedTile >= 0 && this.sheetSelectedTile < pose.tiles.length) {
-      const t = pose.tiles[this.sheetSelectedTile]!;
-      ctx.strokeStyle = '#ff1a50';
-      ctx.lineWidth = 1;
-      ctx.setLineDash([2, 2]);
-      ctx.strokeRect(t.relX + 0.5, t.relY + 0.5, 15, 15);
-      ctx.setLineDash([]);
-    }
-  }
-
-  /** Refresh sidebar pose thumbnails after edits. */
-  private refreshSheetSidebar(): void {
-    if (!this.sheetContainer) return;
-    const cells = this.sheetContainer.querySelectorAll('.sprite-sheet-sidebar-cell canvas');
-    const poses = this.activePoses;
-    cells.forEach((cvs, i) => {
-      const pose = poses[i];
-      if (!pose) return;
-      const ctx = (cvs as HTMLCanvasElement).getContext('2d');
-      if (ctx) ctx.putImageData(pose.preview, 0, 0);
-    });
-  }
-
-  /** Render the mini tile grid for the zoomed pose. */
-  private renderSheetTileGrid(container: HTMLElement, pose: CapturedPose): void {
-    container.innerHTML = '';
-
-    const gfxRom = this.editor.getGfxRom();
-    if (!gfxRom) return;
-
-    const video = this.emulator.getVideo();
-    if (!video) return;
-    const bufs = this.emulator.getBusBuffers();
-    const paletteIdx = this.activeGroup?.spriteCapture?.palette ?? 0;
-    const palette = readPalette(bufs.vram, video.getPaletteBase(), paletteIdx);
-
-    // Compute refCount for each tile to show shared indicator
-    const objBuf = video.getObjBuffer();
-    const vram = bufs.vram;
-    const cpsaRegs = video.getCpsaRegs();
-    const mapperTable = video.getMapperTable();
-    const bankSizes = video.getBankSizes();
-    const bankBases = video.getBankBases();
-
-    for (let i = 0; i < pose.tiles.length; i++) {
-      const t = pose.tiles[i]!;
-
-      // Wrapper div for tile + optional shared badge
-      const tileWrap = el('div', 'sprite-sheet-tile-wrap') as HTMLDivElement;
-
-      const tileCvs = document.createElement('canvas');
-      tileCvs.width = 16;
-      tileCvs.height = 16;
-      tileCvs.className = 'sprite-sheet-tile';
-      if (i === this.sheetSelectedTile) tileCvs.classList.add('active');
-
-      const tileCtx = tileCvs.getContext('2d')!;
-      const pixels = readTileFn(gfxRom, t.mappedCode, 16, 16, 128);
-      const img = new ImageData(16, 16);
-      for (let py = 0; py < 16; py++) {
-        for (let px = 0; px < 16; px++) {
-          const srcX = t.flipX ? 15 - px : px;
-          const srcY = t.flipY ? 15 - py : py;
-          const colorIdx = pixels[srcY * 16 + srcX]!;
-          if (colorIdx === 15) continue; // transparent pen
-          const [r, g, b] = palette[colorIdx] ?? [0, 0, 0];
-          const di = (py * 16 + px) * 4;
-          img.data[di] = r;
-          img.data[di + 1] = g;
-          img.data[di + 2] = b;
-          img.data[di + 3] = 255;
-        }
-      }
-      tileCtx.putImageData(img, 0, 0);
-      tileWrap.appendChild(tileCvs);
-
-      // Shared badge
-      const refs = findTileReferences(t.mappedCode, objBuf, vram, cpsaRegs, mapperTable, bankSizes, bankBases);
-      const isShared = refs.length > 1;
-      if (isShared) {
-        const badge = el('div', 'sprite-sheet-tile-shared') as HTMLDivElement;
-        badge.textContent = `×${refs.length}`;
-        setTooltip(badge, `Shared by ${refs.length} sprites — editing affects all of them`);
-        tileWrap.appendChild(badge);
-      }
-
-      setTooltip(tileWrap, 'Click to edit this tile — Left/Right arrows');
-      tileWrap.onclick = () => {
-        this.sheetSelectedTile = i;
-        this.selectSheetTile(i);
-      };
-
-      container.appendChild(tileWrap);
-    }
-  }
-
-  /** Select a tile in the zoomed pose view and set up the editor for it. */
-  private selectSheetTile(tileIdx: number): void {
-    const poses = this.activePoses;
-    const pose = poses[this.sheetSelectedPose];
-    if (!pose) return;
-    const t = pose.tiles[tileIdx];
-    if (!t) return;
-
-    const paletteIdx = this.activeGroup?.spriteCapture?.palette ?? 0;
-    this.editor.selectTileFromPose(t.mappedCode, paletteIdx);
-    this.refreshTileGrid();
-    this.refreshPalette();
-    this.refreshInfoBar();
-
-    // Refresh the zoomed pose canvas with highlight
-    this.renderSheetZoomedPose();
-
-    // Update tile grid highlights
-    const tilesGrid = this.sheetContainer?.querySelector('.sprite-sheet-tiles');
-    if (tilesGrid) {
-      tilesGrid.querySelectorAll('.sprite-sheet-tile').forEach((c, i) => {
-        c.classList.toggle('active', i === tileIdx);
-      });
-    }
-  }
-
-  /** Exit sprite sheet mode and return to the game. */
-  private exitSpriteSheetMode(): void {
-    if (!this.spriteSheetMode) return;
-
-    // Clean up any un-merged photo layers on the active sprite group
-    const group = this.activeGroup;
-    if (group?.type === 'sprite' && group.layers.length > 0) {
-      group.layers.length = 0;
-      this.activeLayerIndex = -1;
-    }
-
-    this.spriteSheetMode = false;
-    this.activeScrollSet = null;
-    this.sheetZoomed = false;
-    this.sheetSelectedTile = -1;
-    this.sheetZoomCanvas = null;
-    this.sheetZoomCtx = null;
-
-    // Remove sheet container
-    this.sheetContainer?.remove();
-    this.sheetContainer = null;
-
-    // Show game canvas, overlay, and emu bar
-    this.gameCanvas.style.display = '';
-    const emuBar = document.getElementById('emu-bar');
-    if (emuBar) emuBar.style.display = '';
-    if (this.overlay) this.overlay.style.display = '';
-
-    // Resume game only if it wasn't paused before entering the sheet viewer
-    if (!this.wasPausedBeforeSheet && this.emulator.isPaused()) {
-      this.emulator.resume();
-      this.emulator.resumeAudio();
-    }
-    this.updateStatus();
-  }
-
-  // -- Scroll Capture --
+  // -- Capture delegations --
 
   private toggleAllSpriteCapture(): void {
     this.capture.toggleAllSpriteCapture();
@@ -2764,144 +1802,19 @@ export class SpriteEditorUI {
     this.capture.captureScrollTick();
   }
 
-
-  /** Toggle highlight overlay for a scroll set's tiles on the game canvas. */
-  private toggleScrollHighlight(set: ScrollSet): void {
-    if (this.highlightedScrollSet === set) {
-      // Toggle off
-      this.highlightedScrollSet = null;
-      this.clearScrollHighlight();
-      return;
-    }
-    this.highlightedScrollSet = set;
-    this.drawScrollHighlight(set);
+  private toggleCaptureForSprite(spriteIndex: number): void {
+    this.capture.toggleCaptureForSprite(spriteIndex);
   }
 
-  private clearScrollHighlight(): void {
-    if (this.scrollHighlightOverlay) {
-      this.scrollHighlightOverlay.remove();
-      this.scrollHighlightOverlay = null;
-    }
+  private stopAllCaptures(): void {
+    this.capture.stopAllCaptures();
   }
 
-  /** Draw highlight rectangles over the game canvas for the given scroll set. */
-  private drawScrollHighlight(set: ScrollSet): void {
-    this.clearScrollHighlight();
-    const video = this.emulator.getVideo();
-    if (!video) return;
-
-    const { layerId, tileW, tileH, tiles } = set;
-    const { scrollX, scrollY } = video.getScrollXY(layerId);
-
-    // Create overlay canvas on top of game canvas
-    const overlay = document.createElement('canvas');
-    const gameRect = this.gameCanvas.getBoundingClientRect();
-    const scaleX = gameRect.width / 384;
-    const scaleY = gameRect.height / 224;
-    overlay.width = gameRect.width;
-    overlay.height = gameRect.height;
-    overlay.style.position = 'absolute';
-    overlay.style.left = `${gameRect.left + window.scrollX}px`;
-    overlay.style.top = `${gameRect.top + window.scrollY}px`;
-    overlay.style.width = `${gameRect.width}px`;
-    overlay.style.height = `${gameRect.height}px`;
-    overlay.style.pointerEvents = 'none';
-    overlay.style.zIndex = '100';
-    document.body.appendChild(overlay);
-    this.scrollHighlightOverlay = overlay;
-
-    const ctx = overlay.getContext('2d')!;
-    ctx.strokeStyle = '#ff0';
-    ctx.lineWidth = 2;
-    ctx.fillStyle = 'rgba(255, 255, 0, 0.15)';
-
-    // Virtual tilemap dimensions
-    const virtualW = 64 * tileW;
-    const virtualH = 64 * tileH;
-
-    for (const tile of tiles) {
-      // Tile absolute position in virtual tilemap
-      const absX = tile.tileCol * tileW;
-      const absY = tile.tileRow * tileH;
-
-      // Screen position = tile pos - scroll pos (with wraparound)
-      let screenX = ((absX - scrollX) % virtualW + virtualW) % virtualW;
-      let screenY = ((absY - scrollY) % virtualH + virtualH) % virtualH;
-
-      // Only draw if visible on screen (384x224)
-      if (screenX >= 384 || screenY >= 224) continue;
-      if (screenX + tileW <= 0 || screenY + tileH <= 0) continue;
-
-      ctx.fillRect(screenX * scaleX, screenY * scaleY, tileW * scaleX, tileH * scaleY);
-      ctx.strokeRect(screenX * scaleX, screenY * scaleY, tileW * scaleX, tileH * scaleY);
-    }
+  private captureFrame(): void {
+    this.capture.captureFrame();
   }
 
-  /** Render a thumbnail canvas for a scroll set. Returns null if no data. */
-  private renderScrollSetThumbnail(set: ScrollSet): HTMLCanvasElement | null {
-    const gfxRom = this.editor.getGfxRom();
-    if (!gfxRom) return null;
-    const video = this.emulator.getVideo();
-    if (!video) return null;
-    const bufs = this.emulator.getBusBuffers();
-
-    const { tileW, tileH, palette: palIdx, tiles } = set;
-    if (tiles.length === 0) return null;
-
-    // Decode CPS1 palette
-    const colors = readPalette(bufs.vram, video.getPaletteBase(), palIdx);
-
-    // Bounding box
-    let minCol = Infinity, minRow = Infinity, maxCol = -Infinity, maxRow = -Infinity;
-    for (const tile of tiles) {
-      if (tile.tileCol < minCol) minCol = tile.tileCol;
-      if (tile.tileRow < minRow) minRow = tile.tileRow;
-      if (tile.tileCol > maxCol) maxCol = tile.tileCol;
-      if (tile.tileRow > maxRow) maxRow = tile.tileRow;
-    }
-
-    const gridCols = maxCol - minCol + 1;
-    const gridRows = maxRow - minRow + 1;
-    const w = gridCols * tileW;
-    const h = gridRows * tileH;
-
-    const canvas = document.createElement('canvas');
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext('2d')!;
-    ctx.imageSmoothingEnabled = false;
-
-    // Render at 1x into an offscreen ImageData, then scale
-    const imgData = ctx.createImageData(w, h);
-    const data = imgData.data;
-
-    for (const tile of tiles) {
-      const gx = tile.tileCol - minCol;
-      const gy = tile.tileRow - minRow;
-      const pixels = readTileFn(gfxRom, tile.tileCode, tile.tileW, tile.tileH, tile.charSize);
-
-      for (let ty = 0; ty < tileH; ty++) {
-        for (let tx = 0; tx < tileW; tx++) {
-          let lx = tx, ly = ty;
-          if (tile.flipX) lx = tileW - 1 - tx;
-          if (tile.flipY) ly = tileH - 1 - ty;
-          const colorIdx = pixels[ly * tileW + lx]!;
-          if (colorIdx === 15) continue; // transparent
-          const [r, g, b] = colors[colorIdx] ?? [0, 0, 0];
-          const px = gx * tileW + tx;
-          const py = gy * tileH + ty;
-          const off = (py * w + px) * 4;
-          data[off] = r;
-          data[off + 1] = g;
-          data[off + 2] = b;
-          data[off + 3] = 255;
-        }
-      }
-    }
-
-    ctx.putImageData(imgData, 0, 0);
-    return canvas;
-  }
+  // -- SheetViewerHost methods below (quantizeSpritePhotoLayer, mergeSpritePhotoLayer) --
 
   /** Export a single scroll set as Aseprite tilemap (16 colors, 1 CPS1 palette). */
   private exportScrollSingle(set: ScrollSet): void {
@@ -2932,7 +1845,7 @@ export class SpriteEditorUI {
   // importTilePng, processImportTilePng, exportCurrentTile removed — editing happens in Aseprite
 
   /** Quantize the active sprite photo layer. Optionally update palette from image colors. */
-  private quantizeSpritePhotoLayer(updatePalette: boolean): void {
+  quantizeSpritePhotoLayer(updatePalette: boolean): void {
     const group = this.activeGroup;
     if (!group?.spriteCapture) return;
     const layer = group.layers[this.activeLayerIndex];
@@ -3008,18 +1921,18 @@ export class SpriteEditorUI {
 
     layer.quantized = true;
 
-    this.refreshSheetAfterEdit();
+    this.sheet.refreshSheetAfterEdit();
     showToast('Quantized with outline', true);
   }
 
   /** Merge the quantized sprite photo layer onto pose tiles (refCount = 1 only). */
-  private mergeSpritePhotoLayer(): void {
+  mergeSpritePhotoLayer(): void {
     const group = this.activeGroup;
     if (!group?.spriteCapture) return;
     const layer = group.layers[this.activeLayerIndex];
     if (!layer?.quantized) return;
 
-    const pose = this.activePoses[this.sheetSelectedPose];
+    const pose = this.activePoses[this.sheet.sheetSelectedPose];
     if (!pose) return;
 
     const gfxRom = this.editor.getGfxRom();
@@ -3069,7 +1982,7 @@ export class SpriteEditorUI {
     group.layers.splice(this.activeLayerIndex, 1);
     this.activeLayerIndex = -1;
 
-    this.refreshSheetAfterEdit();
+    this.sheet.refreshSheetAfterEdit();
     this.refreshLayerPanel();
     this.emulator.rerender();
 
@@ -3085,7 +1998,7 @@ export class SpriteEditorUI {
   private async handleSpritePhotoDrop(file: File): Promise<void> {
     const group = this.activeGroup;
     if (!group?.spriteCapture) return;
-    const pose = this.activePoses[this.sheetSelectedPose];
+    const pose = this.activePoses[this.sheet.sheetSelectedPose];
     if (!pose) return;
 
     const rgba = await loadPhotoRgba(file, pose.w, pose.h);
@@ -3101,18 +2014,8 @@ export class SpriteEditorUI {
     this.activeLayerIndex = group.layers.length - 1;
 
     // Re-render the zoomed view with the photo overlay
-    this.renderSheetZoomedView();
+    this.sheet.refreshSheetAfterEdit();
     showToast('Photo added — drag to position, then Quantize', true);
-  }
-
-  // importImageOnCurrentTile removed — editing happens in Aseprite
-
-  private toggleCaptureForSprite(spriteIndex: number): void {
-    this.capture.toggleCaptureForSprite(spriteIndex);
-  }
-
-  private stopAllCaptures(): void {
-    this.capture.stopAllCaptures();
   }
 
   /** Show the first captured pose in a large canvas with selection + pixel editing. */
@@ -3647,10 +2550,6 @@ export class SpriteEditorUI {
       );
       ctx.setLineDash([]);
     }
-  }
-
-  private captureFrame(): void {
-    this.capture.captureFrame();
   }
 
   // -- Photo Import --
