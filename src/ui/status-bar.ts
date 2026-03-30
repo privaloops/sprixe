@@ -12,6 +12,7 @@ let barEl: HTMLDivElement | null = null;
 export function createStatusBar(): HTMLDivElement {
   barEl = document.createElement('div');
   barEl.className = 'edit-status-bar';
+  barEl.style.display = 'none'; // hidden until setStatus is called with text
   return barEl;
 }
 
@@ -19,7 +20,10 @@ export function createStatusBar(): HTMLDivElement {
  * Update the status bar text.
  */
 export function setStatus(text: string): void {
-  if (barEl) barEl.textContent = text;
+  if (barEl) {
+    barEl.textContent = text;
+    barEl.style.display = text ? '' : 'none';
+  }
 }
 
 /**
