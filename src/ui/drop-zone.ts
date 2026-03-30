@@ -66,11 +66,7 @@ async function handleRomFile(file: File): Promise<void> {
     _deps.exportBtn.style.display = "";
 
     const mode = getRendererMode();
-    if (mode === "dom") {
-      canvas.style.visibility = "hidden";
-      domScreen.style.display = "block";
-      setupDomRenderer();
-    } else {
+    if (mode !== "dom") {
       canvas.style.visibility = "visible";
       domScreen.style.display = "none";
     }
@@ -93,6 +89,13 @@ async function handleRomFile(file: File): Promise<void> {
     debugPanel.onGameChange();
     if (!debugPanel.isOpen()) {
       debugPanel.toggle();
+    }
+
+    // Setup DOM renderer AFTER debug panel (which installs its own render callback)
+    if (mode === "dom") {
+      canvas.style.visibility = "hidden";
+      domScreen.style.display = "block";
+      setupDomRenderer();
     }
 
     // Update audio panel

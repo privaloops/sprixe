@@ -128,14 +128,27 @@ function getCarrierTl(ch: number): number {
   return ymTl[ch + 24]!; // slot 3 (operator 4, offset = ch + 3*8)
 }
 
-/** Apply channel mask: just update mute flags. All muting happens in the
- *  Z80 write callback — we NEVER write to the WASM directly. */
+/** Apply channel mask: update mute flags and immediately silence newly-muted channels. */
 function applyChannelMask(mask: number): void {
   if (mask === lastChannelMask) return;
   lastChannelMask = mask;
 
   for (let ch = 0; ch < 8; ch++) {
-    fmMuted[ch] = (mask & (1 << ch)) === 0 ? 1 : 0;
+    const wasMuted = fmMuted[ch];
+    const nowMuted = (mask & (1 << ch)) === 0 ? 1 : 0;
+    fmMuted[ch] = nowMuted;
+
+    // Immediately silence channels that just became muted
+    if (nowMuted && !wasMuted && ym2151) {
+      // Key-off: write channel with all operator bits cleared
+      ym2151.writeAddress(0x08);
+      ym2151.writeData(ch); // bits 6-3 = 0 → all operators off
+      // Max attenuation on all 4 operator TL registers
+      for (let op = 0; op < 4; op++) {
+        ym2151.writeAddress(0x60 + op * 8 + ch);
+        ym2151.writeData(0x7F);
+      }
+    }
   }
 
   if (oki6295) {

@@ -209,6 +209,7 @@ export class DebugRenderer {
   private render(): void {
     if (!this.video) return;
 
+
     // Clear flash if expired
     if (this.flashLayerId >= 0 && performance.now() > this.flashEnd) {
       this.flashLayerId = -1;

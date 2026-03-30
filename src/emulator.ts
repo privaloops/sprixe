@@ -390,6 +390,10 @@ export class Emulator {
     this._customRenderCallback = cb;
   }
 
+  getRenderCallback(): (() => void) | null {
+    return this._customRenderCallback;
+  }
+
   /** Expose video config needed by the DOM renderer. Returns null if no ROM loaded. */
   getVideoConfig(): VideoConfig | null {
     return this.video?.getVideoConfig() ?? null;
