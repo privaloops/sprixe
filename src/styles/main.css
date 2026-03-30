@@ -1174,7 +1174,7 @@
 
       /* Sprite Sheet Viewer — fixed fullscreen layout */
       .sprite-sheet-viewer {
-        position: fixed; top: 50px; left: 0; right: 0; bottom: 0; z-index: 8500;
+        position: fixed; top: 50px; left: 0; right: 0; bottom: 0; z-index: 9500;
         background: #111;
         display: flex; flex-direction: row;
       }

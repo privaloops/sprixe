@@ -13,7 +13,7 @@
     <title>Arcade.ts — CPS1 emulator with debug mode</title>
     <link rel="stylesheet" href="../src/styles/main.css" />
   </head>
-  <body class="dbg-active aud-active layer-active">
+  <body class="dbg-active aud-active">
     <div id="app">
       <header>
         <h1>ROMstudio</h1>
@@ -138,7 +138,7 @@
       Built with TypeScript + WebGL2 + WASM
     </footer>
 
-    <div id="layer-panel" class="layer-panel open">
+    <div id="layer-panel" class="layer-panel">
       <div class="layer-panel-header">
         <h2>Layers</h2>
         <button class="layer-close" onclick="this.closest('.layer-panel').classList.remove('open');document.body.classList.remove('layer-active');">&times;</button>

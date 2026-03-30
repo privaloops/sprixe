@@ -292,7 +292,6 @@ export class SpriteEditorUI {
     this.ensureLayerPanel();
     this.layerPanel?.show();
     this.refreshLayerPanel();
-    this.refreshLayerPanel();
     this.refreshTileGrid();
     this.refreshPalette();
   }
@@ -3041,7 +3040,7 @@ export class SpriteEditorUI {
 
     const manifest = {
       type: 'scroll_tilemap' as const,
-      game: (this.emulator as any).gameDef?.name ?? 'unknown',
+      game: this.emulator.getGameName() || 'unknown',
       layerId,
       layerName: scrollLayerName(layerId),
       palettes: [{ palette: palIdx, slot: 0, indexOffset: 0 }],
@@ -3279,7 +3278,7 @@ export class SpriteEditorUI {
 
     // Build manifest
     const manifest = {
-      game: (this.emulator as any).gameDef?.name ?? 'unknown',
+      game: this.emulator.getGameName() || 'unknown',
       character: `palette_${palIndex}`,
       palette: palIndex,
       frameSize: { w: frameW, h: frameH },

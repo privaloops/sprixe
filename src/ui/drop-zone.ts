@@ -62,7 +62,7 @@ async function handleRomFile(file: File): Promise<void> {
     await emulator.loadRom(file);
     emulator.resumeAudio();
     dropZone.classList.add("hidden");
-    emuBar.classList.add("visible");
+    emuBar.classList.add("visible", "hidden-by-user");
     _deps.exportBtn.style.display = "";
 
     const mode = getRendererMode();

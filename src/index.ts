@@ -176,7 +176,7 @@ saveStudioBtn.addEventListener('click', saveStudio);
 loadStudioBtn.addEventListener('click', loadStudio);
 toggleEmuBarBtn.addEventListener('click', () => {
   emuBar.classList.toggle('hidden-by-user');
-  toggleEmuBarBtn.classList.toggle('active', emuBar.classList.contains('hidden-by-user'));
+  toggleEmuBarBtn.classList.toggle('active', !emuBar.classList.contains('hidden-by-user'));
 });
 
 function onRomLoaded(gameName: string): void {
