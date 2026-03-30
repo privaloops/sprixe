@@ -18,6 +18,7 @@ import { readAseprite } from './aseprite-reader';
 import { scrollLayerName } from './scroll-capture';
 import { createSpriteGroup } from './layer-model';
 import { showToast } from '../ui/toast';
+import { CHAR_SIZE_16 } from '../constants';
 
 // ---------------------------------------------------------------------------
 // Sprite export
@@ -411,7 +412,7 @@ export function importAsepriteFile(
           const romAddr = typeof tileInfo.address === 'string'
             ? parseInt(tileInfo.address, 16)
             : tileInfo.address;
-          const tileCode = Math.floor(romAddr / 128); // CHAR_SIZE_16 = 128
+          const tileCode = Math.floor(romAddr / CHAR_SIZE_16);
 
           for (let ty = 0; ty < 16; ty++) {
             for (let tx = 0; tx < 16; tx++) {
@@ -449,7 +450,7 @@ export function importAsepriteFile(
             const tiles = mf.tiles.map((t: any) => ({
               relX: t.x as number,
               relY: t.y as number,
-              mappedCode: Math.floor((typeof t.address === 'string' ? parseInt(t.address, 16) : t.address) / 128),
+              mappedCode: Math.floor((typeof t.address === 'string' ? parseInt(t.address, 16) : t.address) / CHAR_SIZE_16),
               flipX: t.flipX as boolean,
               flipY: t.flipY as boolean,
             }));
