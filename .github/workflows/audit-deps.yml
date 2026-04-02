@@ -54,6 +54,7 @@ jobs:
             If everything is up to date and secure:
             - Do nothing. Do not create empty PRs or issues.
           claude_args: |
-            --max-turns 10
+            --max-turns 25
             --model claude-sonnet-4-6
             --allowedTools Bash,Read,Edit,Write,Glob,Grep
+            --append-system-prompt "You are running in CI mode. Act autonomously: do NOT wait for user validation, do NOT follow the mdma workflow steps, do NOT stop between steps. Execute the full task end-to-end and report results."

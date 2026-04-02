@@ -37,6 +37,7 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_args: |
-            --max-turns 10
+            --max-turns 15
             --model claude-sonnet-4-6
             --allowedTools Bash,Read,Edit,Write,Glob,Grep
+            --append-system-prompt "You are running in CI mode. Act autonomously: do NOT wait for user validation, do NOT follow the mdma workflow steps, do NOT stop between steps. Execute the task and report results."
