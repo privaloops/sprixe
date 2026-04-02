@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.0.0-beta.1] - 2026-04-02
+
 ### Added
 - **Aseprite round-trip workflow** — Capture sprites/scrolls → export .aseprite → edit in Aseprite → import back to ROM. Typed manifest (SpriteManifest / ScrollManifest) embedded in User Data
 - **Sprite Capture** — REC button in layer panel, auto-capture unique poses by tile hash, live cards during recording, palette RGB snapshot at capture time
