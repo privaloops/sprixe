@@ -63,7 +63,7 @@ npm run build || fail "Build failed"
 pass "Build"
 
 step "E2E tests (Chromium + Firefox, sans game-matrix)"
-npx playwright test --ignore-pattern=game-matrix.spec.ts || fail "E2E tests failed"
+npx playwright test --grep-invert "Game Matrix" || fail "E2E tests failed"
 pass "E2E tests"
 
 step "Game matrix (Chromium only)"
