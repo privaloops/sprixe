@@ -56,3 +56,4 @@ jobs:
           claude_args: |
             --max-turns 10
             --model claude-sonnet-4-6
+            --allowedTools Bash,Read,Edit,Write,Glob,Grep
