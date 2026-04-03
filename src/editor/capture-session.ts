@@ -57,6 +57,29 @@ export class CaptureManager {
 
   // -- Sprite capture --
 
+  /** Start a capture session for a palette, resuming an existing group if found. */
+  private startCapture(video: CPS1Video, palette: number, refTileCount: number, cx: number, cy: number): void {
+    const existing = this.layerGroups.find(
+      g => g.type === 'sprite' && g.spriteCapture?.palette === palette,
+    );
+    const seenHashes = new Set<string>(
+      existing?.spriteCapture?.poses.map(p => p.tileHash) ?? [],
+    );
+    const existingPoses = existing?.spriteCapture?.poses ?? [];
+    const session: CaptureSession = {
+      poses: existingPoses,
+      seenHashes,
+      refTileCount,
+      lastCenterX: cx, lastCenterY: cy,
+      prevPoseCount: existingPoses.length,
+    };
+    if (existing) session.resumeTarget = existing;
+    this.activeSessions.set(palette, session);
+    this.captureGroupsForPalette(video, palette);
+    const msg = existing ? `Resuming capture (palette ${palette})` : `Recording palette ${palette}`;
+    showToast(msg, true);
+  }
+
   /** Toggle capture for the sprite at the given OBJ index (click-to-track). */
   toggleCaptureForSprite(spriteIndex: number): void {
     const video = this.emulator.getVideo();
@@ -75,28 +98,20 @@ export class CaptureManager {
     } else {
       const cx = group.bounds.x + group.bounds.w / 2;
       const cy = group.bounds.y + group.bounds.h / 2;
-      // Resume existing group: pre-seed seenHashes and append poses live
-      const existing = this.layerGroups.find(
-        g => g.type === 'sprite' && g.spriteCapture?.palette === palette,
-      );
-      const seenHashes = new Set<string>(
-        existing?.spriteCapture?.poses.map(p => p.tileHash) ?? [],
-      );
-      const existingPoses = existing?.spriteCapture?.poses ?? [];
-      const session: CaptureSession = {
-        poses: existingPoses,
-        seenHashes,
-        refTileCount: group.sprites.length,
-        lastCenterX: cx, lastCenterY: cy,
-        prevPoseCount: existingPoses.length,
-      };
-      if (existing) session.resumeTarget = existing;
-      this.activeSessions.set(palette, session);
-      this.captureGroupsForPalette(video, palette);
-      const msg = existing ? `Resuming capture (palette ${palette})` : `Recording sprite (palette ${palette})`;
-      showToast(msg, true);
+      this.startCapture(video, palette, group.sprites.length, cx, cy);
     }
+    this.onRefresh();
+  }
 
+  /** Toggle capture for a palette directly (from the palette panel REC button). */
+  toggleCaptureForPalette(palette: number): void {
+    if (this.activeSessions.has(palette)) {
+      this.stopCaptureForPalette(palette);
+    } else {
+      const video = this.emulator.getVideo();
+      if (!video) return;
+      this.startCapture(video, palette, 0, -1, -1);
+    }
     this.onRefresh();
   }
 

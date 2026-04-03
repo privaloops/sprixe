@@ -411,36 +411,7 @@ export class SpriteEditorUI {
     // Use tracked HW visibility (default to true if not yet toggled)
     for (let i = 0; i < 4; i++) hwState.visible.set(i, this.hwLayerVisible.get(i) !== false);
 
-    // Build sprite set info for the layer panel
-    const spriteSetsInfo: import('./layer-panel').SpriteSetInfo[] = [];
-    for (let gi = 0; gi < this.layerGroups.length; gi++) {
-      const group = this.layerGroups[gi]!;
-      if (group.type !== 'sprite' || !group.spriteCapture || group.spriteCapture.poses.length === 0) continue;
-      const pose = group.spriteCapture.poses[0]!;
-      spriteSetsInfo.push({
-        groupIndex: gi,
-        name: group.name,
-        poseCount: group.spriteCapture.poses.length,
-        preview: pose.preview,
-        previewW: pose.w,
-        previewH: pose.h,
-      });
-    }
-    // Include live sprite captures (new sessions only, not resumed ones)
-    for (const [palette, session] of this.capture.activeSessions) {
-      if (session.resumeTarget) continue; // poses are in the existing group already
-      if (session.poses.length === 0) continue;
-      const pose = session.poses[0]!;
-      spriteSetsInfo.push({
-        groupIndex: -1, // not yet in layerGroups
-        name: `Recording (pal ${palette})`,
-        poseCount: session.poses.length,
-        preview: pose.preview,
-        previewW: pose.w,
-        previewH: pose.h,
-        palette,
-      });
-    }
+    // Sprite sets now live in the right palette panel — no longer passed to layer panel
 
     // Include live scroll sets from active capture sessions
     const allScrollSets = [...this.capture.scrollSets];
@@ -448,7 +419,7 @@ export class SpriteEditorUI {
       allScrollSets.push(...buildScrollSets(session));
     }
 
-    this.layerPanel?.refresh(this.layerGroups, this.activeGroupIndex, -1, gfxRom, hwState, allScrollSets, spriteSetsInfo);
+    this.layerPanel?.refresh(this.layerGroups, this.activeGroupIndex, -1, gfxRom, hwState, allScrollSets);
   }
 
 
@@ -467,7 +438,9 @@ export class SpriteEditorUI {
       this.drawSelectedOverlay();
       this.captureFrame();
       this.captureScrollTick();
-      if (++this.spritePaletteTick >= 30) {
+      // Refresh palettes every frame during capture (live pose count), otherwise every 30 frames
+      const refreshInterval = this.capture.activeSessions.size > 0 ? 1 : 30;
+      if (++this.spritePaletteTick >= refreshInterval) {
         this.spritePaletteTick = 0;
         this.refreshSpritePalettes();
       }
@@ -1156,8 +1129,13 @@ export class SpriteEditorUI {
       palCounts.set(s.palette, (palCounts.get(s.palette) ?? 0) + 1);
     }
 
-    // Only rebuild DOM if palette set changed
-    const palKeys = [...palCounts.keys()].sort((a, b) => a - b).join(',');
+    // Rebuild DOM if palette set or capture state changed
+    const captureKeys = this.layerGroups
+      .filter(g => g.type === 'sprite' && g.spriteCapture)
+      .map(g => `${g.spriteCapture!.palette}:${g.spriteCapture!.poses.length}`)
+      .join(';');
+    const activeKeys = [...this.capture.activeSessions.keys()].join(',');
+    const palKeys = [...palCounts.keys()].sort((a, b) => a - b).join(',') + '|' + captureKeys + '|' + activeKeys;
     if (container.dataset['palKeys'] === palKeys) {
       // Just update eye states (in case user toggled while paused)
       container.querySelectorAll<HTMLButtonElement>('.palette-layer-eye').forEach(btn => {
@@ -1222,7 +1200,96 @@ export class SpriteEditorUI {
       setTooltip(badge, `${count} sprite tile${count !== 1 ? 's' : ''}`);
       row.appendChild(badge);
 
+      // REC button
+      const isRec = this.capture.activeSessions.has(palIdx);
+      const recBtn = el('button', 'layer-rec-btn' + (isRec ? ' recording' : '')) as HTMLButtonElement;
+      recBtn.innerHTML = `<span class="rec-dot${isRec ? ' rec-blink' : ''}"></span> REC`;
+      recBtn.onclick = (e) => {
+        e.stopPropagation();
+        this.capture.toggleCaptureForPalette(palIdx);
+      };
+      row.appendChild(recBtn);
+
       list.appendChild(row);
+
+      // Captured sprite cards for this palette
+      const captures = this.layerGroups.filter(
+        g => g.type === 'sprite' && g.spriteCapture?.palette === palIdx && g.spriteCapture.poses.length > 0,
+      );
+      for (const group of captures) {
+        const gi = this.layerGroups.indexOf(group);
+        const pose = group.spriteCapture!.poses[0]!;
+        const card = el('div', 'edit-capture-card') as HTMLDivElement;
+        setTooltip(card, 'Open sprite sheet viewer');
+        card.onclick = () => {
+          this.activeGroupIndex = gi;
+          this.sheet.enterSpriteSheetMode();
+        };
+
+        const thumb = document.createElement('canvas');
+        thumb.className = 'edit-capture-thumb';
+        thumb.width = pose.w;
+        thumb.height = pose.h;
+        const ctx = thumb.getContext('2d');
+        if (ctx) ctx.putImageData(pose.preview, 0, 0);
+        card.appendChild(thumb);
+
+        const info = el('div', 'edit-capture-info');
+        const nameEl = el('div', 'edit-capture-name');
+        nameEl.textContent = group.name;
+        info.appendChild(nameEl);
+        const countEl = el('div', 'edit-capture-count');
+        countEl.textContent = `${group.spriteCapture!.poses.length} pose${group.spriteCapture!.poses.length !== 1 ? 's' : ''}`;
+        info.appendChild(countEl);
+        card.appendChild(info);
+
+        // Delete button
+        const delBtn = el('button', 'edit-capture-delete') as HTMLButtonElement;
+        delBtn.textContent = '\u00D7';
+        setTooltip(delBtn, 'Delete this capture');
+        delBtn.onclick = (e) => {
+          e.stopPropagation();
+          if (gi >= 0 && gi < this.layerGroups.length) {
+            this.layerGroups.splice(gi, 1);
+            if (this.activeGroupIndex >= this.layerGroups.length) {
+              this.activeGroupIndex = Math.max(0, this.layerGroups.length - 1);
+            }
+            this.refreshLayerPanel();
+            this.refreshSpritePalettes();
+          }
+        };
+        card.appendChild(delBtn);
+
+        list.appendChild(card);
+      }
+
+      // Live recording card (new capture, not resumed)
+      const liveSession = this.capture.activeSessions.get(palIdx);
+      if (liveSession && !liveSession.resumeTarget && liveSession.poses.length > 0) {
+        const pose = liveSession.poses[0]!;
+        const card = el('div', 'edit-capture-card recording') as HTMLDivElement;
+        setTooltip(card, 'Click to stop recording');
+        card.onclick = () => this.capture.toggleCaptureForPalette(palIdx);
+
+        const thumb = document.createElement('canvas');
+        thumb.className = 'edit-capture-thumb';
+        thumb.width = pose.w;
+        thumb.height = pose.h;
+        const ctx = thumb.getContext('2d');
+        if (ctx) ctx.putImageData(pose.preview, 0, 0);
+        card.appendChild(thumb);
+
+        const info = el('div', 'edit-capture-info');
+        const nameEl = el('div', 'edit-capture-name');
+        nameEl.textContent = `Recording (pal ${palIdx})`;
+        info.appendChild(nameEl);
+        const countEl = el('div', 'edit-capture-count');
+        countEl.textContent = `${liveSession.poses.length} pose${liveSession.poses.length !== 1 ? 's' : ''}`;
+        info.appendChild(countEl);
+        card.appendChild(info);
+
+        list.appendChild(card);
+      }
     }
 
     container.appendChild(list);
