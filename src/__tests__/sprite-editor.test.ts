@@ -22,8 +22,9 @@ function createMockEmulator(gfxRom: Uint8Array) {
     }),
     getRomStore: () => ({
       getOriginal: () => new Uint8Array(gfxRom.length),
-      patchProgramPalette: () => {},
+      patchPaletteViaSrc: () => false,
     }),
+    getWorkRam: () => new Uint8Array(0x10000),
     stepFrame: () => {},
   } as any; // eslint-disable-line @typescript-eslint/no-explicit-any
 }

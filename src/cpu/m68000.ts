@@ -292,6 +292,9 @@ export class M68000 {
     this.pendingInterrupt = 0;
   }
 
+  getPC(): number { return this.pc; }
+  getA0(): number { return this.a[0]!; }
+
   getState(): CpuState {
     return {
       d: new Int32Array(this.d),

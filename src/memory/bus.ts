@@ -38,6 +38,11 @@ export class Bus implements BusInterface {
   private _qsoundSharedRam2: Uint8Array | null = null; // 68K: 0xF1E000-0xF1FFFF
   private _eeprom: EEPROM93C46 | null = null;
 
+  // Palette ROM source map: VRAM offset → ROM source address
+  // Built by capturing A0 (ROM pointer) during MOVE.L/MOVE.W (A0)+,(A1)+ palette copies
+  private _m68kGetA0: (() => number) | null = null;
+  private _paletteRomSource = new Map<number, number>(); // vramOff → romAddr
+
   constructor() {
     this.programRom = new Uint8Array(0);
     this.cpsaRegisters = new Uint8Array(0x40); // 64 bytes
@@ -115,6 +120,17 @@ export class Bus implements BusInterface {
   getWorkRam(): Uint8Array {
     return this.workRam;
   }
+
+  /** Set M68K A0 getter for palette ROM source tracing */
+  setM68kA0Getter(getter: () => number): void {
+    this._m68kGetA0 = getter;
+  }
+
+  /** Palette ROM source map: VRAM offset → ROM address the data was copied from */
+  getPaletteRomSource(): Map<number, number> {
+    return this._paletteRomSource;
+  }
+
 
   getIoPorts(): Uint8Array {
     return this.ioPorts;
@@ -312,11 +328,37 @@ export class Bus implements BusInterface {
   }
 
   write16(address: number, value: number): void {
+    // Track ROM→VRAM copies in palette area only (192 palettes × 32 bytes = 0x1800)
+    if (this._m68kGetA0 !== null && address >= 0x900000 && address < 0x901800) {
+      const a0 = this._m68kGetA0();
+      // Quick check: A0 must point into program ROM range (post-increment, so A0-2)
+      if (a0 >= 2 && a0 <= this.programRom.length) {
+        const srcAddr = a0 - 2;
+        const romVal = (this.programRom[srcAddr]! << 8) | this.programRom[srcAddr + 1]!;
+        if (romVal === value) {
+          this._paletteRomSource.set(address - 0x900000, srcAddr);
+        }
+      }
+    }
     this.write8(address, (value >> 8) & 0xFF);
     this.write8(address + 1, value & 0xFF);
   }
 
   write32(address: number, value: number): void {
+    // Track ROM→VRAM copies in palette area only (192 palettes × 32 bytes = 0x1800)
+    if (this._m68kGetA0 !== null && address >= 0x900000 && address < 0x901800) {
+      const a0 = this._m68kGetA0();
+      if (a0 >= 4 && a0 <= this.programRom.length) {
+        const srcAddr = a0 - 4;
+        const r = this.programRom;
+        const romVal = ((r[srcAddr]! << 24) | (r[srcAddr+1]! << 16) | (r[srcAddr+2]! << 8) | r[srcAddr+3]!) >>> 0;
+        if (romVal === (value >>> 0)) {
+          const vOff = address - 0x900000;
+          this._paletteRomSource.set(vOff, srcAddr);
+          this._paletteRomSource.set(vOff + 2, srcAddr + 2);
+        }
+      }
+    }
     this.write8(address, (value >>> 24) & 0xFF);
     this.write8(address + 1, (value >>> 16) & 0xFF);
     this.write8(address + 2, (value >>> 8) & 0xFF);

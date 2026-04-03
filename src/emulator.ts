@@ -118,6 +118,7 @@ export class Emulator {
     this.bus = new Bus();
     this.z80Bus = new Z80Bus();
     this.m68000 = new M68000(this.bus);
+    this.bus.setM68kA0Getter(() => this.m68000.getA0());
     this.z80 = new Z80(this.z80Bus);
     // Try WebGL2 first, fallback to Canvas 2D
     try {
@@ -416,6 +417,8 @@ export class Emulator {
   getRomStore(): RomStore | null { return this.romStore; }
   getVram(): Uint8Array { return this.bus.getVram(); }
   getPaletteBase(): number { return this.video?.getPaletteBase() ?? 0x8000; }
+  getWorkRam(): Uint8Array { return this.bus.getWorkRam(); }
+  getPaletteRomSource(): Map<number, number> { return this.bus.getPaletteRomSource(); }
 
   /** Expose I/O ports for DIP switch configuration. */
   getIoPorts(): Uint8Array { return this.bus.getIoPorts(); }

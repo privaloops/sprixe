@@ -168,6 +168,103 @@ describe('palette round-trip', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Palette ROM patching via source tracing — round-trip
+// ---------------------------------------------------------------------------
+
+describe('palette ROM patching round-trip', () => {
+  it('patchPaletteViaSrc (fallback search) survives export → re-import', async () => {
+    const store = new RomStore(originalRomSet);
+    const rom = store.programRom;
+
+    // Find a real palette in the program ROM: 16 consecutive non-zero words
+    let palRomOff = -1;
+    for (let off = 0; off <= rom.length - 32; off += 2) {
+      let nonZero = 0;
+      for (let i = 0; i < 16; i++) {
+        const w = (rom[off + i * 2]! << 8) | rom[off + i * 2 + 1]!;
+        if ((w & 0x0FFF) !== 0) nonZero++;
+      }
+      if (nonZero >= 14) { palRomOff = off; break; }
+    }
+    expect(palRomOff).toBeGreaterThan(-1);
+
+    // Set up VRAM with this palette (simulating what the game would do)
+    const vram = new Uint8Array(0x30000);
+    const paletteBase = 0;
+    const paletteIndex = 0;
+    for (let i = 0; i < 32; i++) {
+      vram[paletteIndex * 32 + i] = rom[palRomOff + i]!;
+    }
+
+    // Record original color 2
+    const origWord = (rom[palRomOff + 4]! << 8) | rom[palRomOff + 5]!;
+    const origRgb = origWord & 0x0FFF;
+
+    // Patch color 2 with a new value (bright red)
+    const newWord = encodeColor(255, 0, 0);
+    const emptyMap = new Map<number, number>();
+    const result = store.patchPaletteViaSrc(emptyMap, vram, paletteBase, paletteIndex, 2, newWord);
+    expect(result).toBe(true);
+
+    // Verify ROM was patched (brightness preserved, RGB changed)
+    const patchedWord = (rom[palRomOff + 4]! << 8) | rom[palRomOff + 5]!;
+    expect(patchedWord & 0x0FFF).not.toBe(origRgb);
+
+    // Export and re-import
+    const exported = await store.exportZipAsArrayBuffer();
+    const reimported = await loadRomFromZip(exported);
+
+    // Verify the patched color survived round-trip
+    const reloadedWord = (reimported.programRom[palRomOff + 4]! << 8) | reimported.programRom[palRomOff + 5]!;
+    expect(reloadedWord).toBe(patchedWord);
+  });
+
+  it('patchPaletteViaSrc with traced source map patches correct offset', async () => {
+    const store = new RomStore(originalRomSet);
+    const rom = store.programRom;
+
+    // Find a palette in ROM (same as above)
+    let palRomOff = -1;
+    for (let off = 0; off <= rom.length - 32; off += 2) {
+      let nonZero = 0;
+      for (let i = 0; i < 16; i++) {
+        const w = (rom[off + i * 2]! << 8) | rom[off + i * 2 + 1]!;
+        if ((w & 0x0FFF) !== 0) nonZero++;
+      }
+      if (nonZero >= 14) { palRomOff = off; break; }
+    }
+
+    // Set up VRAM + source map (simulating A0 trace)
+    const vram = new Uint8Array(0x30000);
+    const paletteBase = 0;
+    const paletteIndex = 5;
+    const vramOff = paletteIndex * 32;
+    for (let i = 0; i < 32; i++) {
+      vram[vramOff + i] = rom[palRomOff + i]!;
+    }
+
+    // Populate source map: VRAM offset → ROM offset (as the A0 trace would)
+    const sourceMap = new Map<number, number>();
+    for (let i = 0; i < 16; i++) {
+      sourceMap.set(vramOff + i * 2, palRomOff + i * 2);
+    }
+
+    // Patch color 4 via traced source
+    const newWord = encodeColor(0, 0, 255);
+    const result = store.patchPaletteViaSrc(sourceMap, vram, paletteBase, paletteIndex, 4, newWord);
+    expect(result).toBe(true);
+
+    // Export and re-import
+    const exported = await store.exportZipAsArrayBuffer();
+    const reimported = await loadRomFromZip(exported);
+
+    const reloaded = (reimported.programRom[palRomOff + 8]! << 8) | reimported.programRom[palRomOff + 9]!;
+    const patched = (rom[palRomOff + 8]! << 8) | rom[palRomOff + 9]!;
+    expect(reloaded).toBe(patched);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // OKI sample round-trip
 // ---------------------------------------------------------------------------
 

@@ -494,6 +494,16 @@ export function importScrollTilemap(
           const ap = ase.palette[megaIdx]!;
           const [or, og, ob] = cps1Pal[c] ?? [0, 0, 0];
           if (ap.r !== or || ap.g !== og || ap.b !== ob) {
+            const word = encodeColor(ap.r, ap.g, ap.b);
+            // Patch ROM via traced source map (before writeColor modifies VRAM)
+            const store = emulator.getRomStore();
+            if (store) {
+              store.patchPaletteViaSrc(
+                emulator.getPaletteRomSource(),
+                bufs2.vram, palBase, palInfo.palette, c, word,
+              );
+            }
+            video.setPaletteOverride(palInfo.palette, c, word);
             writeColor(bufs2.vram, palBase, palInfo.palette, c, ap.r, ap.g, ap.b);
             colorsChanged++;
           }
@@ -599,6 +609,14 @@ export function importAsepriteFile(
             // Only override colors that actually changed
             if (entry.r !== cr || entry.g !== cg || entry.b !== cb) {
               const word = encodeColor(entry.r, entry.g, entry.b);
+              // Patch ROM via traced source map (before writeColor modifies VRAM)
+              const store = emulator.getRomStore();
+              if (store) {
+                store.patchPaletteViaSrc(
+                  emulator.getPaletteRomSource(),
+                  bufs.vram, paletteBase, palIdx, i, word,
+                );
+              }
               video.setPaletteOverride(palIdx, i, word);
               writeColor(bufs.vram, paletteBase, palIdx, i, entry.r, entry.g, entry.b);
               colorsChanged++;
