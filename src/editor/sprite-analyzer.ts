@@ -156,7 +156,7 @@ export function groupCharacter(allSprites: ObjSprite[], clickedIndex: number): S
 
   // Flood-fill: find all spatially adjacent sprites regardless of palette.
   // CPS1 characters often span multiple palettes (body, horse, weapon).
-  const TOLERANCE = 20;
+  const TOLERANCE = 4;
   const inGroup = new Set<number>();
   const queue = [clicked];
   inGroup.add(clicked.uid);
@@ -424,7 +424,10 @@ export function assembleCharacter(
   // Support both Map (multi-palette) and plain array (single palette, backward compat)
   const isMap = paletteLookup instanceof Map;
 
-  for (const tile of group.tiles) {
+  // Draw back-to-front: CPS1 renders high OBJ indices first (background),
+  // low indices last (foreground). Tiles array follows OBJ order, so reverse.
+  for (let i = group.tiles.length - 1; i >= 0; i--) {
+    const tile = group.tiles[i]!;
     const pal = isMap
       ? (paletteLookup as Map<number, Array<[number, number, number]>>).get(tile.palette) ?? []
       : paletteLookup as Array<[number, number, number]>;

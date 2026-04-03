@@ -102,6 +102,9 @@ export class SpriteEditorUI {
   private spaceHeld = false;
   private gridLayers: Map<number, boolean> = new Map();
   private hwLayerVisible: Map<number, boolean> = new Map();
+  private hiddenSpritePalettes = new Set<number>();
+  private spritePaletteContainer: HTMLDivElement | null = null;
+  private spritePaletteTick = 0;
   private _isInteractionBlocked: (() => boolean) | null = null;
   private _onHwLayerToggle: ((layerId: number, visible: boolean) => void) | null = null;
   private _onSpreadChange: ((value: number) => void) | null = null;
@@ -170,6 +173,10 @@ export class SpriteEditorUI {
     // Tile neighbors removed — editing happens in Aseprite now
 
     // Import button moved to layer panel (left sidebar)
+
+    // Sprite palettes (live OBJ palette list with visibility toggles)
+    this.spritePaletteContainer = el('div', 'edit-sprite-palettes') as HTMLDivElement;
+    container.appendChild(this.spritePaletteContainer);
 
     // Status bar (contextual hint at bottom)
     container.appendChild(createStatusBar());
@@ -262,6 +269,12 @@ export class SpriteEditorUI {
     this.resetTileZoom();
     this.resetGameZoom();
     this.layerPanel?.hide();
+    // Restore all sprite palettes on exit
+    if (this.hiddenSpritePalettes.size > 0) {
+      this.hiddenSpritePalettes.clear();
+      this.emulator.getVideo()?.setHiddenSpritePalettes(null);
+      this.emulator.rerender();
+    }
   }
 
   /** Create the default layer groups (one per CPS1 layer) if they don't exist yet. */
@@ -327,6 +340,15 @@ export class SpriteEditorUI {
       },
       onStopSpriteCapture: (palette) => {
         this.capture.stopCaptureForPalette(palette);
+      },
+      onDeleteSpriteSet: (groupIdx) => {
+        if (groupIdx >= 0 && groupIdx < this.layerGroups.length) {
+          this.layerGroups.splice(groupIdx, 1);
+          if (this.activeGroupIndex >= this.layerGroups.length) {
+            this.activeGroupIndex = Math.max(0, this.layerGroups.length - 1);
+          }
+          this.refreshLayerPanel();
+        }
       },
       onExportScrollSet: (set) => {
         this.exportScrollSingle(set);
@@ -415,6 +437,10 @@ export class SpriteEditorUI {
       this.drawSelectedOverlay();
       this.captureFrame();
       this.captureScrollTick();
+      if (++this.spritePaletteTick >= 30) {
+        this.spritePaletteTick = 0;
+        this.refreshSpritePalettes();
+      }
       this.overlayRafId = requestAnimationFrame(loop);
     };
     this.overlayRafId = requestAnimationFrame(loop);
@@ -1081,6 +1107,92 @@ export class SpriteEditorUI {
 
     this.paletteContainer.appendChild(grid);
     this.updateStatus();
+  }
+
+  /** Scan active OBJ palettes and rebuild the sprite palette list. */
+  private refreshSpritePalettes(): void {
+    const container = this.spritePaletteContainer;
+    if (!container) return;
+    const video = this.emulator.getVideo();
+    if (!video) return;
+
+    const allSprites = readAllSprites(video);
+    // Count sprites per palette
+    const palCounts = new Map<number, number>();
+    for (const s of allSprites) {
+      palCounts.set(s.palette, (palCounts.get(s.palette) ?? 0) + 1);
+    }
+
+    // Only rebuild DOM if palette set changed
+    const palKeys = [...palCounts.keys()].sort((a, b) => a - b).join(',');
+    if (container.dataset['palKeys'] === palKeys) {
+      // Just update eye states (in case user toggled while paused)
+      container.querySelectorAll<HTMLButtonElement>('.palette-layer-eye').forEach(btn => {
+        const pi = parseInt(btn.dataset['pal'] ?? '', 10);
+        if (!isNaN(pi)) btn.style.opacity = this.hiddenSpritePalettes.has(pi) ? '0.3' : '1';
+      });
+      return;
+    }
+    container.dataset['palKeys'] = palKeys;
+    container.innerHTML = '';
+
+    if (palCounts.size === 0) return;
+
+    const label = el('div', 'edit-section-label');
+    label.textContent = 'Sprite Palettes';
+    container.appendChild(label);
+
+    const list = el('div', 'palette-layer-list');
+    const bufs = this.emulator.getBusBuffers();
+    const paletteBase = video.getPaletteBase();
+
+    for (const [palIdx, count] of palCounts) {
+      const row = el('div', 'palette-layer-row') as HTMLDivElement;
+      const isHidden = this.hiddenSpritePalettes.has(palIdx);
+
+      const eyeBtn = el('button', 'palette-layer-eye') as HTMLButtonElement;
+      eyeBtn.textContent = '\u{1F441}';
+      eyeBtn.style.opacity = isHidden ? '0.3' : '1';
+      eyeBtn.dataset['pal'] = String(palIdx);
+      setTooltip(eyeBtn, 'Toggle palette visibility in game');
+      eyeBtn.onclick = () => {
+        if (this.hiddenSpritePalettes.has(palIdx)) {
+          this.hiddenSpritePalettes.delete(palIdx);
+        } else {
+          this.hiddenSpritePalettes.add(palIdx);
+        }
+        eyeBtn.style.opacity = this.hiddenSpritePalettes.has(palIdx) ? '0.3' : '1';
+        video.setHiddenSpritePalettes(
+          this.hiddenSpritePalettes.size > 0 ? this.hiddenSpritePalettes : null,
+        );
+        this.emulator.rerender();
+      };
+      row.appendChild(eyeBtn);
+
+      const swatch = el('div', 'palette-layer-swatch') as HTMLDivElement;
+      const colors = readPalette(bufs.vram, paletteBase, palIdx);
+      for (let i = 0; i < 15; i++) {
+        const [r, g, b] = colors[i] ?? [0, 0, 0];
+        const dot = document.createElement('span');
+        dot.className = 'palette-layer-color';
+        dot.style.background = `rgb(${r},${g},${b})`;
+        swatch.appendChild(dot);
+      }
+      row.appendChild(swatch);
+
+      const nameEl = el('span', 'palette-layer-name');
+      nameEl.textContent = `#${palIdx}`;
+      row.appendChild(nameEl);
+
+      const badge = el('span', 'palette-layer-count');
+      badge.textContent = `${count}`;
+      setTooltip(badge, `${count} sprite tile${count !== 1 ? 's' : ''}`);
+      row.appendChild(badge);
+
+      list.appendChild(row);
+    }
+
+    container.appendChild(list);
   }
 
   private openColorPicker(colorIndex: number): void {

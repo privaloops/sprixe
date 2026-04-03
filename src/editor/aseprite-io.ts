@@ -163,6 +163,98 @@ export function exportSpriteAseprite(
   showToast(`Exported ${poses.length} poses to ${filename}`, true);
 }
 
+/**
+ * Export only the tiles of a single palette as .aseprite (one frame per pose).
+ * Each frame keeps the full sprite bounding box, with non-matching tiles left transparent.
+ */
+export function exportSpritePaletteAseprite(
+  emulator: Emulator,
+  editor: SpriteEditor,
+  poses: CapturedPose[],
+  palIdx: number,
+): void {
+  if (poses.length === 0) { showToast('No poses to export', false); return; }
+
+  const gfxRom = editor.getGfxRom();
+  if (!gfxRom) { showToast('No GFX ROM loaded', false); return; }
+  const video = emulator.getVideo();
+  if (!video) return;
+  const bufs = emulator.getBusBuffers();
+
+  const cps1Palette = readPalette(bufs.vram, video.getPaletteBase(), palIdx);
+  // Use max dimensions across all poses to avoid cropping
+  let frameW = 0;
+  let frameH = 0;
+  for (const p of poses) {
+    if (p.w > frameW) frameW = p.w;
+    if (p.h > frameH) frameH = p.h;
+  }
+
+  const asePalette: AsepritePaletteEntry[] = cps1Palette.map(([r, g, b]) => ({
+    r, g, b, a: 255,
+  }));
+  if (asePalette[15]) asePalette[15] = { r: 0, g: 0, b: 0, a: 0 };
+
+  const aseFrames: AsepriteFrame[] = [];
+  const manifestFrames: SpriteManifest['frames'] = [];
+
+  for (let i = 0; i < poses.length; i++) {
+    const pose = poses[i]!;
+    const palTiles = pose.tiles.filter(t => t.palette === palIdx);
+    if (palTiles.length === 0) continue;
+
+    const pixels = new Uint8Array(frameW * frameH).fill(15);
+    for (const tile of palTiles) {
+      const tilePixels = readTileFn(gfxRom, tile.mappedCode);
+      for (let ty = 0; ty < 16; ty++) {
+        for (let tx = 0; tx < 16; tx++) {
+          const srcX = tile.flipX ? 15 - tx : tx;
+          const srcY = tile.flipY ? 15 - ty : ty;
+          const ci = tilePixels[srcY * 16 + srcX]!;
+          if (ci === 15) continue;
+          const destX = tile.relX + tx;
+          const destY = tile.relY + ty;
+          if (destX >= 0 && destX < frameW && destY >= 0 && destY < frameH) {
+            pixels[destY * frameW + destX] = ci;
+          }
+        }
+      }
+    }
+
+    aseFrames.push({ pixels, duration: 100 });
+    manifestFrames.push({
+      id: `pose_${i}`,
+      tiles: palTiles.map(t => ({
+        address: '0x' + (t.mappedCode * 128).toString(16).toUpperCase(),
+        x: t.relX, y: t.relY, flipX: t.flipX, flipY: t.flipY,
+      })),
+    });
+  }
+
+  if (aseFrames.length === 0) { showToast('No tiles for this palette', false); return; }
+
+  const manifest: SpriteManifest = {
+    game: emulator.getGameName() || 'unknown',
+    character: `palette_${palIdx}`,
+    palette: palIdx,
+    frameSize: { w: frameW, h: frameH },
+    frames: manifestFrames,
+  };
+
+  const data = writeAseprite({
+    width: frameW, height: frameH,
+    palette: asePalette,
+    frames: aseFrames,
+    transparentIndex: 15,
+    layerName: manifest.character,
+    manifest,
+  });
+
+  const filename = `${manifest.game}_pal${palIdx}_${aseFrames.length}poses.aseprite`;
+  downloadAseprite(data, filename);
+  showToast(`Exported ${aseFrames.length} poses (palette ${palIdx}) to ${filename}`, true);
+}
+
 // ---------------------------------------------------------------------------
 // Scroll export
 // ---------------------------------------------------------------------------
@@ -506,6 +598,7 @@ export function importAsepriteFile(
               mappedCode: Math.floor(parseInt(t.address, 16) / CHAR_SIZE_16),
               flipX: t.flipX,
               flipY: t.flipY,
+              palette: manifest.palette,
             }));
 
             const w = manifest.frameSize?.w ?? ase.width;
