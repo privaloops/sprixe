@@ -98,7 +98,7 @@
 - [x] **FM Patch Editor** — Voice read/write + macro UI done, real-time playback deferred (Z80 conflict). Code in `fm-patch-editor.ts` + `cps1-sound-driver.ts`, Synth tab hidden ([#20](https://github.com/privaloops/arcade-ts/issues/20))
 - [ ] **FM real-time preview** — Bouton "Test" existe (playTestNote), mais pas de preview live pendant l'édition des paramètres
 - [ ] **Mute/Solo ROM export** — Requires reverse-engineering CPS1 music sequence format (note commands per-track)
-- [x] **Sprite Analyzer** — Character grouping (palette + proximity), red contour overlay, tracking, pose capture, gallery
+- [x] **Sprite Analyzer** — Character grouping (palette + proximity), red contour overlay, tracking, pose capture, gallery. Multi-tile expansion for complex games (WoF). Per-palette export (PNG + .aseprite). Palette visibility toggles in editor + sheet viewer. Pose deduplication
 - [x] **Tile allocator + GFX ROM expansion** — Private tile allocation for scroll merge, dynamic ROM expansion, reverse bank mapper
 - [x] **Shared tile indicator** — Badge ×N on shared tiles in sprite sheet viewer + warning toast on edit
 - [x] **Palette recoloring (Nuances)** — Hue shift on manually selected color group (Shift+click). Preserves saturation/luminosity. Auto-detect by hue ±30°. Reset palette.

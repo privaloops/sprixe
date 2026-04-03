@@ -7,8 +7,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **Multi-tile sprite expansion** — `readAllSprites()` now expands CPS1 multi-tile (nx×ny) OBJ entries into individual sub-tiles with correct positions and tile codes, matching the hardware renderer formula. Fixes misplaced tiles for games like WoF
+- **Per-palette export** — PNG and .aseprite export per palette in sprite sheet viewer (replaces global export). Each .aseprite file is mono-palette (16 colors) with manifest for round-trip import
+- **Live sprite palette panel** — "Sprite Palettes" section in editor right panel shows active OBJ palettes with eye toggle to hide/show sprites by palette in the game renderer
+- **Palette-aware capture** — Hidden palettes are excluded from sprite grouping during capture, so the REC bounds and captured poses match what's visible
+- **Capture delete** — Delete button (×) on capture cards in left panel
+- **Pose deduplication** — Duplicate poses removed at capture finalization and in .aseprite export (by unique tile code set)
+- **Capture reset on game change** — Layer groups and palette state cleared when loading a new ROM
 - **Unit tests for 10 untested modules** — rom-loader, game-defs, z80-bus-qsound, sprite-analyzer, tile-allocator, scroll-capture, resampler, capture-session, save-state, sprite-editor (+103 tests, 1016 total)
 - **Game matrix Level 3** — automated sprite & scroll REC on all 29 ROMs, PNG export to `test-results/sprite-rec/` for manual review
+
+### Fixed
+- **Sprite tile z-order** — `assembleCharacter()` now draws tiles back-to-front (matching CPS1 hardware priority)
+- **Tile click palette** — Clicking a tile in sprite sheet selects its own palette (not the group's main palette)
+- **Frame cropping in per-palette export** — Uses max dimensions across all poses
+- **Palette persistence in sheet viewer** — Palette visibility state persists across pose changes
+
+### Changed
+- **Autosave disabled** — Manual .romstudio save only (Ctrl+S). Autosave was triggering restore prompts with empty saves
+- **Grouping tolerance reduced** — Sprite adjacency tolerance lowered from 20px to 4px to avoid merging distinct characters
 
 ## [1.0.0-beta.1] - 2026-04-02
 
