@@ -186,10 +186,14 @@ function onRomLoaded(gameName: string): void {
   toggleEmuBarBtn.style.display = '';
   romStudioApplied = false;
 
-  // Wire auto-save to ROM modifications
-  const romStore = emulator.getRomStore();
-  if (romStore) romStore.onModified = triggerAutoSave;
+  // Reset captures from previous game
+  debugPanel?.getSpriteEditorUI()?.resetCaptures();
 
+  // Auto-save disabled — manual save via Ctrl+S / .romstudio file
+  // const romStore = emulator.getRomStore();
+  // if (romStore) romStore.onModified = triggerAutoSave;
+
+  const romStore = emulator.getRomStore();
   loadAutoSave(gameName).then(json => {
     if (!json || romStudioApplied) return;
 

@@ -193,17 +193,19 @@ export function applySaveFile(
     const h = maxY + 16;
 
     const palette = readPalette(vram, paletteBase, p.palette);
+    // Add palette to tiles (not stored in save file, use the pose palette)
+    const tiles = p.tiles.map(t => ({ ...t, palette: p.palette }));
     const group: SpriteGroup = {
       sprites: [],
       palette: p.palette,
       bounds: { x: 0, y: 0, w, h },
-      tiles: p.tiles,
+      tiles,
     };
     const preview = assembleCharacter(romStore.graphicsRom, group, palette);
 
     return {
-      tileHash: p.tiles.map(t => t.mappedCode).sort((a, b) => a - b).join(','),
-      tiles: p.tiles,
+      tileHash: tiles.map(t => t.mappedCode).sort((a, b) => a - b).join(','),
+      tiles,
       w,
       h,
       palette: p.palette,

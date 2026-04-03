@@ -101,12 +101,16 @@ export function exportSpriteAseprite(
   // CPS1 pen 15 = transparent
   if (asePalette[15]) asePalette[15] = { r: 0, g: 0, b: 0, a: 0 };
 
-  // Build frames: one per captured pose
+  // Build frames: one per captured pose (deduplicated by tile code set)
   const aseFrames: AsepriteFrame[] = [];
   const manifestFrames: Array<{ id: string; tiles: Array<{ address: string; x: number; y: number; flipX: boolean; flipY: boolean }> }> = [];
+  const seenPoseKeys = new Set<string>();
 
   for (let i = 0; i < poses.length; i++) {
     const pose = poses[i]!;
+    const poseKey = [...new Set(pose.tiles.map(t => t.mappedCode))].sort((a, b) => a - b).join(',');
+    if (seenPoseKeys.has(poseKey)) continue;
+    seenPoseKeys.add(poseKey);
     const pixels = new Uint8Array(frameW * frameH).fill(15);
 
     for (const tile of pose.tiles) {
@@ -197,11 +201,17 @@ export function exportSpritePaletteAseprite(
 
   const aseFrames: AsepriteFrame[] = [];
   const manifestFrames: SpriteManifest['frames'] = [];
+  const seenPoseKeys = new Set<string>();
 
   for (let i = 0; i < poses.length; i++) {
     const pose = poses[i]!;
     const palTiles = pose.tiles.filter(t => t.palette === palIdx);
     if (palTiles.length === 0) continue;
+
+    // Deduplicate by unique tile code set (ignores position/flip)
+    const poseKey = [...new Set(palTiles.map(t => t.mappedCode))].sort((a, b) => a - b).join(',');
+    if (seenPoseKeys.has(poseKey)) continue;
+    seenPoseKeys.add(poseKey);
 
     const pixels = new Uint8Array(frameW * frameH).fill(15);
     for (const tile of palTiles) {

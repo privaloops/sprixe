@@ -89,10 +89,22 @@ export class CaptureManager {
     this.activeSessions.delete(palette);
 
     if (session.poses.length > 0) {
+      // Deduplicate poses by unique tile code set
+      const seen = new Set<string>();
+      const unique = session.poses.filter(p => {
+        const key = [...new Set(p.tiles.map(t => t.mappedCode))].sort((a, b) => a - b).join(',');
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
       this.captureCounter++;
       const name = `Sprite #${this.captureCounter}`;
-      this.layerGroups.push(createSpriteGroup(name, session.poses, palette));
-      showToast(`Captured ${session.poses.length} pose${session.poses.length !== 1 ? 's' : ''} → ${name}`, true);
+      this.layerGroups.push(createSpriteGroup(name, unique, palette));
+      const dupes = session.poses.length - unique.length;
+      const msg = dupes > 0
+        ? `Captured ${unique.length} pose${unique.length !== 1 ? 's' : ''} (${dupes} duplicate${dupes !== 1 ? 's' : ''} removed) → ${name}`
+        : `Captured ${unique.length} pose${unique.length !== 1 ? 's' : ''} → ${name}`;
+      showToast(msg, true);
     } else {
       showToast('No poses captured', false);
     }

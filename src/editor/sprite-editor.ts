@@ -86,6 +86,8 @@ export class SpriteEditor {
   get activeColorIndex(): number { return this._activeColorIndex; }
   get currentTile(): TileContext | null { return this._currentTile; }
 
+  deselectTile(): void { this._currentTile = null; }
+
   // -- Activation --
 
   activate(): void {

@@ -115,6 +115,7 @@ export class SpriteEditorUI {
   private readonly boundOverlayMove: (e: MouseEvent) => void;
   private readonly boundOverlayClick: (e: MouseEvent) => void;
   private readonly boundOverlayLeave: () => void;
+  private readonly boundDocClick: (e: MouseEvent) => void;
 
   constructor(emulator: Emulator, canvas: HTMLCanvasElement) {
     this.emulator = emulator;
@@ -128,6 +129,12 @@ export class SpriteEditorUI {
     this.boundOverlayMove = (e) => this.handleOverlayMove(e);
     this.boundOverlayClick = (e) => this.handleOverlayClick(e);
     this.boundOverlayLeave = () => this.clearOverlay();
+    this.boundDocClick = (e) => {
+      // Click outside overlay → deselect tile
+      if (this.overlay && !this.overlay.contains(e.target as Node)) {
+        this.editor.deselectTile();
+      }
+    };
 
     this.editor.setOnTileChanged(() => {
       this.refreshTileGrid();
@@ -218,6 +225,26 @@ export class SpriteEditorUI {
     }
   }
 
+  /** Reset all captures and layer groups (call on game change). */
+  resetCaptures(): void {
+    this.capture.stopAllCaptures();
+    this.layerGroups.length = 0;
+    this.activeGroupIndex = -1;
+    this.hiddenSpritePalettes.clear();
+    this.emulator.getVideo()?.setHiddenSpritePalettes(null);
+    if (this.spritePaletteContainer) {
+      this.spritePaletteContainer.innerHTML = '';
+      delete this.spritePaletteContainer.dataset['palKeys'];
+    }
+    // Recreate default HW layer groups so the panel works
+    this.ensureDefaultGroups();
+    this.refreshLayerPanel();
+  }
+
+  getSpritePaletteContainer(): HTMLDivElement | null {
+    return this.spritePaletteContainer;
+  }
+
   setGridLayers(m: Map<number, boolean>): void {
     this.gridLayers = m;
   }
@@ -248,6 +275,7 @@ export class SpriteEditorUI {
     document.body.classList.add('edit-active');
     document.addEventListener('keydown', this.boundKeyHandler);
     document.addEventListener('keyup', this.boundKeyUpHandler);
+    document.addEventListener('click', this.boundDocClick, true);
     this.startOverlayLoop();
     this.ensureDefaultGroups();
     this.ensureLayerPanel();
@@ -265,6 +293,7 @@ export class SpriteEditorUI {
     this.removeOverlay();
     document.removeEventListener('keydown', this.boundKeyHandler);
     document.removeEventListener('keyup', this.boundKeyUpHandler);
+    document.removeEventListener('click', this.boundDocClick, true);
     this.spaceHeld = false;
     this.resetTileZoom();
     this.resetGameZoom();
@@ -752,7 +781,11 @@ export class SpriteEditorUI {
 
     // Red bounds + REC indicator for sprites being captured
     if (this.capture.activeSessions.size > 0) {
-      const allSprites = readAllSprites(video);
+      const rawSprites = readAllSprites(video);
+      // Filter out hidden palettes so REC bounds match what's actually captured
+      const allSprites = this.hiddenSpritePalettes.size > 0
+        ? rawSprites.filter(s => !this.hiddenSpritePalettes.has(s.palette))
+        : rawSprites;
       const visited = new Set<number>();
       ctx.lineWidth = 2;
       ctx.strokeStyle = 'rgba(255, 50, 80, 0.8)';
@@ -1113,9 +1146,8 @@ export class SpriteEditorUI {
   private refreshSpritePalettes(): void {
     const container = this.spritePaletteContainer;
     if (!container) return;
-    // Hide in sprite sheet mode (sheet has its own palette layers)
-    if (this.sheet.spriteSheetMode) { container.style.display = 'none'; return; }
-    container.style.display = '';
+    // In sprite sheet mode, the sheet viewer manages this container
+    if (this.sheet.spriteSheetMode) return;
     const video = this.emulator.getVideo();
     if (!video) return;
 

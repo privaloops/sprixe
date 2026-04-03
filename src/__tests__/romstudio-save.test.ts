@@ -175,7 +175,7 @@ describe('save file serialization', () => {
 
     const poses: CapturedPose[] = [{
       tileHash: '400',
-      tiles: [{ relX: 0, relY: 0, mappedCode: 400, flipX: false, flipY: false }],
+      tiles: [{ relX: 0, relY: 0, mappedCode: 400, flipX: false, flipY: false, palette: 0 }],
       w: 16, h: 16,
       palette: 3,
       preview: makePreview(16, 16),
@@ -252,7 +252,7 @@ describe('applySaveFile', () => {
 
     const poses: CapturedPose[] = [{
       tileHash: '600',
-      tiles: [{ relX: 0, relY: 0, mappedCode: 600, flipX: false, flipY: false }],
+      tiles: [{ relX: 0, relY: 0, mappedCode: 600, flipX: false, flipY: false, palette: 0 }],
       w: 16, h: 16, palette: 2,
       preview: makePreview(16, 16),
     }];

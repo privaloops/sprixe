@@ -12,6 +12,8 @@ function createSession(refTileCount = 0): CaptureSession {
     poses: [],
     seenHashes: new Set<string>(),
     refTileCount,
+    lastCenterX: -1,
+    lastCenterY: -1,
   };
 }
 

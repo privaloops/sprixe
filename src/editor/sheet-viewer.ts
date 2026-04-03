@@ -41,6 +41,8 @@ export interface SheetViewerHost {
   refreshInfoBar(): void;
   refreshLayerPanel(): void;
   updateStatus(): void;
+  /** Container for sprite palettes in the right debug panel. */
+  getSpritePaletteContainer(): HTMLDivElement | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -197,6 +199,15 @@ export class SheetViewer {
     this.sheetContainer?.remove();
     this.sheetContainer = null;
 
+    // Clear capture palettes from right panel (refreshSpritePalettes will restore live palettes)
+    const palContainer = this.host.getSpritePaletteContainer();
+    if (palContainer) {
+      palContainer.innerHTML = '';
+      delete palContainer.dataset['palKeys'];
+      delete palContainer.dataset['captureMode'];
+    }
+    this.hiddenPalettes.clear();
+
     this.showGame();
 
     if (!this.wasPausedBeforeSheet && this.host.emulator.isPaused()) {
@@ -329,7 +340,6 @@ export class SheetViewer {
     this.sheetSelectedPose = index;
     this.sheetZoomed = true;
     this.sheetSelectedTile = -1;
-    this.hiddenPalettes.clear();
 
     const group = this.host.activeGroup;
     if (group?.spriteCapture) {
@@ -411,6 +421,9 @@ export class SheetViewer {
       if (tileIdx !== -1) {
         this.sheetSelectedTile = tileIdx;
         this.selectSheetTile(tileIdx);
+      } else {
+        this.sheetSelectedTile = -1;
+        this.renderSheetZoomedPose();
       }
     });
 
@@ -420,13 +433,6 @@ export class SheetViewer {
     const hint = el('div', 'edit-capture-hint') as HTMLDivElement;
     hint.textContent = 'Export to Aseprite to edit';
     zoomSection.appendChild(hint);
-
-    // Palette layers (only shown when multiple palettes are used)
-    const palettesUsed = new Map<number, number>();
-    for (const t of pose.tiles) {
-      palettesUsed.set(t.palette, (palettesUsed.get(t.palette) ?? 0) + 1);
-    }
-    this.renderPaletteLayers(zoomSection, palettesUsed);
 
     // Tile strip
     const tilesLabel = el('div', 'edit-section-label');
@@ -438,7 +444,11 @@ export class SheetViewer {
     zoomSection.appendChild(tilesGrid);
 
     main.appendChild(zoomSection);
+
     container.appendChild(main);
+
+    // Push capture palettes into the right debug panel
+    this.refreshCapturePalettes();
   }
 
   /** Render palette layer toggles (eye icon + color swatch + tile count). */
@@ -503,7 +513,8 @@ export class SheetViewer {
       setTooltip(badge, `${count} tile${count !== 1 ? 's' : ''} using this palette`);
       row.appendChild(badge);
 
-      // Export buttons
+      // Export buttons (on their own line)
+      const actions = el('div', 'palette-layer-actions');
       const exportPng = el('button', 'palette-layer-export') as HTMLButtonElement;
       exportPng.textContent = 'PNG';
       setTooltip(exportPng, 'Export this palette layer as PNG');
@@ -511,7 +522,7 @@ export class SheetViewer {
         e.stopPropagation();
         this.exportPalettePng(palIdx);
       };
-      row.appendChild(exportPng);
+      actions.appendChild(exportPng);
 
       const exportAse = el('button', 'palette-layer-export') as HTMLButtonElement;
       exportAse.textContent = '.aseprite';
@@ -520,12 +531,34 @@ export class SheetViewer {
         e.stopPropagation();
         exportSpritePaletteAseprite(host.emulator, host.editor, host.activePoses, palIdx);
       };
-      row.appendChild(exportAse);
+      actions.appendChild(exportAse);
+      row.appendChild(actions);
 
       list.appendChild(row);
     }
 
     parent.appendChild(list);
+  }
+
+  /** Push capture palette controls into the right debug panel (only rebuilds once). */
+  private refreshCapturePalettes(): void {
+    const container = this.host.getSpritePaletteContainer();
+    if (!container) return;
+    // Already built for this capture — don't rebuild (preserves eye toggle state)
+    if (container.dataset['captureMode'] === 'true') return;
+
+    const poses = this.host.activePoses;
+    const palettesUsed = new Map<number, number>();
+    for (const p of poses) {
+      for (const t of p.tiles) {
+        palettesUsed.set(t.palette, (palettesUsed.get(t.palette) ?? 0) + 1);
+      }
+    }
+
+    container.innerHTML = '';
+    container.style.display = '';
+    container.dataset['captureMode'] = 'true';
+    this.renderPaletteLayers(container, palettesUsed);
   }
 
   /** Export only the tiles of a specific palette as a PNG download. */
