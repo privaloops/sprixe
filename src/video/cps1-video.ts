@@ -298,6 +298,9 @@ export class CPS1Video {
   // updated at VBlank, not from live VRAM. This prevents tearing.
   private readonly objBuffer: Uint8Array;
 
+  // Editor hook: hide sprites by palette index
+  private hiddenSpritePalettes: Set<number> | null = null;
+
   constructor(
     vram: Uint8Array,
     graphicsRom: Uint8Array,
@@ -782,6 +785,7 @@ export class CPS1Video {
       const colour = (objData[entryOffset + 6]! << 8) | objData[entryOffset + 7]!;
 
       const col = colour & 0x1F;
+      if (this.hiddenSpritePalettes?.has(col)) continue;
       const flipX = (colour >> 5) & 1;
       const flipY = (colour >> 6) & 1;
 
@@ -1404,5 +1408,10 @@ export class CPS1Video {
 
   setObjBuffer(data: Uint8Array): void {
     this.objBuffer.set(data.subarray(0, this.objBuffer.length));
+  }
+
+  /** Editor hook: set sprite palettes to hide (null = show all). */
+  setHiddenSpritePalettes(hidden: Set<number> | null): void {
+    this.hiddenSpritePalettes = hidden;
   }
 }

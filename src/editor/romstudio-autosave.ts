@@ -114,6 +114,11 @@ export function scheduleAutoSave(romStore: RomStore, poses: CapturedPose[]): voi
   debounceTimer = setTimeout(() => {
     debounceTimer = null;
     const data = buildSaveData(romStore, poses);
+    // Don't save if no ROM modifications (poses alone don't justify a restore prompt)
+    const gfx = data.diffs.graphics?.length ?? 0;
+    const prg = data.diffs.program?.length ?? 0;
+    const oki = data.diffs.oki?.length ?? 0;
+    if (gfx + prg + oki === 0) return;
     const json = JSON.stringify(data);
     writeAutoSave(romStore.name, json).catch(err => {
       console.warn('[ROMstudio] Auto-save failed:', err);

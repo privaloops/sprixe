@@ -1,5 +1,23 @@
 # Learnings
 
+## Session April 2-3
+
+### CPS1 multi-tile sprites — why captures were broken for complex games
+
+**Context:** Sprite capture worked for Final Fight but tiles were misplaced for WoF (Warriors of Fate) in the sprite sheet viewer and layer panel.
+
+**Root cause:** `readAllSprites()` treated each OBJ entry as a single 16×16 tile, but CPS1 hardware supports multi-tile (nx×ny) sprites. A single OBJ entry can generate a grid of tiles (e.g., 4×4 = 16 tiles). The renderer (`cps1-video.ts`) correctly expanded these, but the sprite analyzer didn't.
+
+**Fix:** Replicate the renderer's sub-tile expansion formula: `(mappedBaseCode & ~0x0F) + ((mappedBaseCode + nxs) & 0x0F) + 0x10 * nys` with flip variants. Each sub-tile gets a unique `uid` for grouping deduplication (multiple sub-tiles share the same OBJ `index`).
+
+**Key insight:** The tile code formula is duplicated between `cps1-video.ts` and `sprite-analyzer.ts`. A comment marks this dependency. If the formula changes, both must be updated.
+
+### Per-palette export — why multi-palette import is fundamentally impossible
+
+**Context:** CPS1 tiles are 4bpp indexed with a single 16-color palette per tile. A character spanning multiple palettes (e.g., rider + horse in WoF) cannot be imported as a single Aseprite file because Aseprite uses one palette per frame.
+
+**Decision:** Export per palette instead of per character. Each exported .aseprite file is mono-palette and independently importable. The eye toggle in the sprite palette panel lets users isolate which palette to capture/export.
+
 ## Session March 25 (evening)
 
 ### FM Patch Editor — Why real-time playback failed

@@ -2,8 +2,10 @@ import { describe, it, expect } from 'vitest';
 import { groupCharacter, poseHash } from '../editor/sprite-analyzer';
 import type { ObjSprite, SpriteGroup } from '../editor/sprite-analyzer';
 
+let _nextUid = 0;
 function makeSprite(overrides: Partial<ObjSprite> & { index: number }): ObjSprite {
   return {
+    uid: _nextUid++,
     screenX: 0,
     screenY: 0,
     rawCode: 0,
@@ -22,8 +24,8 @@ describe('poseHash', () => {
       palette: 1,
       bounds: { x: 0, y: 0, w: 32, h: 32 },
       tiles: [
-        { relX: 0, relY: 0, mappedCode: 100, flipX: false, flipY: false },
-        { relX: 16, relY: 0, mappedCode: 200, flipX: false, flipY: false },
+        { relX: 0, relY: 0, mappedCode: 100, flipX: false, flipY: false, palette: 0 },
+        { relX: 16, relY: 0, mappedCode: 200, flipX: false, flipY: false, palette: 0 },
       ],
     };
     const group2: SpriteGroup = {
@@ -31,8 +33,8 @@ describe('poseHash', () => {
       palette: 1,
       bounds: { x: 50, y: 50, w: 32, h: 32 },
       tiles: [
-        { relX: 0, relY: 0, mappedCode: 100, flipX: true, flipY: false },
-        { relX: 16, relY: 0, mappedCode: 200, flipX: false, flipY: true },
+        { relX: 0, relY: 0, mappedCode: 100, flipX: true, flipY: false, palette: 0 },
+        { relX: 16, relY: 0, mappedCode: 200, flipX: false, flipY: true, palette: 0 },
       ],
     };
 
@@ -43,12 +45,12 @@ describe('poseHash', () => {
     const group1: SpriteGroup = {
       sprites: [], palette: 1,
       bounds: { x: 0, y: 0, w: 16, h: 16 },
-      tiles: [{ relX: 0, relY: 0, mappedCode: 100, flipX: false, flipY: false }],
+      tiles: [{ relX: 0, relY: 0, mappedCode: 100, flipX: false, flipY: false, palette: 0 }],
     };
     const group2: SpriteGroup = {
       sprites: [], palette: 1,
       bounds: { x: 0, y: 0, w: 16, h: 16 },
-      tiles: [{ relX: 0, relY: 0, mappedCode: 101, flipX: false, flipY: false }],
+      tiles: [{ relX: 0, relY: 0, mappedCode: 101, flipX: false, flipY: false, palette: 0 }],
     };
 
     expect(poseHash(group1)).not.toBe(poseHash(group2));
@@ -59,16 +61,16 @@ describe('poseHash', () => {
       sprites: [], palette: 0,
       bounds: { x: 0, y: 0, w: 32, h: 16 },
       tiles: [
-        { relX: 0, relY: 0, mappedCode: 50, flipX: false, flipY: false },
-        { relX: 16, relY: 0, mappedCode: 30, flipX: false, flipY: false },
+        { relX: 0, relY: 0, mappedCode: 50, flipX: false, flipY: false, palette: 0 },
+        { relX: 16, relY: 0, mappedCode: 30, flipX: false, flipY: false, palette: 0 },
       ],
     };
     const group2: SpriteGroup = {
       sprites: [], palette: 0,
       bounds: { x: 0, y: 0, w: 32, h: 16 },
       tiles: [
-        { relX: 0, relY: 0, mappedCode: 30, flipX: false, flipY: false },
-        { relX: 16, relY: 0, mappedCode: 50, flipX: false, flipY: false },
+        { relX: 0, relY: 0, mappedCode: 30, flipX: false, flipY: false, palette: 0 },
+        { relX: 16, relY: 0, mappedCode: 50, flipX: false, flipY: false, palette: 0 },
       ],
     };
 
@@ -90,7 +92,7 @@ describe('groupCharacter', () => {
     expect(group!.palette).toBe(5);
   });
 
-  it('does not group sprites with different palette', () => {
+  it('groups adjacent sprites across palettes (cross-palette flood-fill)', () => {
     const sprites: ObjSprite[] = [
       makeSprite({ index: 0, screenX: 100, screenY: 100, palette: 5, mappedCode: 10 }),
       makeSprite({ index: 1, screenX: 116, screenY: 100, palette: 6, mappedCode: 11 }),
@@ -98,7 +100,9 @@ describe('groupCharacter', () => {
 
     const group = groupCharacter(sprites, 0);
     expect(group).not.toBeNull();
-    expect(group!.sprites.length).toBe(1);
+    expect(group!.sprites.length).toBe(2);
+    // palette is the clicked sprite's palette
+    expect(group!.palette).toBe(5);
   });
 
   it('does not group distant sprites even with same palette', () => {

@@ -19,6 +19,8 @@ export interface SpriteSetInfo {
   preview: ImageData | null;
   previewW: number;
   previewH: number;
+  /** Palette index for live sessions (used to stop capture) */
+  palette?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -29,9 +31,10 @@ export interface LayerPanelCallbacks {
   onToggleHwLayer(layerId: number, visible: boolean): void;
   onToggleGrid(layerId: number, visible: boolean): void;
   onSpreadChange(value: number): void;
-  onToggleRecSprites?(): void;
   onToggleRecScroll?(layerId: number): void;
+  onStopSpriteCapture?(palette: number): void;
   onOpenSpriteSheet?(groupIdx: number): void;
+  onDeleteSpriteSet?(groupIdx: number): void;
   onExportScrollSet?(set: ScrollSet): void;
   onHighlightScrollSet?(set: ScrollSet): void;
   onRenderScrollThumb?(set: ScrollSet): HTMLCanvasElement | null;
@@ -209,11 +212,11 @@ export class LayerPanel {
         hwControls.append(gridCb, gridLabel);
         groupHeader.appendChild(hwControls);
 
-        // REC button for this layer
+        // REC button for scroll layers only (sprites use click-to-track)
         type RecKey = 'sprites' | 'bg1' | 'bg2' | 'bg3';
         const recKeyMap: Record<number, RecKey> = { 0: 'sprites', 1: 'bg1', 2: 'bg2', 3: 'bg3' };
         const recKey = recKeyMap[hwLayerId];
-        if (recKey) {
+        if (recKey && recKey !== 'sprites') {
           const isRec = this.recStates[recKey];
           const recBtn = document.createElement('button');
           recBtn.className = 'layer-rec-btn' + (isRec ? ' recording' : '');
@@ -221,11 +224,7 @@ export class LayerPanel {
           recBtn.onclick = (e) => {
             e.stopPropagation();
             this.recStates[recKey] = !this.recStates[recKey];
-            if (recKey === 'sprites') {
-              this.callbacks.onToggleRecSprites?.();
-            } else {
-              this.callbacks.onToggleRecScroll?.(hwLayerId);
-            }
+            this.callbacks.onToggleRecScroll?.(hwLayerId);
             const dot = recBtn.querySelector('.rec-dot');
             if (this.recStates[recKey]) {
               recBtn.classList.add('recording');
@@ -278,9 +277,16 @@ export class LayerPanel {
       if (spriteSets && isFirstSpriteGroup) {
         for (const ss of spriteSets) {
           const card = document.createElement('div');
-          card.className = 'edit-capture-card';
-          setTooltip(card, 'Open sprite sheet viewer');
-          card.onclick = () => this.callbacks.onOpenSpriteSheet?.(ss.groupIndex);
+          card.className = 'edit-capture-card' + (ss.groupIndex < 0 ? ' recording' : '');
+          if (ss.groupIndex < 0) {
+            setTooltip(card, 'Click to stop recording');
+            card.onclick = () => {
+              if (ss.palette !== undefined) this.callbacks.onStopSpriteCapture?.(ss.palette);
+            };
+          } else {
+            setTooltip(card, 'Open sprite sheet viewer');
+            card.onclick = () => this.callbacks.onOpenSpriteSheet?.(ss.groupIndex);
+          }
 
           const thumb = document.createElement('canvas');
           thumb.className = 'edit-capture-thumb';
@@ -307,6 +313,20 @@ export class LayerPanel {
           info.appendChild(countEl);
 
           card.appendChild(info);
+
+          // Delete button (only for finalized captures, not live sessions)
+          if (ss.groupIndex >= 0) {
+            const delBtn = document.createElement('button');
+            delBtn.className = 'edit-capture-delete';
+            delBtn.textContent = '\u00D7';
+            setTooltip(delBtn, 'Delete this capture');
+            delBtn.onclick = (e) => {
+              e.stopPropagation();
+              this.callbacks.onDeleteSpriteSet?.(ss.groupIndex);
+            };
+            card.appendChild(delBtn);
+          }
+
           captureList.appendChild(card);
         }
       }

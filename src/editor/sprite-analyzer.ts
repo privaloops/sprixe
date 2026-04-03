@@ -17,6 +17,9 @@ import { CHAR_SIZE_16 } from '../constants';
 
 /** A single OBJ sprite entry parsed from the OBJ buffer. */
 export interface ObjSprite {
+  /** Unique id per sub-tile (sequential, for grouping deduplication). */
+  uid: number;
+  /** OBJ table slot index (0-255). Multiple sub-tiles share the same index. */
   index: number;
   screenX: number;
   screenY: number;
@@ -34,7 +37,7 @@ export interface SpriteGroup {
   /** Bounding box in screen coords */
   bounds: { x: number; y: number; w: number; h: number };
   /** Tile codes at relative positions (relX, relY) within the bounding box */
-  tiles: Array<{ relX: number; relY: number; mappedCode: number; flipX: boolean; flipY: boolean }>;
+  tiles: Array<{ relX: number; relY: number; mappedCode: number; flipX: boolean; flipY: boolean; palette: number }>;
 }
 
 
@@ -72,6 +75,7 @@ export function readAllSprites(video: CPS1Video): ObjSprite[] {
   const bankSizes = video.getBankSizes();
   const bankBases = video.getBankBases();
   const sprites: ObjSprite[] = [];
+  let uid = 0;
 
   for (let i = 0; i < 256; i++) {
     const off = i * 8;
@@ -87,13 +91,50 @@ export function readAllSprites(video: CPS1Video): ObjSprite[] {
     const flipX = !!((colour >> 5) & 1);
     const flipY = !!((colour >> 6) & 1);
 
-    const mappedCode = gfxromBankMapper(GFXTYPE_SPRITES, code, mapperTable, bankSizes, bankBases);
-    if (mappedCode === -1) continue;
+    const mappedBaseCode = gfxromBankMapper(GFXTYPE_SPRITES, code, mapperTable, bankSizes, bankBases);
+    if (mappedBaseCode === -1) continue;
 
-    const screenX = (x & 0x1FF) - CPS_HBEND;
-    const screenY = (y & 0x1FF) - CPS_VBEND;
+    if (colour & 0xFF00) {
+      // Multi-tile (blocked) sprite: expand into individual sub-tiles
+      // Same formula as the hardware renderer (cps1-video.ts renderObjects)
+      const nx = ((colour >> 8) & 0x0F) + 1;
+      const ny = ((colour >> 12) & 0x0F) + 1;
 
-    sprites.push({ index: i, screenX, screenY, rawCode: code, mappedCode, palette, flipX, flipY });
+      for (let nys = 0; nys < ny; nys++) {
+        for (let nxs = 0; nxs < nx; nxs++) {
+          const sx = ((x + nxs * 16) & 0x1FF) - CPS_HBEND;
+          const sy = ((y + nys * 16) & 0x1FF) - CPS_VBEND;
+
+          let tileCode: number;
+          if (flipY) {
+            if (flipX) {
+              tileCode = (mappedBaseCode & ~0x0F) + ((mappedBaseCode + (nx - 1) - nxs) & 0x0F) + 0x10 * (ny - 1 - nys);
+            } else {
+              tileCode = (mappedBaseCode & ~0x0F) + ((mappedBaseCode + nxs) & 0x0F) + 0x10 * (ny - 1 - nys);
+            }
+          } else {
+            if (flipX) {
+              tileCode = (mappedBaseCode & ~0x0F) + ((mappedBaseCode + (nx - 1) - nxs) & 0x0F) + 0x10 * nys;
+            } else {
+              tileCode = (mappedBaseCode & ~0x0F) + ((mappedBaseCode + nxs) & 0x0F) + 0x10 * nys;
+            }
+          }
+
+          sprites.push({
+            uid: uid++, index: i, screenX: sx, screenY: sy,
+            rawCode: code, mappedCode: tileCode, palette, flipX, flipY,
+          });
+        }
+      }
+    } else {
+      // Single-tile sprite
+      const screenX = (x & 0x1FF) - CPS_HBEND;
+      const screenY = (y & 0x1FF) - CPS_VBEND;
+      sprites.push({
+        uid: uid++, index: i, screenX, screenY,
+        rawCode: code, mappedCode: mappedBaseCode, palette, flipX, flipY,
+      });
+    }
   }
 
   return sprites;
@@ -112,27 +153,26 @@ export function groupCharacter(allSprites: ObjSprite[], clickedIndex: number): S
   if (!clicked) return null;
 
   const palette = clicked.palette;
-  const samePalette = allSprites.filter(s => s.palette === palette);
 
-  // Flood-fill: find all sprites connected to the clicked one
-  const TOLERANCE = 4; // pixels gap tolerance for adjacency
+  // Flood-fill: find all spatially adjacent sprites regardless of palette.
+  // CPS1 characters often span multiple palettes (body, horse, weapon).
+  const TOLERANCE = 4;
   const inGroup = new Set<number>();
   const queue = [clicked];
-  inGroup.add(clicked.index);
+  inGroup.add(clicked.uid);
 
   while (queue.length > 0) {
     const current = queue.pop()!;
-    for (const candidate of samePalette) {
-      if (inGroup.has(candidate.index)) continue;
-      // Check if bounding boxes touch (within tolerance)
+    for (const candidate of allSprites) {
+      if (inGroup.has(candidate.uid)) continue;
       if (tilesAdjacent(current, candidate, TOLERANCE)) {
-        inGroup.add(candidate.index);
+        inGroup.add(candidate.uid);
         queue.push(candidate);
       }
     }
   }
 
-  const grouped = samePalette.filter(s => inGroup.has(s.index));
+  const grouped = allSprites.filter(s => inGroup.has(s.uid));
 
   // Compute bounding box
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -150,6 +190,7 @@ export function groupCharacter(allSprites: ObjSprite[], clickedIndex: number): S
     mappedCode: s.mappedCode,
     flipX: s.flipX,
     flipY: s.flipY,
+    palette: s.palette,
   }));
 
   return {
@@ -183,12 +224,12 @@ export function trackCharacter(
   const groups: SpriteGroup[] = [];
 
   for (const sprite of samePalette) {
-    if (visited.has(sprite.index)) continue;
+    if (visited.has(sprite.uid)) continue;
 
     const group = groupCharacter(allSprites, sprite.index);
     if (!group) continue;
 
-    for (const s of group.sprites) visited.add(s.index);
+    for (const s of group.sprites) visited.add(s.uid);
     groups.push(group);
   }
 
@@ -227,16 +268,17 @@ export function poseHash(group: SpriteGroup): string {
 export function capturePose(
   gfxRom: Uint8Array,
   group: SpriteGroup,
-  palette: Array<[number, number, number]>,
+  paletteLookup: Map<number, Array<[number, number, number]>>,
 ): CapturedPose {
+  const mainPal = paletteLookup.get(group.palette) ?? [];
   return {
     tileHash: poseHash(group),
     tiles: group.tiles.map(t => ({ ...t })),
     w: group.bounds.w,
     h: group.bounds.h,
     palette: group.palette,
-    preview: assembleCharacter(gfxRom, group, palette),
-    capturedColors: palette.map(([r, g, b]) => [r, g, b] as [number, number, number]),
+    preview: assembleCharacter(gfxRom, group, paletteLookup),
+    capturedColors: mainPal.map(([r, g, b]) => [r, g, b] as [number, number, number]),
   };
 }
 
@@ -367,17 +409,30 @@ function tilesAdjacent(a: ObjSprite, b: ObjSprite, tolerance: number): boolean {
 // Step 3: Assemble character preview from tile pixels
 // ---------------------------------------------------------------------------
 
+/**
+ * Assemble character preview. Each tile uses its own palette (like the game renderer).
+ * @param paletteLookup - maps palette index → 16 RGB entries
+ */
 export function assembleCharacter(
   gfxRom: Uint8Array,
   group: SpriteGroup,
-  palette: Array<[number, number, number]>,
+  paletteLookup: Map<number, Array<[number, number, number]>> | Array<[number, number, number]>,
 ): ImageData {
   const { w, h } = group.bounds;
   const img = new ImageData(w, h);
 
-  for (const tile of group.tiles) {
+  // Support both Map (multi-palette) and plain array (single palette, backward compat)
+  const isMap = paletteLookup instanceof Map;
+
+  // Draw back-to-front: CPS1 renders high OBJ indices first (background),
+  // low indices last (foreground). Tiles array follows OBJ order, so reverse.
+  for (let i = group.tiles.length - 1; i >= 0; i--) {
+    const tile = group.tiles[i]!;
+    const pal = isMap
+      ? (paletteLookup as Map<number, Array<[number, number, number]>>).get(tile.palette) ?? []
+      : paletteLookup as Array<[number, number, number]>;
     const pixels = readTile(gfxRom, tile.mappedCode, 16, 16, CHAR_SIZE_16);
-    blitTile(img, pixels, tile.relX, tile.relY, tile.flipX, tile.flipY, palette);
+    blitTile(img, pixels, tile.relX, tile.relY, tile.flipX, tile.flipY, pal);
   }
 
   return img;
