@@ -120,7 +120,7 @@ export class SpriteEditorUI {
     this.emulator = emulator;
     this.gameCanvas = canvas;
     this.editor = new SpriteEditor(emulator);
-    this.capture = new CaptureManager(emulator, this.editor, this.layerGroups, () => this.refreshLayerPanel());
+    this.capture = new CaptureManager(emulator, this.editor, this.layerGroups, () => this.refreshLayerPanel(), () => this.hiddenSpritePalettes);
     this.sheet = new SheetViewer(this as unknown as SheetViewerHost);
 
     this.boundKeyHandler = (e) => this.handleKey(e);
@@ -1113,6 +1113,9 @@ export class SpriteEditorUI {
   private refreshSpritePalettes(): void {
     const container = this.spritePaletteContainer;
     if (!container) return;
+    // Hide in sprite sheet mode (sheet has its own palette layers)
+    if (this.sheet.spriteSheetMode) { container.style.display = 'none'; return; }
+    container.style.display = '';
     const video = this.emulator.getVideo();
     if (!video) return;
 

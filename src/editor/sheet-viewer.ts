@@ -426,9 +426,7 @@ export class SheetViewer {
     for (const t of pose.tiles) {
       palettesUsed.set(t.palette, (palettesUsed.get(t.palette) ?? 0) + 1);
     }
-    if (palettesUsed.size > 1) {
-      this.renderPaletteLayers(zoomSection, palettesUsed);
-    }
+    this.renderPaletteLayers(zoomSection, palettesUsed);
 
     // Tile strip
     const tilesLabel = el('div', 'edit-section-label');

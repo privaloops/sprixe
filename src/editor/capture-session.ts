@@ -49,6 +49,7 @@ export class CaptureManager {
     private readonly editor: SpriteEditor,
     private readonly layerGroups: LayerGroup[],
     private readonly onRefresh: () => void,
+    private readonly getHiddenPalettes?: () => Set<number>,
   ) {}
 
   // -- Sprite capture --
@@ -132,7 +133,10 @@ export class CaptureManager {
     const session = this.activeSessions.get(palette);
     if (!session) return false;
 
-    const allSprites = readAllSprites(video);
+    const rawSprites = readAllSprites(video);
+    // Filter out hidden palettes so they don't pollute grouping
+    const hidden = this.getHiddenPalettes?.() ?? new Set<number>();
+    const allSprites = hidden.size > 0 ? rawSprites.filter(s => !hidden.has(s.palette)) : rawSprites;
     const samePalette = allSprites.filter(s => s.palette === palette);
     if (samePalette.length === 0) return false;
 
