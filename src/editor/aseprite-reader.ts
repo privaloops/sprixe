@@ -257,7 +257,13 @@ export function readAseprite(buffer: ArrayBuffer): AsepriteFile {
         case 0x2020: { // User Data
           const flags = readDword();
           if (flags & 1) { // has text
-            const text = readString();
+            // readString uses WORD (max 65535) for length, but large manifests
+            // overflow. Compute actual length from chunk size as fallback.
+            const wordLen = readWord();
+            const maxLen = chunkStart + chunkSize - pos;
+            const textLen = wordLen <= maxLen ? wordLen : maxLen;
+            const text = new TextDecoder().decode(new Uint8Array(buffer, pos, textLen));
+            pos += textLen;
             if (!result.userDataText) {
               result.userDataText = text;
               try {
