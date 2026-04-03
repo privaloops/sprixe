@@ -476,11 +476,14 @@ export class SpriteEditor {
     const bufs = this.emulator.getBusBuffers();
     const { paletteBase, paletteIndex } = this._currentTile;
 
-    // Also patch program ROM so the change persists across rounds and in export
+    // Patch program ROM via traced source map for export persistence
     const store = this.emulator.getRomStore();
     if (store) {
       const newWord = encodeColor(r, g, b);
-      store.patchProgramPalette(bufs.vram, paletteBase, paletteIndex, colorIndex, newWord);
+      store.patchPaletteViaSrc(
+        this.emulator.getPaletteRomSource(),
+        bufs.vram, paletteBase, paletteIndex, colorIndex, newWord,
+      );
     }
 
     writeColor(bufs.vram, paletteBase, paletteIndex, colorIndex, r, g, b);

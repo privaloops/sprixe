@@ -63,10 +63,12 @@ function createEmulatorMock(romSet: RomSet) {
   return {
     getVideo: () => ({
       getPaletteBase: () => 0,
+      setPaletteOverride: () => {},
     }),
     getBusBuffers: () => ({ vram, cpsaRegs }),
     rerender: () => {},
     getRomStore: () => null,
+    getWorkRam: () => new Uint8Array(0x10000),
   };
 }
 

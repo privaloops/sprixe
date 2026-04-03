@@ -74,60 +74,82 @@ export class RomStore {
    * Searches for the 32-byte palette pattern in program ROM and patches the specific color.
    * Returns true if the pattern was found and patched.
    */
-  patchProgramPalette(vram: Uint8Array, paletteBase: number, paletteIndex: number, colorIndex: number, newWord: number): boolean {
-    // Read the current 32-byte palette from VRAM (this is what the 68K wrote from program ROM)
-    const vramOff = paletteBase + paletteIndex * 32;
-    const colorOff = colorIndex * 2;
-    let found = false;
+  /**
+   * Patch a palette color in program ROM using the traced ROM source map.
+   *
+   * The bus captures A0 during MOVE.L/MOVE.W (A0)+,(A1)+ copies from ROM to VRAM.
+   * This gives us the exact ROM offset for each VRAM palette word.
+   */
+  /**
+   * Patch a palette color in program ROM.
+   *
+   * Strategy 1: use traced ROM source map (A0 capture during MOVE.L/MOVE.W copies).
+   * Verify the map entry matches the current VRAM palette before patching.
+   * Strategy 2 (fallback): search the entire original ROM for the full palette.
+   */
+  patchPaletteViaSrc(
+    paletteRomSource: Map<number, number>,
+    vram: Uint8Array,
+    paletteBase: number,
+    paletteIndex: number,
+    colorIndex: number,
+    newWord: number,
+  ): boolean {
+    const palOff = paletteBase + paletteIndex * 32;
+    const vramOff = palOff + colorIndex * 2;
+    const vramRgb = ((vram[vramOff]! << 8) | vram[vramOff + 1]!) & 0x0FFF;
     const rom = this.programRom;
+    const origRom = this.originalProgramRom;
 
-    // CPS1 palettes: 16-bit words where bits 15-12 = brightness nibble.
-    // The 68K applies brightness fades at runtime (ADD.W #0x1000 in a loop).
-    // Program ROM stores the BASE palette (before brightness).
-    // Strategy: strip brightness from VRAM values and search for that pattern.
-    const basePattern = new Uint8Array(32);
-    for (let i = 0; i < 32; i += 2) {
-      basePattern[i] = vram[vramOff + i]! & 0x0F;  // strip brightness nibble
-      basePattern[i + 1] = vram[vramOff + i + 1]!;
-    }
-
-    // Search program ROM for base palette (matching low 12 bits of each word)
-    for (let offset = 0; offset <= rom.length - 32; offset += 2) {
-      let match = true;
-      for (let i = 0; i < 32; i += 2) {
-        if ((rom[offset + i]! & 0x0F) !== basePattern[i] || rom[offset + i + 1] !== basePattern[i + 1]) {
-          match = false; break;
+    // Strategy 1: traced source map — verify palette context matches
+    const romAddr = paletteRomSource.get(vramOff);
+    if (romAddr !== undefined && romAddr + 1 < origRom.length) {
+      // Verify: check that the full palette at this ROM region matches VRAM
+      const palRomBase = romAddr - colorIndex * 2;
+      if (palRomBase >= 0 && palRomBase + 31 < origRom.length) {
+        let matchCount = 0;
+        for (let i = 0; i < 16; i++) {
+          const rw = ((origRom[palRomBase + i * 2]! << 8) | origRom[palRomBase + i * 2 + 1]!) & 0x0FFF;
+          const vw = ((vram[palOff + i * 2]! << 8) | vram[palOff + i * 2 + 1]!) & 0x0FFF;
+          if (rw === vw) matchCount++;
         }
-      }
-      if (match) {
-        // Patch: preserve the ROM's brightness nibble, replace the color nibbles
-        const romBright = rom[offset + colorOff]! & 0xF0;
-        rom[offset + colorOff] = romBright | ((newWord >> 8) & 0x0F);
-        rom[offset + colorOff + 1] = newWord & 0xFF;
-        found = true;
-      }
-    }
-
-    // Fallback: if not found, try exact match (for games without brightness fade)
-    if (!found) {
-      const exactPattern = new Uint8Array(32);
-      for (let i = 0; i < 32; i++) exactPattern[i] = vram[vramOff + i]!;
-
-      for (let offset = 0; offset <= rom.length - 32; offset += 2) {
-        let match = true;
-        for (let i = 0; i < 32; i++) {
-          if (rom[offset + i] !== exactPattern[i]) { match = false; break; }
-        }
-        if (match) {
-          rom[offset + colorOff] = (newWord >> 8) & 0xFF;
-          rom[offset + colorOff + 1] = newWord & 0xFF;
-          found = true;
+        if (matchCount >= 12) {
+          return this.patchRomColor(romAddr, newWord);
         }
       }
     }
 
-    if (found) this.onModified?.();
-    return found;
+    // Strategy 2: search original ROM for the full 16-color palette
+    const palRgb: number[] = [];
+    for (let i = 0; i < 16; i++) {
+      palRgb.push(((vram[palOff + i * 2]! << 8) | vram[palOff + i * 2 + 1]!) & 0x0FFF);
+    }
+
+    for (let rOff = 0; rOff <= origRom.length - 32; rOff += 2) {
+      let matchCount = 0;
+      for (let i = 0; i < 16; i++) {
+        const rw = ((origRom[rOff + i * 2]! << 8) | origRom[rOff + i * 2 + 1]!) & 0x0FFF;
+        if (rw === palRgb[i]) matchCount++;
+      }
+      if (matchCount < 12) continue;
+
+      const targetOff = rOff + colorIndex * 2;
+      const romRgb = ((origRom[targetOff]! << 8) | origRom[targetOff + 1]!) & 0x0FFF;
+      if (romRgb === vramRgb) {
+        return this.patchRomColor(targetOff, newWord);
+      }
+    }
+
+    return false;
+  }
+
+  private patchRomColor(romAddr: number, newWord: number): boolean {
+    const rom = this.programRom;
+    const romBright = rom[romAddr]! & 0xF0;
+    rom[romAddr] = romBright | ((newWord >> 8) & 0x0F);
+    rom[romAddr + 1] = newWord & 0xFF;
+    this.onModified?.();
+    return true;
   }
 
   /**
