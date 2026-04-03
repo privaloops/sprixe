@@ -1292,6 +1292,38 @@
       }
       .sprite-sheet-tile-wrap:hover .sprite-sheet-tile-import { opacity: 1; }
       .sprite-sheet-tile-import:hover { border-color: var(--color-accent); }
+      /* Palette layers */
+      .palette-layer-list {
+        display: flex; flex-direction: column; gap: 4px;
+        width: 100%; max-width: 360px;
+      }
+      .palette-layer-row {
+        display: flex; align-items: center; gap: 6px;
+        padding: 3px 6px; border-radius: var(--radius-sm);
+        background: var(--color-surface); border: 1px solid var(--color-border);
+      }
+      .palette-layer-eye {
+        background: none; border: none; cursor: pointer;
+        font-size: 14px; padding: 0; line-height: 1;
+        transition: opacity 0.15s;
+      }
+      .palette-layer-swatch {
+        display: flex; gap: 1px; flex: 1;
+      }
+      .palette-layer-color {
+        display: inline-block; width: 10px; height: 10px;
+        border-radius: 1px;
+      }
+      .palette-layer-name {
+        font: 600 0.7rem var(--font-system); color: var(--color-text-muted);
+        min-width: 24px;
+      }
+      .palette-layer-count {
+        font: 0.65rem var(--font-system); color: var(--color-text-muted);
+        background: rgba(255,255,255,0.08); padding: 1px 5px;
+        border-radius: 3px;
+      }
+
       .sprite-sheet-back {
         font: 0.75rem var(--font-system); padding: 4px 12px;
         background: var(--color-surface); color: var(--color-text);

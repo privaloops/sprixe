@@ -317,16 +317,16 @@ export class SpriteEditorUI {
       onSpreadChange: (value) => {
         this._onSpreadChange?.(value);
       },
-      onToggleRecSprites: () => {
-        this.toggleAllSpriteCapture();
-      },
       onToggleRecScroll: (layerId) => {
         this.toggleScrollCaptureFromPanel(layerId);
       },
       onOpenSpriteSheet: (groupIdx) => {
-        if (groupIdx < 0) return; // live session, not yet in layerGroups
+        if (groupIdx < 0) return;
         this.activeGroupIndex = groupIdx;
         this.sheet.enterSpriteSheetMode();
+      },
+      onStopSpriteCapture: (palette) => {
+        this.capture.stopCaptureForPalette(palette);
       },
       onExportScrollSet: (set) => {
         this.exportScrollSingle(set);
@@ -386,6 +386,7 @@ export class SpriteEditorUI {
         preview: pose.preview,
         previewW: pose.w,
         previewH: pose.h,
+        palette,
       });
     }
 
@@ -731,10 +732,10 @@ export class SpriteEditorUI {
       ctx.strokeStyle = 'rgba(255, 50, 80, 0.8)';
       for (const sprite of allSprites) {
         if (!this.capture.activeSessions.has(sprite.palette)) continue;
-        if (visited.has(sprite.index)) continue;
+        if (visited.has(sprite.uid)) continue;
         const group = groupCharacter(allSprites, sprite.index);
         if (!group) continue;
-        for (const s of group.sprites) visited.add(s.index);
+        for (const s of group.sprites) visited.add(s.uid);
 
         const { x, y, w, h } = group.bounds;
         ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
@@ -1405,10 +1406,6 @@ export class SpriteEditorUI {
 
 
   // -- Capture delegations --
-
-  private toggleAllSpriteCapture(): void {
-    this.capture.toggleAllSpriteCapture();
-  }
 
   private toggleScrollCaptureFromPanel(layerId: number): void {
     this.capture.toggleScrollCaptureFromPanel(layerId);

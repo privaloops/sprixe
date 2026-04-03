@@ -58,6 +58,9 @@ export class SheetViewer {
   private wasPausedBeforeSheet = false;
   private activeScrollSet: ScrollSet | null = null;
 
+  // Palette layer visibility (hidden palettes for current pose)
+  private hiddenPalettes = new Set<number>();
+
   // Scroll highlight
   private scrollHighlightOverlay: HTMLCanvasElement | null = null;
   private highlightedScrollSet: ScrollSet | null = null;
@@ -326,6 +329,7 @@ export class SheetViewer {
     this.sheetSelectedPose = index;
     this.sheetZoomed = true;
     this.sheetSelectedTile = -1;
+    this.hiddenPalettes.clear();
 
     const group = this.host.activeGroup;
     if (group?.spriteCapture) {
@@ -426,6 +430,15 @@ export class SheetViewer {
     hint.textContent = 'Export to Aseprite to edit';
     zoomSection.appendChild(hint);
 
+    // Palette layers (only shown when multiple palettes are used)
+    const palettesUsed = new Map<number, number>();
+    for (const t of pose.tiles) {
+      palettesUsed.set(t.palette, (palettesUsed.get(t.palette) ?? 0) + 1);
+    }
+    if (palettesUsed.size > 1) {
+      this.renderPaletteLayers(zoomSection, palettesUsed);
+    }
+
     // Tile strip
     const tilesLabel = el('div', 'edit-section-label');
     tilesLabel.textContent = 'Tiles';
@@ -437,6 +450,74 @@ export class SheetViewer {
 
     main.appendChild(zoomSection);
     container.appendChild(main);
+  }
+
+  /** Render palette layer toggles (eye icon + color swatch + tile count). */
+  private renderPaletteLayers(parent: HTMLElement, palettesUsed: Map<number, number>): void {
+    const { host } = this;
+    const video = host.emulator.getVideo();
+    const bufs = host.emulator.getBusBuffers();
+
+    const label = el('div', 'edit-section-label');
+    label.textContent = 'Palettes';
+    parent.appendChild(label);
+
+    const list = el('div', 'palette-layer-list');
+
+    for (const [palIdx, count] of palettesUsed) {
+      const row = el('div', 'palette-layer-row') as HTMLDivElement;
+      const isHidden = this.hiddenPalettes.has(palIdx);
+
+      // Eye toggle
+      const eyeBtn = el('button', 'palette-layer-eye') as HTMLButtonElement;
+      eyeBtn.textContent = isHidden ? '\u{1F441}\u{FE0F}\u{200D}\u{1F5E8}\u{FE0F}' : '\u{1F441}';
+      eyeBtn.style.opacity = isHidden ? '0.3' : '1';
+      setTooltip(eyeBtn, 'Toggle palette visibility');
+      eyeBtn.onclick = () => {
+        if (this.hiddenPalettes.has(palIdx)) {
+          this.hiddenPalettes.delete(palIdx);
+        } else {
+          this.hiddenPalettes.add(palIdx);
+        }
+        this.renderSheetZoomedPose();
+        // Refresh tile grid to dim hidden tiles
+        const tilesGrid = this.sheetContainer?.querySelector('.sprite-sheet-tiles');
+        const pose = host.activePoses[this.sheetSelectedPose];
+        if (tilesGrid && pose) this.renderSheetTileGrid(tilesGrid as HTMLElement, pose);
+        // Update eye state
+        eyeBtn.style.opacity = this.hiddenPalettes.has(palIdx) ? '0.3' : '1';
+      };
+      row.appendChild(eyeBtn);
+
+      // Color swatch (first 8 non-transparent colors)
+      const swatch = el('div', 'palette-layer-swatch') as HTMLDivElement;
+      if (video) {
+        const colors = readPalette(bufs.vram, video.getPaletteBase(), palIdx);
+        for (let i = 0; i < 15; i++) {
+          const [r, g, b] = colors[i] ?? [0, 0, 0];
+          const dot = document.createElement('span');
+          dot.className = 'palette-layer-color';
+          dot.style.background = `rgb(${r},${g},${b})`;
+          swatch.appendChild(dot);
+        }
+      }
+      row.appendChild(swatch);
+
+      // Label
+      const nameEl = el('span', 'palette-layer-name');
+      nameEl.textContent = `#${palIdx}`;
+      row.appendChild(nameEl);
+
+      // Tile count badge
+      const badge = el('span', 'palette-layer-count');
+      badge.textContent = `${count}`;
+      setTooltip(badge, `${count} tile${count !== 1 ? 's' : ''} using this palette`);
+      row.appendChild(badge);
+
+      list.appendChild(row);
+    }
+
+    parent.appendChild(list);
   }
 
   private renderScrollSetView(): void {
@@ -564,13 +645,19 @@ export class SheetViewer {
     const vramPalette = readPalette(bufs.vram, video.getPaletteBase(), pal);
 
     for (const pose of ag.spriteCapture.poses) {
-      const palette = pose.capturedColors ?? vramPalette;
+      // Build per-tile palette map (like the game renderer)
+      const palMap = new Map<number, Array<[number, number, number]>>();
+      for (const t of pose.tiles) {
+        if (!palMap.has(t.palette)) {
+          palMap.set(t.palette, readPalette(bufs.vram, video.getPaletteBase(), t.palette));
+        }
+      }
       const sprGroup: SpriteGroupData = {
         sprites: [], palette: pal,
         bounds: { x: 0, y: 0, w: pose.w, h: pose.h },
         tiles: pose.tiles,
       };
-      pose.preview = assembleCharacter(gfxRom, sprGroup, palette);
+      pose.preview = assembleCharacter(gfxRom, sprGroup, palMap);
     }
   }
 
@@ -591,14 +678,22 @@ export class SheetViewer {
     const bufs = host.emulator.getBusBuffers();
     const ag = host.activeGroup;
     const pal = ag?.spriteCapture?.palette ?? 0;
-    const palette = pose.capturedColors ?? readPalette(bufs.vram, video.getPaletteBase(), pal);
-
+    const palMap = new Map<number, Array<[number, number, number]>>();
+    // Filter out hidden palettes for the zoomed view
+    const visibleTiles = this.hiddenPalettes.size > 0
+      ? pose.tiles.filter(t => !this.hiddenPalettes.has(t.palette))
+      : pose.tiles;
+    for (const t of visibleTiles) {
+      if (!palMap.has(t.palette)) {
+        palMap.set(t.palette, readPalette(bufs.vram, video.getPaletteBase(), t.palette));
+      }
+    }
     const sprGroup: SpriteGroupData = {
       sprites: [], palette: pal,
       bounds: { x: 0, y: 0, w: pose.w, h: pose.h },
-      tiles: pose.tiles,
+      tiles: visibleTiles,
     };
-    const freshPreview = assembleCharacter(gfxRom, sprGroup, palette);
+    const freshPreview = assembleCharacter(gfxRom, sprGroup, palMap);
 
     const tmp = document.createElement('canvas');
     tmp.width = pose.w;
@@ -608,21 +703,23 @@ export class SheetViewer {
     ctx.clearRect(0, 0, cvs.width, cvs.height);
     ctx.drawImage(tmp, 0, 0);
 
-    // Tile grid overlay
+    // Tile grid overlay (only visible tiles)
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
     ctx.lineWidth = 0.5;
-    for (const t of pose.tiles) {
+    for (const t of visibleTiles) {
       ctx.strokeRect(t.relX + 0.5, t.relY + 0.5, 15, 15);
     }
 
-    // Selected tile highlight
+    // Selected tile highlight (only if visible)
     if (this.sheetSelectedTile >= 0 && this.sheetSelectedTile < pose.tiles.length) {
       const t = pose.tiles[this.sheetSelectedTile]!;
-      ctx.strokeStyle = '#ff1a50';
-      ctx.lineWidth = 1;
-      ctx.setLineDash([2, 2]);
-      ctx.strokeRect(t.relX + 0.5, t.relY + 0.5, 15, 15);
-      ctx.setLineDash([]);
+      if (!this.hiddenPalettes.has(t.palette)) {
+        ctx.strokeStyle = '#ff1a50';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([2, 2]);
+        ctx.strokeRect(t.relX + 0.5, t.relY + 0.5, 15, 15);
+        ctx.setLineDash([]);
+      }
     }
   }
 
@@ -657,16 +754,27 @@ export class SheetViewer {
     const bankSizes = video.getBankSizes();
     const bankBases = video.getBankBases();
 
+    // Build per-tile palette cache
+    const palCache = new Map<number, Array<[number, number, number]>>();
+
     for (let i = 0; i < pose.tiles.length; i++) {
       const t = pose.tiles[i]!;
+      const isHidden = this.hiddenPalettes.has(t.palette);
 
       const tileWrap = el('div', 'sprite-sheet-tile-wrap') as HTMLDivElement;
+      if (isHidden) tileWrap.style.opacity = '0.2';
 
       const tileCvs = document.createElement('canvas');
       tileCvs.width = 16;
       tileCvs.height = 16;
       tileCvs.className = 'sprite-sheet-tile';
       if (i === this.sheetSelectedTile) tileCvs.classList.add('active');
+
+      // Use tile's own palette
+      if (!palCache.has(t.palette)) {
+        palCache.set(t.palette, readPalette(bufs.vram, video.getPaletteBase(), t.palette));
+      }
+      const tilePal = palCache.get(t.palette)!;
 
       const tileCtx = tileCvs.getContext('2d')!;
       const pixels = readTileFn(gfxRom, t.mappedCode, 16, 16, 128);
@@ -677,7 +785,7 @@ export class SheetViewer {
           const srcY = t.flipY ? 15 - py : py;
           const colorIdx = pixels[srcY * 16 + srcX]!;
           if (colorIdx === 15) continue;
-          const [r, g, b] = palette[colorIdx] ?? [0, 0, 0];
+          const [r, g, b] = tilePal[colorIdx] ?? [0, 0, 0];
           const di = (py * 16 + px) * 4;
           img.data[di] = r;
           img.data[di + 1] = g;

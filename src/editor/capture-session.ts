@@ -24,6 +24,9 @@ export interface CaptureSession {
   poses: CapturedPose[];
   seenHashes: Set<string>;
   refTileCount: number;
+  /** Last known center position for spatial tracking */
+  lastCenterX: number;
+  lastCenterY: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -40,7 +43,6 @@ export class CaptureManager {
 
   private scrollTickCounter = 0;
   private captureCounter = 0;
-  allSpriteCaptureActive = false;
 
   constructor(
     private readonly emulator: Emulator,
@@ -51,20 +53,7 @@ export class CaptureManager {
 
   // -- Sprite capture --
 
-  /** Toggle capture of ALL sprite palettes (called from REC button in layer panel). */
-  toggleAllSpriteCapture(): void {
-    if (this.allSpriteCaptureActive) {
-      this.stopAllCaptures();
-      this.allSpriteCaptureActive = false;
-      this.onRefresh();
-      showToast('Sprite capture stopped', true);
-    } else {
-      this.allSpriteCaptureActive = true;
-      showToast('Recording all sprites — play the game to capture poses', true);
-    }
-  }
-
-  /** Toggle capture for the sprite at the given OBJ index. */
+  /** Toggle capture for the sprite at the given OBJ index (click-to-track). */
   toggleCaptureForSprite(spriteIndex: number): void {
     const video = this.emulator.getVideo();
     if (!video) return;
@@ -78,7 +67,13 @@ export class CaptureManager {
     if (this.activeSessions.has(palette)) {
       this.stopCaptureForPalette(palette);
     } else {
-      this.activeSessions.set(palette, { poses: [], seenHashes: new Set<string>(), refTileCount: group.sprites.length });
+      const cx = group.bounds.x + group.bounds.w / 2;
+      const cy = group.bounds.y + group.bounds.h / 2;
+      this.activeSessions.set(palette, {
+        poses: [], seenHashes: new Set<string>(),
+        refTileCount: group.sprites.length,
+        lastCenterX: cx, lastCenterY: cy,
+      });
       this.captureGroupsForPalette(video, palette);
       showToast(`Recording sprite (palette ${palette})`, true);
     }
@@ -87,7 +82,7 @@ export class CaptureManager {
   }
 
   /** Stop capture for a specific palette and save the group. */
-  private stopCaptureForPalette(palette: number): void {
+  stopCaptureForPalette(palette: number): void {
     const session = this.activeSessions.get(palette);
     if (!session) return;
     this.activeSessions.delete(palette);
@@ -119,17 +114,6 @@ export class CaptureManager {
     const video = this.emulator.getVideo();
     if (!video) return;
 
-    // Auto-capture all sprite palettes when REC Sprites is active
-    if (this.allSpriteCaptureActive) {
-      const allSprites = readAllSprites(video);
-      const visiblePalettes = new Set(allSprites.map(s => s.palette));
-      for (const pal of visiblePalettes) {
-        if (!this.activeSessions.has(pal)) {
-          this.activeSessions.set(pal, { poses: [], seenHashes: new Set<string>(), refTileCount: 0 });
-        }
-      }
-    }
-
     if (this.activeSessions.size === 0) return;
 
     let changed = false;
@@ -139,6 +123,9 @@ export class CaptureManager {
 
     if (changed) this.onRefresh();
   }
+
+  /** Minimum sprite count to consider a group (filters HUD/text fragments) */
+  private static readonly MIN_TILE_COUNT = 4;
 
   /** Capture all connected sprite groups for a palette. Returns true if new poses were found. */
   private captureGroupsForPalette(video: CPS1Video, palette: number): boolean {
@@ -156,34 +143,62 @@ export class CaptureManager {
     const visited = new Set<number>();
     const groups: SpriteGroupData[] = [];
     for (const sprite of samePalette) {
-      if (visited.has(sprite.index)) continue;
+      if (visited.has(sprite.uid)) continue;
       const group = groupCharacter(allSprites, sprite.index);
       if (!group) continue;
-      for (const s of group.sprites) visited.add(s.index);
-      groups.push(group);
+      for (const s of group.sprites) visited.add(s.uid);
+      // Filter small groups (HUD, text fragments)
+      if (group.sprites.length >= CaptureManager.MIN_TILE_COUNT) {
+        groups.push(group);
+      }
     }
 
     if (groups.length === 0) return false;
 
-    const ref = session.refTileCount;
     let bestGroup: SpriteGroupData | null = null;
-    let bestDiff = Infinity;
-    for (const g of groups) {
-      const diff = Math.abs(g.sprites.length - ref);
-      if (diff < bestDiff) {
-        bestDiff = diff;
-        bestGroup = g;
+
+    if (session.lastCenterX >= 0 && session.lastCenterY >= 0) {
+      // Spatial tracking: pick the group closest to the last known center
+      let bestDist = Infinity;
+      for (const g of groups) {
+        const cx = g.bounds.x + g.bounds.w / 2;
+        const cy = g.bounds.y + g.bounds.h / 2;
+        const dist = (cx - session.lastCenterX) ** 2 + (cy - session.lastCenterY) ** 2;
+        if (dist < bestDist) {
+          bestDist = dist;
+          bestGroup = g;
+        }
+      }
+    } else {
+      // Fallback (all-capture mode): pick the largest group
+      let bestSize = 0;
+      for (const g of groups) {
+        if (g.sprites.length > bestSize) {
+          bestSize = g.sprites.length;
+          bestGroup = g;
+        }
       }
     }
 
     if (!bestGroup) return false;
 
+    // Update tracking position
+    session.lastCenterX = bestGroup.bounds.x + bestGroup.bounds.w / 2;
+    session.lastCenterY = bestGroup.bounds.y + bestGroup.bounds.h / 2;
+
     const hash = poseHash(bestGroup);
     if (session.seenHashes.has(hash)) return false;
     session.seenHashes.add(hash);
 
-    const pal = readPalette(bufs.vram, video.getPaletteBase(), bestGroup.palette);
-    session.poses.push(capturePose(gfxRom, bestGroup, pal));
+    // Build palette map for all palettes used by this group (like the game renderer)
+    const paletteBase = video.getPaletteBase();
+    const palMap = new Map<number, Array<[number, number, number]>>();
+    for (const t of bestGroup.tiles) {
+      if (!palMap.has(t.palette)) {
+        palMap.set(t.palette, readPalette(bufs.vram, paletteBase, t.palette));
+      }
+    }
+    session.poses.push(capturePose(gfxRom, bestGroup, palMap));
     return true;
   }
 
