@@ -32,12 +32,19 @@ export interface ManifestTileRef {
   flipY: boolean;
 }
 
+export interface SpriteFrameManifest {
+  id: string;
+  tiles: ManifestTileRef[];
+  /** Per-frame offset applied during center-bottom alignment export */
+  alignOffset?: { x: number; y: number };
+}
+
 export interface SpriteManifest {
   game: string;
   character: string;
   palette: number;
   frameSize: { w: number; h: number };
-  frames: Array<{ id: string; tiles: ManifestTileRef[] }>;
+  frames: SpriteFrameManifest[];
 }
 
 export interface ScrollTilesetEntry {
@@ -91,8 +98,12 @@ export function exportSpriteAseprite(
   // Use captured palette from first pose, fallback to VRAM
   const pose0 = poses[0]!;
   const cps1Palette = pose0.capturedColors ?? readPalette(bufs.vram, video.getPaletteBase(), palette);
-  const frameW = pose0.w;
-  const frameH = pose0.h;
+
+  // Center-bottom alignment: all poses share a common foot anchor
+  const refCX = Math.max(...poses.map(p => Math.floor(p.w / 2)));
+  const refBottom = Math.max(...poses.map(p => p.h));
+  const frameW = refCX + Math.max(...poses.map(p => Math.ceil(p.w / 2)));
+  const frameH = refBottom;
 
   // Build Aseprite palette from CPS1 palette
   const asePalette: AsepritePaletteEntry[] = cps1Palette.map(([r, g, b]) => ({
@@ -103,13 +114,18 @@ export function exportSpriteAseprite(
 
   // Build frames: one per captured pose (deduplicated by tile code set)
   const aseFrames: AsepriteFrame[] = [];
-  const manifestFrames: Array<{ id: string; tiles: Array<{ address: string; x: number; y: number; flipX: boolean; flipY: boolean }> }> = [];
+  const manifestFrames: SpriteFrameManifest[] = [];
   const seenPoseKeys = new Set<string>();
 
   for (let i = 0; i < poses.length; i++) {
     const pose = poses[i]!;
     if (seenPoseKeys.has(pose.tileHash)) continue;
     seenPoseKeys.add(pose.tileHash);
+
+    // Per-pose offset: center-bottom alignment
+    const dx = refCX - Math.floor(pose.w / 2);
+    const dy = refBottom - pose.h;
+
     const pixels = new Uint8Array(frameW * frameH).fill(15);
 
     for (const tile of pose.tiles) {
@@ -120,8 +136,8 @@ export function exportSpriteAseprite(
           const srcY = tile.flipY ? 15 - ty : ty;
           const palIdx = tilePixels[srcY * 16 + srcX]!;
           if (palIdx === 15) continue;
-          const destX = tile.relX + tx;
-          const destY = tile.relY + ty;
+          const destX = tile.relX + dx + tx;
+          const destY = tile.relY + dy + ty;
           if (destX >= 0 && destX < frameW && destY >= 0 && destY < frameH) {
             pixels[destY * frameW + destX] = palIdx;
           }
@@ -131,8 +147,10 @@ export function exportSpriteAseprite(
 
     aseFrames.push({ pixels, duration: 100 });
 
+    // Store original relX/relY + alignment offset (import applies offset for pixel reading)
     manifestFrames.push({
       id: `pose_${i}`,
+      alignOffset: { x: dx, y: dy },
       tiles: pose.tiles.map(t => ({
         address: '0x' + (t.mappedCode * 128).toString(16).toUpperCase(),
         x: t.relX,
@@ -185,13 +203,12 @@ export function exportSpritePaletteAseprite(
   const bufs = emulator.getBusBuffers();
 
   const cps1Palette = readPalette(bufs.vram, video.getPaletteBase(), palIdx);
-  // Use max dimensions across all poses to avoid cropping
-  let frameW = 0;
-  let frameH = 0;
-  for (const p of poses) {
-    if (p.w > frameW) frameW = p.w;
-    if (p.h > frameH) frameH = p.h;
-  }
+
+  // Center-bottom alignment: all poses share a common foot anchor
+  const refCX = Math.max(...poses.map(p => Math.floor(p.w / 2)));
+  const refBottom = Math.max(...poses.map(p => p.h));
+  const frameW = refCX + Math.max(...poses.map(p => Math.ceil(p.w / 2)));
+  const frameH = refBottom;
 
   const asePalette: AsepritePaletteEntry[] = cps1Palette.map(([r, g, b]) => ({
     r, g, b, a: 255,
@@ -211,6 +228,10 @@ export function exportSpritePaletteAseprite(
     if (seenPoseKeys.has(pose.tileHash)) continue;
     seenPoseKeys.add(pose.tileHash);
 
+    // Per-pose offset: center-bottom alignment
+    const dx = refCX - Math.floor(pose.w / 2);
+    const dy = refBottom - pose.h;
+
     const pixels = new Uint8Array(frameW * frameH).fill(15);
     for (const tile of palTiles) {
       const tilePixels = readTileFn(gfxRom, tile.mappedCode);
@@ -220,8 +241,8 @@ export function exportSpritePaletteAseprite(
           const srcY = tile.flipY ? 15 - ty : ty;
           const ci = tilePixels[srcY * 16 + srcX]!;
           if (ci === 15) continue;
-          const destX = tile.relX + tx;
-          const destY = tile.relY + ty;
+          const destX = tile.relX + dx + tx;
+          const destY = tile.relY + dy + ty;
           if (destX >= 0 && destX < frameW && destY >= 0 && destY < frameH) {
             pixels[destY * frameW + destX] = ci;
           }
@@ -232,6 +253,7 @@ export function exportSpritePaletteAseprite(
     aseFrames.push({ pixels, duration: 100 });
     manifestFrames.push({
       id: `pose_${i}`,
+      alignOffset: { x: dx, y: dy },
       tiles: palTiles.map(t => ({
         address: '0x' + (t.mappedCode * 128).toString(16).toUpperCase(),
         x: t.relX, y: t.relY, flipX: t.flipX, flipY: t.flipY,
@@ -594,8 +616,11 @@ async function importAsepriteBuffer(
         const frame = ase.frames[f];
         if (!frame?.pixels) continue;
 
-        const manifestFrame = manifest.frames?.[f];
+        const manifestFrame = manifest.frames?.[f] as SpriteFrameManifest | undefined;
         if (!manifestFrame?.tiles) continue;
+
+        // Apply alignment offset to read pixels at their shifted canvas position
+        const ao = manifestFrame.alignOffset ?? { x: 0, y: 0 };
 
         for (const tileInfo of manifestFrame.tiles) {
           const romAddr = typeof tileInfo.address === 'string'
@@ -607,8 +632,8 @@ async function importAsepriteBuffer(
             for (let tx = 0; tx < 16; tx++) {
               const srcX = tileInfo.flipX ? 15 - tx : tx;
               const srcY = tileInfo.flipY ? 15 - ty : ty;
-              const frameX = tileInfo.x + tx;
-              const frameY = tileInfo.y + ty;
+              const frameX = tileInfo.x + ao.x + tx;
+              const frameY = tileInfo.y + ao.y + ty;
 
               if (frameX < 0 || frameX >= ase.width || frameY < 0 || frameY >= ase.height) continue;
 
