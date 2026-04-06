@@ -52,12 +52,20 @@ export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
   },
-  plugins: [romsListPlugin()],
-  server: {
-    headers: {
-      // Required for SharedArrayBuffer (AudioWorklet ring buffer)
-      "Cross-Origin-Opener-Policy": "same-origin",
-      "Cross-Origin-Embedder-Policy": "require-corp",
+  plugins: [
+    romsListPlugin(),
+    // COOP/COEP only on /play/ (SharedArrayBuffer). Landing needs YouTube embed.
+    {
+      name: "coop-coep-play-only",
+      configureServer(server) {
+        server.middlewares.use((req, res, next) => {
+          if (req.url?.startsWith("/play")) {
+            res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+            res.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
+          }
+          next();
+        });
+      },
     },
-  },
+  ],
 });
