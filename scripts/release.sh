@@ -33,15 +33,28 @@ step "Version"
 CURRENT=$(node -p "require('./package.json').version")
 echo "Current version: $CURRENT"
 
-# Check if this is a beta bump or first beta
 if [[ "$CURRENT" == *"-beta."* ]]; then
-  # Bump beta number
   BASE=$(echo "$CURRENT" | sed 's/-beta\.[0-9]*//')
   BETA_NUM=$(echo "$CURRENT" | grep -o 'beta\.[0-9]*' | grep -o '[0-9]*')
   NEXT_BETA=$((BETA_NUM + 1))
-  VERSION="${BASE}-beta.${NEXT_BETA}"
+
+  echo ""
+  echo "  1) beta   → ${BASE}-beta.${NEXT_BETA}"
+  echo "  2) stable → ${BASE}"
+  echo ""
+  read -p "Release type? (1/2) " -n 1 -r
+  echo
+
+  if [[ "$REPLY" == "2" ]]; then
+    VERSION="$BASE"
+    PRERELEASE=false
+  else
+    VERSION="${BASE}-beta.${NEXT_BETA}"
+    PRERELEASE=true
+  fi
 else
   VERSION="${CURRENT}-beta.1"
+  PRERELEASE=true
 fi
 
 echo "Next version: $VERSION"
@@ -81,9 +94,14 @@ pkg.version = process.env.VERSION;
 require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
 "
 
-# Update CHANGELOG: [Unreleased] → [VERSION] - DATE
+# Update CHANGELOG
 DATE=$(date +%Y-%m-%d)
-sed -i '' "s/## \[Unreleased\]/## [Unreleased]\n\n## [$VERSION] - $DATE/" CHANGELOG.md
+if [[ "$PRERELEASE" == true ]]; then
+  sed -i '' "s/## \[Unreleased\]/## [Unreleased]\n\n## [$VERSION] - $DATE/" CHANGELOG.md
+else
+  # Stable: replace current beta header with stable version
+  sed -i '' "s/## \[$CURRENT\].*/## [$VERSION] - $DATE/" CHANGELOG.md
+fi
 
 pass "Version bumped to $VERSION"
 
@@ -112,11 +130,17 @@ step "GitHub Release"
 # Extract changelog for this version
 NOTES=$(sed -n "/## \[$VERSION\]/,/## \[/p" CHANGELOG.md | sed '$d')
 
-gh release create "v$VERSION" \
-  --title "v$VERSION" \
-  --notes "$NOTES" \
-  --prerelease
+if [[ "$PRERELEASE" == true ]]; then
+  gh release create "v$VERSION" \
+    --title "v$VERSION" \
+    --notes "$NOTES" \
+    --prerelease
+else
+  gh release create "v$VERSION" \
+    --title "v$VERSION" \
+    --notes "$NOTES"
+fi
 
 pass "GitHub release created"
 
-echo -e "\n${GREEN}🎉 Release v$VERSION complete!${NC}"
+echo -e "\n${GREEN}Release v$VERSION complete!${NC}"
