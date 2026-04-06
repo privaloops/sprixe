@@ -18,14 +18,14 @@ test.describe('Phase 16 — Sprite capture workflow', () => {
 
     // Ensure editor is closed before each test
     if (await page.evaluate(() => document.body.classList.contains('edit-active'))) {
-      await page.keyboard.press('e');
+      await page.keyboard.press('F2');
     }
   });
 
   // -- Editor opens with layer panel --
 
-  test('16.1 pressing E opens editor and layer panel', async ({ page }) => {
-    await page.keyboard.press('e');
+  test('16.1 pressing F2 opens editor and layer panel', async ({ page }) => {
+    await page.keyboard.press('F2');
     await expect(page.locator('body')).toHaveClass(/edit-active/);
     await expect(page.locator('#layer-panel')).toHaveClass(/open/);
   });
@@ -33,7 +33,7 @@ test.describe('Phase 16 — Sprite capture workflow', () => {
   // -- REC button exists --
 
   test('16.2 REC sprites button exists in layer panel', async ({ page }) => {
-    await page.keyboard.press('e');
+    await page.keyboard.press('F2');
 
     const recBtn = page.locator('#layer-panel .layer-rec-btn').first();
     await expect(recBtn).toBeAttached();
@@ -41,7 +41,7 @@ test.describe('Phase 16 — Sprite capture workflow', () => {
   });
 
   test('16.3 REC sprites button is visible and enabled', async ({ page }) => {
-    await page.keyboard.press('e');
+    await page.keyboard.press('F2');
 
     const recBtn = page.locator('#layer-panel .layer-rec-btn').first();
     await expect(recBtn).toBeVisible();
@@ -49,7 +49,7 @@ test.describe('Phase 16 — Sprite capture workflow', () => {
   });
 
   test('16.4 REC button has rec-dot indicator', async ({ page }) => {
-    await page.keyboard.press('e');
+    await page.keyboard.press('F2');
 
     const dot = page.locator('#layer-panel .layer-rec-btn').first().locator('.rec-dot');
     await expect(dot).toBeAttached();
@@ -58,7 +58,7 @@ test.describe('Phase 16 — Sprite capture workflow', () => {
   // -- REC button toggles recording state --
 
   test('16.5 clicking REC adds recording class to button', async ({ page }) => {
-    await page.keyboard.press('e');
+    await page.keyboard.press('F2');
 
     const recBtn = page.locator('#layer-panel .layer-rec-btn').first();
     await expect(recBtn).not.toHaveClass(/recording/);
@@ -68,7 +68,7 @@ test.describe('Phase 16 — Sprite capture workflow', () => {
   });
 
   test('16.6 clicking REC again removes recording class', async ({ page }) => {
-    await page.keyboard.press('e');
+    await page.keyboard.press('F2');
 
     const recBtn = page.locator('#layer-panel .layer-rec-btn').first();
     await recBtn.click();
@@ -79,7 +79,7 @@ test.describe('Phase 16 — Sprite capture workflow', () => {
   });
 
   test('16.7 rec-dot blinks when recording is active', async ({ page }) => {
-    await page.keyboard.press('e');
+    await page.keyboard.press('F2');
 
     const recBtn = page.locator('#layer-panel .layer-rec-btn').first();
     await recBtn.click();
@@ -89,7 +89,7 @@ test.describe('Phase 16 — Sprite capture workflow', () => {
   });
 
   test('16.8 rec-dot stops blinking when recording is stopped', async ({ page }) => {
-    await page.keyboard.press('e');
+    await page.keyboard.press('F2');
 
     const recBtn = page.locator('#layer-panel .layer-rec-btn').first();
     await recBtn.click();
@@ -102,7 +102,7 @@ test.describe('Phase 16 — Sprite capture workflow', () => {
   // -- Recording flow with game running --
 
   test('16.9 full REC flow: start → run → stop (structure verification)', async ({ page }) => {
-    await page.keyboard.press('e');
+    await page.keyboard.press('F2');
 
     const recBtn = page.locator('#layer-panel .layer-rec-btn').first();
     await recBtn.click(); // start recording
@@ -124,14 +124,14 @@ test.describe('Phase 16 — Sprite capture workflow', () => {
   // -- Sprite cards (may not appear with mock ROM, noted in comment) --
 
   test('16.10 layer panel content area exists', async ({ page }) => {
-    await page.keyboard.press('e');
+    await page.keyboard.press('F2');
 
     const content = page.locator('#layer-panel .layer-panel-content');
     await expect(content).toBeAttached();
   });
 
   test('16.11 layer capture list container is present after editor opens', async ({ page }) => {
-    await page.keyboard.press('e');
+    await page.keyboard.press('F2');
 
     // Layer groups with sprite type should be rendered
     const groups = page.locator('#layer-panel .layer-group');
@@ -142,7 +142,7 @@ test.describe('Phase 16 — Sprite capture workflow', () => {
   // captures. They may be skipped or fail on a minimal test ROM.
 
   test('16.12 sprite cards appear after capture (skipped on mock ROM if no sprites)', async ({ page }) => {
-    await page.keyboard.press('e');
+    await page.keyboard.press('F2');
 
     const recBtn = page.locator('#layer-panel .layer-rec-btn').first();
     await recBtn.click(); // start recording
@@ -166,7 +166,7 @@ test.describe('Phase 16 — Sprite capture workflow', () => {
   });
 
   test('16.13 clicking a sprite card opens sheet viewer (requires real sprites)', async ({ page }) => {
-    await page.keyboard.press('e');
+    await page.keyboard.press('F2');
 
     const recBtn = page.locator('#layer-panel .layer-rec-btn').first();
     await recBtn.click();
@@ -193,7 +193,7 @@ test.describe('Phase 16 — Sprite capture workflow', () => {
   });
 
   test('16.14 close button in sheet viewer closes the viewer (requires real sprites)', async ({ page }) => {
-    await page.keyboard.press('e');
+    await page.keyboard.press('F2');
 
     const recBtn = page.locator('#layer-panel .layer-rec-btn').first();
     await recBtn.click();
@@ -229,7 +229,7 @@ test.describe('Phase 16 — Sprite capture workflow', () => {
   // -- Import button in layer panel --
 
   test('16.15 Import .aseprite button exists in layer panel', async ({ page }) => {
-    await page.keyboard.press('e');
+    await page.keyboard.press('F2');
 
     const importBtn = page.locator('#layer-panel .layer-import-btn');
     await expect(importBtn).toBeAttached();
@@ -239,7 +239,7 @@ test.describe('Phase 16 — Sprite capture workflow', () => {
   // -- Layer panel close button --
 
   test('16.16 layer panel close button hides the panel', async ({ page }) => {
-    await page.keyboard.press('e');
+    await page.keyboard.press('F2');
     await expect(page.locator('#layer-panel')).toHaveClass(/open/);
 
     const closeBtn = page.locator('#layer-panel .layer-close');
@@ -252,7 +252,7 @@ test.describe('Phase 16 — Sprite capture workflow', () => {
   // -- Memory indicator --
 
   test('16.17 memory indicator is present in layer panel', async ({ page }) => {
-    await page.keyboard.press('e');
+    await page.keyboard.press('F2');
 
     const mem = page.locator('#layer-panel .layer-mem-indicator');
     await expect(mem).toBeAttached();

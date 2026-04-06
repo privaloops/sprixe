@@ -36,6 +36,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - **Manifest truncation** — Compressed manifest with deflate+base64 to prevent Aseprite truncating long User Data strings
 - **Transparent tile filtering** — Fully transparent tiles (all pen 15) excluded from sprite capture
 - **E shortcut removed** — Redundant E key shortcut removed (use F2 for sprite editor)
+- **E2E tests updated for F2 shortcut** — Replaced obsolete E key with F2 in 4 test files, added beta gate bypass in helpers, fixed eye toggle assertion (opacity instead of text), reduced timeouts (30s→10s test, 5s→2s expect)
 
 ### Performance
 - **M68000 flags as direct booleans** — CCR flags (C, V, Z, N, X) stored as boolean fields instead of getter/setter proxies to the SR register. SR reconstructed on demand only (exceptions, save state, MOVE from SR). Eliminates ~10 function calls per instruction on the hottest path (~50K instructions/frame)

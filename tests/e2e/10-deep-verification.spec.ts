@@ -60,8 +60,10 @@ test.describe('Phase 10 — Deep verification', () => {
   });
 
   test('10.4 layer eye toggle in layer panel', async ({ page }) => {
-    // Open editor to get the layer panel
-    await page.keyboard.press('e');
+    // Debug panel opens by default — close then reopen to ensure editor is active
+    await page.keyboard.press('F2');
+    await expect(page.locator('#dbg-panel')).not.toHaveClass(/open/);
+    await page.keyboard.press('F2');
     await expect(page.locator('#layer-panel')).toHaveClass(/open/);
 
     // Find layer eye buttons (one per HW layer)
@@ -72,17 +74,14 @@ test.describe('Phase 10 — Deep verification', () => {
       return;
     }
 
-    // Toggle first eye button off (should hide layer)
+    // Toggle first eye button off (opacity changes from 1 to 0.3)
     const firstEye = eyeBtns.first();
-    const textBefore = await firstEye.textContent();
+    await expect(firstEye).toHaveCSS('opacity', '1');
     await firstEye.click();
-    const textAfter = await firstEye.textContent();
-    // The eye icon should change (e.g., "👁" → "—" or similar)
-    expect(textAfter).not.toBe(textBefore);
+    await expect(firstEye).toHaveCSS('opacity', '0.3');
 
     // Toggle back on
     await firstEye.click();
-    const textRestored = await firstEye.textContent();
-    expect(textRestored).toBe(textBefore);
+    await expect(firstEye).toHaveCSS('opacity', '1');
   });
 });

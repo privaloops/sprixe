@@ -60,12 +60,12 @@ test.describe('Phase 7 — Keyboard shortcuts', () => {
     await expect(page.locator('#controls-modal-overlay')).not.toHaveClass(/open/);
   });
 
-  test('7.9 E opens video panel (sprite editor)', async ({ page }) => {
+  test('7.9 F2 reopens video panel after closing', async ({ page }) => {
     // Close panel first
     await page.keyboard.press('F2');
     await expect(page.locator('#dbg-panel')).not.toHaveClass(/open/);
-    // E should reopen it
-    await page.keyboard.press('e');
+    // F2 should reopen it
+    await page.keyboard.press('F2');
     await expect(page.locator('#dbg-panel')).toHaveClass(/open/);
   });
 });
