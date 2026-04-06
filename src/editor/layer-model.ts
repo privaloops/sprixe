@@ -4,6 +4,7 @@
  */
 
 import type { CapturedPose } from './sprite-analyzer';
+import type { PoseAnimTag } from '../pixellab/pixellab-types';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -19,6 +20,8 @@ export interface LayerGroup {
     poses: CapturedPose[];
     palette: number;
     selectedPoseIndex: number;
+    /** PixelLab animation tags per pose (sparse, null = untagged) */
+    poseAnimTags?: Array<PoseAnimTag | null>;
   };
 }
 

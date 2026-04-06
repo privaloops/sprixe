@@ -924,6 +924,77 @@
         font: 600 0.6rem var(--font-system); padding: 0 3px;
         border-radius: 2px; background: rgba(0,0,0,0.7); color: #aaa; line-height: 1.4;
       }
+      .sprite-sheet-sidebar-cell .pose-anim-tag {
+        position: absolute; bottom: 0; left: 0; right: 0;
+        font: 500 0.7rem var(--font-system); padding: 3px 4px;
+        background: rgba(0,0,0,0.85); color: var(--color-accent); border: none;
+        border-top: 1px solid #444; cursor: pointer; width: 100%;
+      }
+      .pose-anim-tag option { background: #222; color: #ddd; font-size: 0.8rem; }
+      .edit-generate-btn {
+        background: linear-gradient(135deg, #6c3ce0, #ff1a50);
+        color: #fff; border: none; border-radius: var(--radius-sm);
+        padding: 8px 16px; font: 600 0.8rem var(--font-system);
+        cursor: pointer; transition: opacity 0.15s; align-self: flex-start;
+      }
+      .edit-generate-btn:hover { opacity: 0.85; }
+
+      /* PixelLab modal */
+      .pixellab-modal-overlay {
+        position: fixed; inset: 0; z-index: 10000;
+        background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center;
+      }
+      .pixellab-modal {
+        background: #1a1a1a; border: 1px solid var(--color-border); border-radius: 8px;
+        padding: 20px; width: 420px; max-height: 90vh; overflow-y: auto;
+        display: flex; flex-direction: column; gap: 8px;
+      }
+      .pixellab-modal h2 {
+        margin: 0 0 8px; font: 700 1rem var(--font-system); color: var(--color-text);
+      }
+      .pixellab-modal label {
+        font: 600 0.75rem var(--font-system); color: #999; margin-top: 4px;
+      }
+      .pixellab-desc {
+        width: 100%; resize: vertical; background: #111; color: #eee; border: 1px solid #333;
+        border-radius: 4px; padding: 8px; font: 0.8rem var(--font-mono);
+      }
+      .pixellab-api-key {
+        width: 100%; background: #111; color: #eee; border: 1px solid #333;
+        border-radius: 4px; padding: 6px 8px; font: 0.8rem var(--font-mono);
+      }
+      .pixellab-photo-row { display: flex; align-items: center; gap: 8px; }
+      .pixellab-photo-preview { width: 48px; height: 48px; object-fit: cover; border-radius: 4px; }
+      .pixellab-strength-row { display: flex; align-items: center; gap: 8px; }
+      .pixellab-strength-row input[type=range] { flex: 1; }
+      .pixellab-strength-row span { font: 0.75rem var(--font-mono); color: #aaa; min-width: 30px; }
+      .pixellab-palette-strip { display: flex; gap: 2px; margin-top: 4px; }
+      .pixellab-swatch { width: 16px; height: 16px; border-radius: 2px; }
+      .pixellab-tag-list { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+      .pixellab-tag-chip {
+        font: 500 0.65rem var(--font-system); padding: 2px 6px;
+        background: #2a2a3a; color: var(--color-accent); border-radius: 10px;
+      }
+      .pixellab-progress { margin-top: 8px; }
+      .pixellab-progress-bar {
+        height: 4px; background: #333; border-radius: 2px; overflow: hidden;
+      }
+      .pixellab-progress-fill {
+        height: 100%; width: 0%; background: linear-gradient(90deg, #6c3ce0, #ff1a50);
+        transition: width 0.3s;
+      }
+      .pixellab-progress-text { font: 0.7rem var(--font-system); color: #888; margin-top: 4px; }
+      .pixellab-btn-row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+      .pixellab-cancel-btn {
+        background: transparent; color: #999; border: 1px solid #444;
+        border-radius: 4px; padding: 6px 16px; font: 0.8rem var(--font-system); cursor: pointer;
+      }
+      .pixellab-generate-btn {
+        background: linear-gradient(135deg, #6c3ce0, #ff1a50); color: #fff;
+        border: none; border-radius: 4px; padding: 6px 20px;
+        font: 600 0.8rem var(--font-system); cursor: pointer;
+      }
+      .pixellab-generate-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
       /* Main content area */
       .sprite-sheet-main {

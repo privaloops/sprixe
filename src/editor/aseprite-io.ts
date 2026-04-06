@@ -484,7 +484,7 @@ export function importAsepriteFile(
   input.click();
 }
 
-async function importAsepriteBuffer(
+export async function importAsepriteBuffer(
   emulator: Emulator,
   editor: SpriteEditor,
   layerGroups: LayerGroup[],

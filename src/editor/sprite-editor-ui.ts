@@ -24,6 +24,8 @@ import { SheetViewer, type SheetViewerHost } from './sheet-viewer';
 import { setTooltip } from '../ui/tooltip';
 import { openColorPicker } from './color-picker';
 import { createStatusBar, setStatus } from '../ui/status-bar';
+import { createPixelLabModal, type GenerateConfig } from '../pixellab/pixellab-modal';
+import { runPixelLabGeneration } from '../pixellab/pixellab-orchestrator';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -1147,6 +1149,25 @@ export class SpriteEditorUI {
     if (!this.exportContainer) return;
     this.exportContainer.innerHTML = '';
     this.exportContainer.style.display = 'none';
+  }
+
+  /** Open the PixelLab generation modal for a sprite group. */
+  onGenerateAI(groupIdx: number): void {
+    const group = this.layerGroups[groupIdx];
+    if (!group?.spriteCapture) return;
+
+    const modal = createPixelLabModal(group, {
+      onGenerate: (config: GenerateConfig) => {
+        runPixelLabGeneration(
+          this.emulator, this.editor, this.layerGroups,
+          groupIdx, config, modal,
+          () => this.refreshLayerPanel(),
+        );
+      },
+      onCancel: () => modal.remove(),
+    });
+
+    document.body.appendChild(modal);
   }
 
   private openColorPickerDialog(colorIndex: number): void {

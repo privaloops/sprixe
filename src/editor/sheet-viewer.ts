@@ -18,6 +18,7 @@ import { findTileReferences } from './tile-refs';
 import { scrollLayerName } from './scroll-capture';
 import { setTooltip } from '../ui/tooltip';
 import { exportSpritePaletteAseprite, exportScrollAseprite } from './aseprite-io';
+import { ANIMATION_TEMPLATES, ANIMATION_LABELS, type AnimationTemplateId, type PoseAnimTag } from '../pixellab/pixellab-types';
 
 // ---------------------------------------------------------------------------
 // Host interface — the subset of SpriteEditorUI that SheetViewer needs
@@ -44,6 +45,8 @@ export interface SheetViewerHost {
   /** Show/hide export button in the right panel. */
   showExportButton(label: string, onExport: () => void): void;
   hideExportButton(): void;
+  /** Called when user clicks "Generate with AI" */
+  onGenerateAI?(groupIdx: number): void;
 }
 
 // ---------------------------------------------------------------------------
@@ -372,6 +375,47 @@ export class SheetViewer {
       badge.textContent = `${i}`;
       cell.appendChild(badge);
 
+      // PixelLab animation tag dropdown
+      const capture = this.host.activeGroup?.spriteCapture;
+      if (capture) {
+        const tags = capture.poseAnimTags ?? [];
+        const currentTag = tags[i];
+        const select = document.createElement('select');
+        select.className = 'pose-anim-tag';
+        select.title = 'PixelLab animation tag';
+
+        const noneOpt = document.createElement('option');
+        noneOpt.value = '';
+        noneOpt.textContent = '—';
+        select.appendChild(noneOpt);
+
+        for (const tmpl of ANIMATION_TEMPLATES) {
+          const opt = document.createElement('option');
+          opt.value = tmpl;
+          opt.textContent = ANIMATION_LABELS[tmpl];
+          if (currentTag?.template === tmpl) opt.selected = true;
+          select.appendChild(opt);
+        }
+
+        select.onclick = (e) => e.stopPropagation(); // don't trigger cell click
+        select.onchange = () => {
+          if (!capture.poseAnimTags) capture.poseAnimTags = new Array(poses.length).fill(null);
+          if (select.value) {
+            // Auto-assign frame index: count existing poses with same template
+            const tmpl = select.value as AnimationTemplateId;
+            let frameIdx = 0;
+            for (let j = 0; j < i; j++) {
+              if (capture.poseAnimTags[j]?.template === tmpl) frameIdx++;
+            }
+            capture.poseAnimTags[i] = { template: tmpl, frame: frameIdx };
+          } else {
+            capture.poseAnimTags[i] = null;
+          }
+          this.renderSheetZoomedView(); // refresh to update frame numbers
+        };
+        cell.appendChild(select);
+      }
+
       setTooltip(cell, 'Switch to this pose — Up/Down arrows');
       cell.onclick = () => this.selectPoseInSheet(i);
       sidebar.appendChild(cell);
@@ -443,13 +487,26 @@ export class SheetViewer {
 
     container.appendChild(main);
 
-    // Show export button in the right panel
+    // Show export + generate buttons in the right panel
     const group = this.host.activeGroup;
     const palette = group?.spriteCapture?.palette;
     if (palette !== undefined) {
       this.host.showExportButton('Export .aseprite', () => {
         exportSpritePaletteAseprite(this.host.emulator, this.host.editor, this.host.activePoses, palette);
       });
+
+      // "Generate with AI" button — visible when at least 1 pose is tagged
+      const tags = group.spriteCapture?.poseAnimTags ?? [];
+      const taggedCount = tags.filter(t => t !== null).length;
+      if (taggedCount > 0 && this.host.onGenerateAI) {
+        const genBtn = el('button', 'edit-generate-btn') as HTMLButtonElement;
+        genBtn.textContent = `Generate with AI (${taggedCount} tagged)`;
+        setTooltip(genBtn, 'Generate new character via PixelLab');
+        genBtn.onclick = () => this.host.onGenerateAI?.(this.host.activeGroupIndex);
+        // Append after export button container
+        const exportContainer = genBtn.parentElement ?? container;
+        container.querySelector('.sprite-sheet-main')?.appendChild(genBtn);
+      }
     }
   }
 
