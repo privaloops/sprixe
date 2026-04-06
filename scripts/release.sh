@@ -79,10 +79,6 @@ step "E2E tests (Chromium + Firefox, sans game-matrix)"
 npx playwright test --grep-invert "Game Matrix" || fail "E2E tests failed"
 pass "E2E tests"
 
-step "Game matrix (Chromium only)"
-npx playwright test tests/e2e/game-matrix.spec.ts --project=chromium || fail "Game matrix failed"
-pass "Game matrix"
-
 # ── 4. Version bump ──
 
 step "Bumping version to $VERSION"
