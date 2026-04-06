@@ -54,12 +54,14 @@ export default defineConfig({
   },
   plugins: [
     romsListPlugin(),
-    // COOP/COEP only on /play/ (SharedArrayBuffer). Landing needs YouTube embed.
+    // COOP/COEP on all requests except landing page (YouTube embed needs no COEP).
     {
-      name: "coop-coep-play-only",
+      name: "coop-coep-except-landing",
       configureServer(server) {
         server.middlewares.use((req, res, next) => {
-          if (req.url?.startsWith("/play")) {
+          const url = req.url ?? "";
+          const isLanding = url === "/" || url === "/index.html" || url.startsWith("/?");
+          if (!isLanding) {
             res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
             res.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
           }
