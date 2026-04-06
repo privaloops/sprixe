@@ -16,50 +16,50 @@ test.describe('Phase 15 — Editor viewer', () => {
     await page.keyboard.press('p');
     // Editor opens automatically with debug panel — close it first
     if (await page.evaluate(() => document.body.classList.contains('edit-active'))) {
-      await page.keyboard.press('e');
+      await page.keyboard.press('F2');
     }
   });
 
   // -- Editor toggle --
 
-  test('15.1 E key opens editor (body gets edit-active class)', async ({ page }) => {
+  test('15.1 F2 key opens editor (body gets edit-active class)', async ({ page }) => {
     await expect(page.locator('body')).not.toHaveClass(/edit-active/);
-    await page.keyboard.press('e');
+    await page.keyboard.press('F2');
     await expect(page.locator('body')).toHaveClass(/edit-active/);
   });
 
-  test('15.2 E key again closes editor (edit-active removed)', async ({ page }) => {
-    await page.keyboard.press('e');
+  test('15.2 F2 key again closes editor (edit-active removed)', async ({ page }) => {
+    await page.keyboard.press('F2');
     await expect(page.locator('body')).toHaveClass(/edit-active/);
-    await page.keyboard.press('e');
+    await page.keyboard.press('F2');
     await expect(page.locator('body')).not.toHaveClass(/edit-active/);
   });
 
   // -- Overlay --
 
   test('15.3 editor creates #edit-overlay canvas on game screen', async ({ page }) => {
-    await page.keyboard.press('e');
+    await page.keyboard.press('F2');
     const overlay = page.locator('#edit-overlay');
     await expect(overlay).toBeAttached();
   });
 
   test('15.4 closing editor removes #edit-overlay', async ({ page }) => {
-    await page.keyboard.press('e');
+    await page.keyboard.press('F2');
     await expect(page.locator('#edit-overlay')).toBeAttached();
-    await page.keyboard.press('e');
+    await page.keyboard.press('F2');
     await expect(page.locator('#edit-overlay')).not.toBeAttached();
   });
 
   // -- Tile canvas --
 
   test('15.5 tile canvas exists when editor is open', async ({ page }) => {
-    await page.keyboard.press('e');
+    await page.keyboard.press('F2');
     const canvas = page.locator('.edit-tile-canvas');
     await expect(canvas).toBeAttached();
   });
 
   test('15.6 tile canvas is 256x256', async ({ page }) => {
-    await page.keyboard.press('e');
+    await page.keyboard.press('F2');
     const canvas = page.locator('.edit-tile-canvas');
     const width = await canvas.getAttribute('width');
     const height = await canvas.getAttribute('height');
@@ -70,13 +70,13 @@ test.describe('Phase 15 — Editor viewer', () => {
   // -- Palette --
 
   test('15.7 palette container exists when editor is open', async ({ page }) => {
-    await page.keyboard.press('e');
+    await page.keyboard.press('F2');
     const palette = page.locator('.edit-palette');
     await expect(palette).toBeAttached();
   });
 
   test('15.8 palette grid has color cells', async ({ page }) => {
-    await page.keyboard.press('e');
+    await page.keyboard.press('F2');
     const grid = page.locator('.edit-palette-grid');
     // Grid may not exist until a tile is selected; just check palette container
     const palette = page.locator('.edit-palette');
@@ -86,13 +86,13 @@ test.describe('Phase 15 — Editor viewer', () => {
   // -- Status bar --
 
   test('15.9 status bar element exists when editor is open', async ({ page }) => {
-    await page.keyboard.press('e');
+    await page.keyboard.press('F2');
     const bar = page.locator('.edit-status-bar');
     await expect(bar).toBeAttached();
   });
 
   test('15.10 status bar is hidden by default (no text)', async ({ page }) => {
-    await page.keyboard.press('e');
+    await page.keyboard.press('F2');
     const bar = page.locator('.edit-status-bar');
     await expect(bar).toHaveCSS('display', 'none');
   });
@@ -100,20 +100,20 @@ test.describe('Phase 15 — Editor viewer', () => {
   // -- Layer panel --
 
   test('15.11 layer panel opens with editor', async ({ page }) => {
-    await page.keyboard.press('e');
+    await page.keyboard.press('F2');
     const panel = page.locator('#layer-panel');
     await expect(panel).toHaveClass(/open/);
   });
 
   test('15.12 layer panel closes with editor', async ({ page }) => {
-    await page.keyboard.press('e');
+    await page.keyboard.press('F2');
     await expect(page.locator('#layer-panel')).toHaveClass(/open/);
-    await page.keyboard.press('e');
+    await page.keyboard.press('F2');
     await expect(page.locator('#layer-panel')).not.toHaveClass(/open/);
   });
 
   test('15.13 layer panel has header with title', async ({ page }) => {
-    await page.keyboard.press('e');
+    await page.keyboard.press('F2');
     const header = page.locator('.layer-panel-header h2');
     await expect(header).toHaveText('Layers');
   });
@@ -121,13 +121,13 @@ test.describe('Phase 15 — Editor viewer', () => {
   // -- Tile zoom with wheel --
 
   test('15.14 tile section has overflow hidden', async ({ page }) => {
-    await page.keyboard.press('e');
+    await page.keyboard.press('F2');
     const section = page.locator('.edit-tile-section');
     await expect(section).toHaveCSS('overflow', 'hidden');
   });
 
   test('15.15 tile canvas starts with no transform', async ({ page }) => {
-    await page.keyboard.press('e');
+    await page.keyboard.press('F2');
     const canvas = page.locator('.edit-tile-canvas');
     const transform = await canvas.evaluate(el => el.style.transform);
     expect(transform).toBe('');
@@ -145,7 +145,7 @@ test.describe('Phase 15 — Editor viewer', () => {
   // -- No tool buttons (removed) --
 
   test('15.18 no tool buttons exist (editing moved to Aseprite)', async ({ page }) => {
-    await page.keyboard.press('e');
+    await page.keyboard.press('F2');
     const toolBtns = page.locator('.edit-tool-btn');
     await expect(toolBtns).toHaveCount(0);
   });
