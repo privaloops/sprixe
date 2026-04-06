@@ -69,6 +69,7 @@ src/
     tile-allocator.ts     # Private tile allocation, GFX ROM expansion
     sprixe-save.ts     # .sprixe save/load (JSON diffs)
     sprixe-autosave.ts # Auto-save to IndexedDB with debounce
+    color-picker.ts       # Color Picker dialog
     tool-cursors.ts       # Per-tool canvas cursors
   debug/
     debug-panel.ts    # F2 video panel (registers, 3D exploded view)
@@ -91,6 +92,7 @@ src/
     focus-trap.ts       # Focus trap for modals
   utils/
     trace-export.ts # CPU trace download helper
+  beta-gate.ts    # Beta gate — client-side password screen for /play/
   constants.ts    # Shared hardware constants (screen, timing, tile sizes)
   game-catalog.ts # 245 CPS1 games (source: MAME 0.286)
   rom-store.ts    # Central mutable ROM manager with ZIP export
@@ -125,7 +127,17 @@ src/__tests__/
   tile-encoder.test.ts      # Tile encoder roundtrip tests
   tile-refs.test.ts         # Tile reference counter tests
   tooltip.test.ts           # Tooltip DOM tests
+  capture-session.test.ts   # Capture session tests
+  game-defs.test.ts         # Game definitions tests
+  resampler.test.ts         # Resampler tests
+  rom-loader.test.ts        # ROM loader tests
+  save-state.test.ts        # Save state tests
+  scroll-capture.test.ts    # Scroll capture tests
+  sprite-analyzer.test.ts   # Sprite analyzer tests
+  sprite-editor.test.ts     # Sprite editor tests
+  tile-allocator.test.ts    # Tile allocator tests
   z80-bus.test.ts           # Z80 bus tests (18 tests)
+  z80-bus-qsound.test.ts    # Z80 QSound bus tests
   z80-tom-harte.test.ts     # Z80 SingleStepTests (588 instructions)
 tests/
   68000/*.json      # Tom Harte M68000 test vectors (ProcessorTests)
