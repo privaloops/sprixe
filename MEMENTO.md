@@ -24,7 +24,12 @@ Et l'idée folle : un renderer DOM où **chaque sprite est un `<div>`**, le jeu 
 | J6 | 25 mars 2026 | ~15 | Sprite Pixel Editor, audio timeline, FM Patch Editor, mic recording, palette ROM patching |
 | J7 | 26 mars 2026 | ~15 | Sprite Analyzer, Sprite Sheet Viewer, photo import scroll layers, UI overhaul |
 | J8 | 30 mars 2026 | ~20 | Le pivot Aseprite — audit, refactoring massif, suppression photo, palette snapshot, tests E2E |
-| **Total** | **8 jours** | **~150 commits** | **~22 000+ lignes TS+C** |
+| J9 | 2 avril 2026 | ~18 | CI Claude, landing rebuild, game matrix, beta.1, 103 unit tests |
+| J10 | 3 avril 2026 | ~9 | Multi-tile sprites, mono-palette capture, palette ROM patching |
+| J11 | 4 avril 2026 | ~13 | Layout refactor, Aseprite grid alignment, beta gate, center-bottom alignment |
+| J12 | 5 avril 2026 | ~14 | M68000 flags booleans, 3.5K dead code, CSS -25%, perf audit (~22% CPU) |
+| J13 | 6 avril 2026 | ~22 | Rebrand Sprixe, 1.0.0, COOP/COEP headers x5, PixelLab AI |
+| **Total** | **13 jours** | **~220 commits** | **~22 000+ lignes TS+C** |
 
 ---
 
@@ -694,5 +699,352 @@ Ce commit squash regroupe :
 
 ---
 
-*Derniere mise a jour : 26 mars 2026*
-*Sprite Analyzer, Sprite Sheet Viewer, photo import sur scroll layers, UI overhaul. Le studio prend forme.*
+## Jour 9 — La release machine (2 avril)
+
+### Claude CI : l'agent qui audite tout seul
+
+La journee commence par une experience : des workflows GitHub Actions qui lancent Claude en CI pour auditer le codebase automatiquement. Trois iterations rapides (`a36d10f` → `541cd9c` → `ce39f11`) pour trouver les bons parametres : `--allowedTools` pour restreindre les outils, `max-turns` monte a 25, prompts adaptes pour l'autonomie CI. L'idee est seduisante — un agent qui detecte les regressions de qualite a chaque push — mais la realite est plus modeste : le workflow est instable, les resultats variables. Apres un split collect + analyze (`1e7a4c9`), ca tourne mais sans wow.
+
+### La landing page : de placeholder a produit
+
+Le vrai chantier du matin : reconstruire la landing page from scratch (`0549158`). Le pivot Aseprite est devenu l'USP — "Work in Aseprite, play in Sprixe". La page raconte le workflow en 3 etapes (Capture, Edit, Import), affiche une roadmap, et corrige le decompte de jeux. Un second commit (`81e0d3b`) ajuste : suppression des refs GitHub (le repo est prive), realignement media, mise a jour roadmap.
+
+### Game Matrix : tester 29 jeux en une commande
+
+`8e66d83` — Le game matrix E2E est l'arme de validation en masse. Pour chaque ROM dans `public/roms/`, le test :
+1. Charge le jeu
+2. Attend le title screen (check pixels non-noirs)
+3. Verifie que l'audio worker est actif
+
+Premiere approche : screenshots + comparaison pixel-perfect. Trop fragile — les jeux CPS1 ont des animations sur le title screen, les captures varient d'un frame a l'autre. Pivot vers un check plus robuste (`9eed209`) : "au moins N% de pixels non-noirs" + fast-forward deterministe. Le test ne valide pas que le jeu est *correct*, mais qu'il *boote* — c'est deja enorme pour detecter les regressions.
+
+### Le release script et beta.1
+
+`26d98db` — Script `npm run release` qui chaine : unit tests → build → E2E → game matrix → version bump → changelog → git tag → GitHub release. La premiere beta (`b1f1f68`, 1.0.0-beta.1) sort dans la foulee. Deux bugs dans le script lui-meme : `--grep-invert` au lieu de `--ignore-pattern` (`373fe81`), et une race condition dans le test de pause (`aa24c87` — tolerance d'1 frame de delta).
+
+### Couverture de tests : 10 modules d'un coup
+
+`27cd996` — Session de rattrapage : unit tests pour `rom-loader`, `game-defs`, `z80-bus-qsound`, `sprite-analyzer`, `tile-allocator`, `scroll-capture`, `resampler`, `capture-session`, `save-state`, `sprite-editor`. +103 tests, total a 1016. Puis le game matrix Level 3 (`0dac8d5`) : sprite & scroll REC automatise sur les 29 ROMs, export PNG dans `test-results/sprite-rec/` pour review manuelle.
+
+---
+
+## Jour 10 — Le casse-tete multi-palette (3 avril)
+
+### Multi-tile : le hardware disperse, l'analyseur rassemble
+
+Le sprite capture marchait pour Final Fight mais produisait des tiles mal places pour Warriors of Fate. La cause : `readAllSprites()` traitait chaque entree OBJ comme un unique tile 16x16, mais le hardware CPS1 supporte les sprites multi-tile (nx × ny). Une seule entree OBJ peut generer une grille de 4x4 = 16 tiles. Le renderer (`cps1-video.ts`) faisait l'expansion correctement depuis le jour 1, mais le sprite analyzer non.
+
+**Fix** (`86c7509`) : repliquer la formule d'expansion sub-tile du renderer — `(mappedBaseCode & ~0x0F) + ((mappedBaseCode + nxs) & 0x0F) + 0x10 * nys` avec variantes flip. Chaque sub-tile recoit un `uid` unique pour eviter la deduplication fausse (plusieurs sub-tiles partagent le meme `index` OBJ).
+
+### Le probleme fondamental : CPS1 est multi-palette par design
+
+Un personnage CPS1 peut couvrir plusieurs palettes — le cavalier et le cheval dans WoF, par exemple. Mais Aseprite est strictement mono-palette : un fichier indexed = une palette de 16 couleurs. Exporter un personnage multi-palette en un seul .aseprite est impossible sans convertir en true color, et perdre le round-trip.
+
+**Decision** (`22f2677`) : export par palette. Chaque .aseprite exporte est mono-palette, independamment importable. L'eye toggle dans le palette panel permet d'isoler quelle palette capturer/exporter.
+
+### Pose dedup : deux bugs independants, un seul symptome
+
+SF2HF capturait 80 poses mais 18 groupes etaient des doublons. Deux causes racines :
+
+1. **Hash inconsistant** — Trois sites de dedup (stop-time, export, save restore) utilisaient `[...new Set(codes)].sort().join(',')` qui strippait les doublons intra-groupe, tandis que `poseHash()` (frame-time) les preservait. Les formules pouvaient diverger sur ce qui constitue un doublon.
+
+2. **Pollution multi-palette** — `groupCharacter()` flood-fillait a travers les palettes (corps + arme + cheval partagent l'adjacence). Si un sprite adjacent d'une autre palette entrait/sortait de la zone d'adjacence entre deux frames, le hash changeait, creant des poses faussement distinctes.
+
+**Fix** (`f2eb4fc`) : tous les sites utilisent `poseHash()` comme source unique de verite. Et `poseHash()` filtre par palette du groupe avant de hasher.
+
+### Le pivot mono-palette
+
+`690dab2` — La conclusion logique du diagnostic : restreindre le flood-fill de `groupCharacter()` a la palette cible uniquement. Plus de parasites venant de sprites adjacents d'autres palettes. Captures plus propres, code plus simple. La capture supporte aussi la reprise : re-cliquer un sprite dont la palette etait deja capturee reprend le groupe existant au lieu d'en creer un nouveau.
+
+### Palette ROM patching : la persistence qui traverse les rounds
+
+Deux features critiques pour le workflow :
+
+1. **Palette override on import** (`28752d0`) — Importer un .aseprite avec des couleurs de palette modifiees applique des overrides persistants (VRAM + ROM patch) qui survivent aux transitions de round.
+
+2. **M68K A0 register tracing** (`0943c85`) — Pour patcher la bonne adresse dans la program ROM, il faut tracer le registre A0 du 68000 quand il ecrit dans la VRAM palette. Le 68K execute `ADD.W D2, (A0)+` en boucle pour les fades de luminosite — A0 pointe vers l'adresse ROM source. En capturant A0, on peut retrouver l'adresse de la palette dans la program ROM et la patcher. Les edits persistent alors meme quand le jeu recharge la palette depuis la ROM.
+
+---
+
+## Jour 11 — Beta gate et polish (4 avril)
+
+### Le manifest tronque : Aseprite et la limite User Data
+
+`849bf16` — Les .aseprite exportes embarquent un manifest JSON dans le champ User Data pour le round-trip. Probleme : Aseprite tronque les User Data longues. Pour les sprites complexes (beaucoup de tiles, beaucoup de poses), le manifest depasse 65 535 bytes (UINT16 overflow dans le format binaire Aseprite).
+
+**Fix** : compresser le manifest en deflate + base64. Le JSON passe de ~80 KB a ~12 KB compresse. Le reader detecte le prefixe `DEFLATE:` et decompresse a l'import.
+
+### Layout refactor : simplifier les cards
+
+`9e27288` — Refonte du layout editeur. Le panel gauche se simplifie : les cards de capture deviennent minimales (pas de chevron, pas de pose strip, pas de "See all"). Pour voir le detail, on ouvre le sheet viewer. Le scroll set viewer gagne un tile grid cliquable, avec crosshair, highlight rouge tirete sur le tile selectionne, zoom dans le panel droit. Le bouton Import descend dans une section "Aseprite" en bas du panel gauche, le bouton Export est unifie dans le panel droit.
+
+La palette snapshottee au STOP (`3eb28a7`) plutot qu'a la premiere frame — la premiere frame peut etre en plein fade/flash, le STOP est un etat stable.
+
+### Aseprite grid alignment : le detail qui compte
+
+`6970dff` — Les .aseprite exportes definissent maintenant le grid origin pour que la grille d'Aseprite (View > Grid) s'aligne exactement sur les frontieres de tiles 16x16. Petit detail, gros impact pour les pixel artists qui editent tile par tile. Le writer supporte aussi les cel offsets pour le center-bottom alignment des poses.
+
+### Center-bottom alignment : les pieds au sol
+
+`f310982` — Pour les exports multi-frame (toutes les poses d'un personnage dans un seul .aseprite), les frames doivent etre alignees par le centre-bas (les pieds). Sans ca, chaque pose a une taille differente et le personnage "saute" entre les frames dans Aseprite. Le canvas est dimensionne a la bounding box de toutes les poses, et chaque frame est decalee pour que les pieds restent fixes. Le manifest stocke le `alignOffset` original pour le round-trip.
+
+### Beta gate et la strategie communautaire
+
+`18629df` — Ecran de mot de passe client-side sur `/play/`. Stockage en sessionStorage, une fois par session. Simple, efficace, reversible. L'objectif : controler l'acces pendant la phase beta.
+
+En parallele, un document de strategie communautaire (`4a5fb7e`) cible le Discord Aseprite — le public naturel de Sprixe. Section de recrutement beta testeurs (`90e0153`). La landing page recoit des GIFs de demo (`3702f08`), puis des videos en boucle (`33a1c19`) — 1.4 MB en MP4/WebM contre 18 MB en GIF.
+
+---
+
+## Jour 12 — Cure de performance et nettoyage (5 avril)
+
+### M68000 : les flags en booleens
+
+`dfb932d` — Le M68000 stockait les flags CCR (C, V, Z, N, X) dans un registre SR 16-bit, avec des getters/setters qui masquaient et shiftaient pour chaque acces. Soit ~10 appels de fonction par instruction, sur le chemin le plus chaud (~50 000 instructions/frame).
+
+**Pivot** : les 5 flags deviennent des champs `boolean` directs sur l'objet CPU. Le SR est reconstruit a la demande uniquement quand necessaire (exceptions, save state, `MOVE from SR`). Le prefetch passe de `number[]` a deux champs scalaires, eliminant l'indirection array sur chaque fetch.
+
+### Video : cache framebuffer et row-scroll tile-based
+
+`cacc428` — Trois optimisations video :
+
+1. **Cached `Uint32Array` view** — Une seule vue reutilisee entre `renderScrollLayer`, `renderObjects`, et `renderFrame` au lieu de 3 allocations par frame.
+
+2. **Row-scroll tile-based** — Le path row-scroll de scroll2 passait pixel par pixel (384 × 224 = 86K iterations avec un `gfxromBankMapper` call par pixel). Refactore en tile-based (~26 colonnes × 224 lignes), reduisant les appels bank mapper ~24x.
+
+3. **Suppression du sprite check dupe** — Un check de duplication dans le renderer qui etait deja fait en amont.
+
+### L'audit de performance : ~33% → ~22% CPU
+
+`30c89ec` — Apres les optimisations, un audit de performance complet. Resultats :
+- Main thread (M68000 + video) : ~11% CPU, median frame 0.23ms, P95 2.2ms
+- Audio Worker (Z80 + OPM WASM + OKI) : ~11% CPU, avg 0.39ms
+- **Total : ~22%** (contre ~33% avant l'optimisation)
+
+Le M68000 TS interprete a 10 MHz tourne a 11% CPU. Pour un interpreteur sans JIT, sans WASM, en TypeScript pur — c'est remarquable.
+
+### 3 500 lignes de dead code
+
+`d95bb21` — Le grand nettoyage. Suppression de `nuked-opm.ts` (2 318 lignes, le port TS initial remplace par WASM) et `ym2151.ts` (1 246 lignes, l'implementation custom d'avant Nuked OPM). Ces fichiers etaient marques "kept as reference" dans le CLAUDE.md, mais la reference est dans le git history, pas dans le working tree. +8 exports morts, 2 imports inutilises, 6 console.log de production.
+
+### CSS : -25%
+
+`4a35db1` — 360 lignes de CSS orphelines supprimees (1 412 → 1 052). Des classes de viewers supprimes (debug panel, sprite analyzer UI, variant gallery, synth FM operators), du sheet grid, des edit tools — tout le residue des features supprimees aux jours precedents.
+
+### Tests et fiabilite
+
+`4f7ec0b` — Tests pour les gaps critiques : multiplication CPS-B (le hardware multiply utilise par SF2CE/SF2HF), interruptions M68000 (masquage IRQ par niveau, NMI jamais masque, one-shot vs level-triggered), et `inspectScrollAt` (row-scroll offset, out-of-bounds, transparent pixel).
+
+`52e0721` — Fiabilite : timeout 2s sur `getWorkerState()` (au lieu de hang infini si le worker ne repond pas), validation des save states avant cast (crash silencieux sur donnees corrompues), fail-safe sur les fixtures Tom Harte manquantes.
+
+---
+
+## Jour 13 — Sprixe 1.0 (6 avril)
+
+### Le rebrand : ROMstudio → Sprixe
+
+`cedd526` — Le nom change. Partout. Extension fichier `.sprixe`, prefixe binaire `SPRIXE:`, IndexedDB `sprixe`, titres UI, landing page, docs. Fichiers renommes (`sprixe-save.ts`, `sprixe-autosave.ts`). Zero backward compatibility avec les anciens fichiers `.romstudio` — le format est en beta, pas de dette technique.
+
+"Sprixe" — contraction de *sprite* et *pixel*. Ca sonne bien, c'est court, le domaine est libre.
+
+### La course aux releases : beta.2, beta.3, 1.0.0
+
+La journee est un sprint de releases :
+
+- **beta.2** (`f8006f2`) — Hero video avec le branding Sprixe, 720p H.264+AAC / VP9+Opus
+- **beta.3** (`cb9d330`) — Section "Supported Games" sur la landing, E2E fixes, game matrix sorti du release script (trop lent)
+- **1.0.0** (`1d3f698`) — La release stable. 20 jours apres le premier commit.
+
+Puis la cascade de patchs : rename `Arcade.ts` → `Sprixe` (`bfca48f`), ajout OG meta tags, amelioration du release script pour supporter stable → next version (`38b2c85`).
+
+### L'enfer des headers COOP/COEP
+
+Le `SharedArrayBuffer` — necessaire pour l'audio via AudioWorklet — requiert les headers `Cross-Origin-Opener-Policy: same-origin` et `Cross-Origin-Embedder-Policy: require-corp`. Mais ces memes headers **cassent les iframes** et les embeds YouTube.
+
+La landing page a un YouTube embed. L'app `/play/` a besoin de SharedArrayBuffer. Les deux sont sur le meme domaine.
+
+S'ensuit une serie de 5 commits en cascade :
+
+1. `951ed7a` — Suppression beta gate → acces ouvert
+2. `1b7af32` — Revert (la beta gate est encore necessaire)
+3. `5222f3e` — Re-apply (finalement non, on ouvre)
+4. `3a7b560` — COOP/COEP seulement sur `/play/` dans le dev server
+5. `549d270` → `a4b2ca3` — Deux tentatives pour configurer correctement les headers dans `vercel.json` : toutes les requetes sauf la landing page, puis ajout explicite de `/assets/`
+
+**Lecon** : les headers de securite pour SharedArrayBuffer sont incompatibles avec le web social (embeds, iframes, OAuth popups). Il faut un routage precis par path, et chaque plateforme d'hebergement (Vercel, Cloudflare, etc.) a sa propre syntaxe de configuration. Cinq releases en une journee pour 3 lignes de config.
+
+### PixelLab AI : l'experience du dernier commit
+
+`c2e91f7` — Le dernier commit de la journee, marque "experimental". Integration de PixelLab — un service d'IA generative specialise pixel art. L'idee : generer des sprites, des tiles, des tilesets directement depuis Sprixe via l'API PixelLab, puis les injecter dans la GFX ROM.
+
+La boucle se ferme : capturer depuis le CPS1, editer dans Aseprite, *generer* avec l'IA, reimporter dans le jeu. Le studio devient creatif, plus seulement extractif.
+
+---
+
+## Jour 9-13 — Ligne de temps des commits
+
+### Jour 9 — 2 avril 2026 (~18 commits)
+
+```
+a36d10f  ci: add Claude automated audit workflows
+541cd9c  fix: add --allowedTools to Claude CI workflows
+ce39f11  fix: increase max-turns to 25 and add CI autonomy in prompts
+d5a643d  chore: update dependencies (automated audit)
+1e7a4c9  refactor: split audit workflows into collect + analyze phases
+0549158  feat: rebuild landing page with Aseprite workflow USP, roadmap, and updated features
+81e0d3b  fix: landing page adjustments — correct game count, remove GitHub refs
+7387224  fix: remove stale tile selection overlay on editor toggle
+8568f8b  feat: F9 screenshot capture (canvas toBlob + preserveDrawingBuffer)
+8e66d83  feat: game matrix E2E tests (boot title screen + audio worker check)
+26d98db  feat: release script with beta versioning and full test suite
+da967f5  docs: update backlog, changelog, readme, add release checklist
+2ba5be3  chore: gitignore public/roms, move rendering bugs to docs/bugs
+373fe81  fix: use --grep-invert instead of --ignore-pattern in release script
+aa24c87  fix: tolerate 1 frame delta in pause E2E test (race condition)
+9eed209  fix: game matrix uses non-black check instead of snapshots
+b1f1f68  chore: release 1.0.0-beta.1
+27cd996  test: add unit tests for 10 untested high-risk modules
+0dac8d5  test: add Level 3 sprite & scroll REC to game matrix
+```
+
+### Jour 10 — 3 avril 2026 (~9 commits)
+
+```
+86c7509  feat: expand multi-tile sprites and add palette layer toggles
+22f2677  feat: per-palette export, live palette visibility, sprite sheet refinements
+e29e70a  fix: capture respects hidden palettes and always show palette export row
+169c1af  fix: palette persistence, autosave, dedup, and capture reset
+b05a6dc  docs: update changelog, learnings, and backlog
+f2eb4fc  fix: pose deduplication using consistent hash and palette filtering
+690dab2  refactor: mono-palette sprite capture grouping + capture resumption
+28752d0  feat: palette override persistence on .aseprite import
+0943c85  feat: palette ROM patching via M68K A0 register tracing
+```
+
+### Jour 11 — 4 avril 2026 (~13 commits)
+
+```
+294f9ba  fix: filter transparent tiles from sprite capture
+f455f7e  feat: inline export/import on sprite capture cards
+849bf16  fix: compress manifest to prevent Aseprite truncation
+9e27288  refactor: reorganize editor layout and add scroll tile selection
+3eb28a7  fix: snapshot scroll palette at STOP and reset captures on game change
+429ed26  docs: update CHANGELOG for editor layout refactor
+048d8bb  fix: remove redundant E shortcut (use F2 for sprite editor)
+3702f08  feat: add landing page GIFs (hero 3D + capture flow)
+f310982  fix: center-bottom align sprite poses in Aseprite export
+33a1c19  feat: replace workflow placeholders with looping videos
+18629df  feat: add beta gate password screen on /play/
+6970dff  feat: Aseprite grid alignment + writer cel offset support
+fee534e  docs: catch up CHANGELOG with missing entries since beta.1
+```
+
+### Jour 12 — 5 avril 2026 (~14 commits)
+
+```
+dfb932d  perf: M68000 flags as direct booleans + prefetch as scalars
+cacc428  perf: cache framebuffer view, tile-based row-scroll, remove sprite check dupe
+d95bb21  chore: remove 3.5K lines of dead code
+52e0721  fix: worker timeout, save state validation, test fail-safe, clean logs
+a513ffc  refactor: extract color picker, split loadRom into audio paths
+722b82d  chore: remove community-outreach.md (merged into issue #111)
+4f7ec0b  test: CPS-B multiply, M68000 interrupts, inspectScrollAt
+4a35db1  chore: remove 360 lines of dead CSS (1412→1052, -25%)
+30c89ec  docs: update performance numbers from April 2026 audit (~33% → ~22%)
+0ba0281  chore: deploy only on GitHub release, disable auto-deploy
+2a2c1fe  chore: add beta deploy hook for pre-releases
+b8fc69d  chore: remove redundant Features section from landing page
+96e1fc5  chore: add contact form link to landing footer
+f89493f  test(e2e): fix broken selectors, add 11 button/shortcut tests
+```
+
+### Jour 13 — 6 avril 2026 (~22 commits)
+
+```
+793c49f  feat: replace hero GIF with video (MP4/WebM with audio)
+cedd526  chore: rebrand ROMstudio → Sprixe
+f8006f2  chore: bump version to 1.0.0-beta.2
+746763b  fix: push to beta branch in release script
+43b8c9e  fix: support stable releases in release script
+2421909  feat: add supported games section to landing page
+3117101  fix: update E2E tests for F2 editor shortcut and beta gate bypass
+e6d1188  chore: remove game matrix from release script
+cb9d330  chore: release 1.0.0-beta.3
+1d3f698  chore: release 1.0.0 ← RELEASE STABLE
+826b9c5  docs: remove obsolete E shortcut and debug references from CLAUDE.md
+434b150  docs: add missing files to CLAUDE.md structure
+bfca48f  chore: rename Arcade.ts to Sprixe everywhere, add OG meta tags
+38b2c85  fix: release script supports stable → next version choices
+5a96d0f  chore: release 1.0.1
+951ed7a  feat: remove beta gate — open access
+1b7af32  Revert "feat: remove beta gate — open access"
+5222f3e  Reapply "feat: remove beta gate — open access"
+8895e12  chore: release 1.0.2
+18c032e  feat: replace hero video with YouTube embed
+3a7b560  fix: apply COOP/COEP headers only on /play/ in dev server
+9208472  chore: release 1.0.3
+549d270  fix: apply COOP/COEP to all requests except landing page
+f425aaf  chore: release 1.0.4
+a4b2ca3  fix: add COOP/COEP headers to /assets/ in vercel.json
+8989e86  chore: release 1.0.5
+c2e91f7  feat: experimental PixelLab AI integration
+```
+
+---
+
+## Patterns et observations (mise a jour)
+
+### Nouveaux patterns
+
+6. **La dedup est un probleme de hash** — Trois sites de deduplication avec trois formules differentes = des doublons inevitables. Lecon : une seule fonction de hash, appelee partout. `poseHash()` est devenue la source de verite.
+
+7. **Mono-palette simplifie tout** — CPS1 est multi-palette par design, mais Aseprite est mono-palette. Aligner la capture sur la contrainte de l'outil de sortie (Aseprite) elimine une classe entiere de bugs.
+
+8. **Les headers de securite sont un champ de mines** — COOP/COEP pour SharedArrayBuffer vs iframes/embeds YouTube. 5 releases en un jour pour 3 lignes de config. Chaque plateforme d'hebergement a sa propre syntaxe.
+
+9. **Dead code invisible** — 3 500 lignes de code mort (ym2151.ts, nuked-opm.ts) marquees "kept as reference" alors que le git history EST la reference. 360 lignes de CSS orphelines. Le code mort s'accumule silencieusement quand on pivote sans nettoyer.
+
+### Ce que Claude fait bien (ajouts)
+
+- **Tests en volume** : 103 tests unitaires pour 10 modules en une session, game matrix E2E pour 29 ROMs
+- **Refactoring chirurgical** : extraction de modules avec validation build + 903 tests entre chaque etape
+- **Release engineering** : script de release, versioning beta, configuration Vercel — la mecanique de livraison
+
+### Ce que Claude fait mal (ajouts)
+
+- **Config hosting** : les headers COOP/COEP sur Vercel ont necessite 5 iterations — la comprehension du routage Vercel par path est approximative
+- **Revert/re-apply** : la sequence beta gate (apply → revert → re-apply) montre un manque de reflexion avant execution
+- **CI Claude** : le workflow GitHub Actions avec Claude en agent autonome reste instable — trop de variables (timeout, permissions, contexte)
+
+---
+
+## Chiffres cles (mis a jour)
+
+| Metrique | Valeur |
+|----------|--------|
+| Duree totale | 13 jours (17 mars — 6 avril 2026) |
+| Commits (hors merges) | ~220 |
+| Lignes TypeScript | ~22 000+ (apres suppression de 3 500 LOC dead code) |
+| Insertions source totales | ~40 000+ |
+| Jeux supportes (GameDefs) | 41 parents |
+| Jeux dans le catalogue | 245 |
+| Vecteurs de test M68000 | 16 800 (84 × 200) |
+| Vecteurs de test Z80 | 117 600 (588 × 200) |
+| Tests unitaires | 1 016+ |
+| Tests E2E | ~115 (16 spec files) |
+| Game matrix | 29 ROMs (boot + audio check) |
+| Composants hardware emules | 7 (M68000, Z80, YM2151, OKI6295, QSound, CPS-A, CPS-B) |
+| Renderers | 3 (WebGL2, Canvas 2D, DOM hybrid) |
+| CPU total (apres optim) | ~22% (M68000+video ~11%, audio ~11%) |
+| Releases | 8 (beta.1 → beta.3 → 1.0.0 → 1.0.5) |
+| Bug le plus vicieux | `fetchByte` au lieu de `fetchOpcode` dans CB/ED/DD/FD (3 lignes, QSound muet) |
+| Bug le plus sournois | `~level & 0xffff` (1 ligne, canaux YM2151 silencieux) |
+| Bug le plus frequent (categorie) | Byte order / endianness (5+ occurrences) |
+| Temps de debug le plus long | QSound audio (~12h) — resolu en 2min via MAME debugger |
+| Nettoyage le plus massif | -3 500 LOC dead code + -360 LOC CSS en un jour |
+| Le plus de releases en un jour | 5 (1.0.1 → 1.0.5, toutes pour COOP/COEP headers) |
+
+---
+
+*Derniere mise a jour : 6 avril 2026*
+*Sprixe 1.0 est sorti. Du premier commit au jeu jouable en 5 jours, de la beta a la release stable en 20. Le studio CPS1 tourne dans un navigateur, exporte vers Aseprite, et commence a generer du pixel art par IA.*
