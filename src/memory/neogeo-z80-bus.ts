@@ -28,7 +28,8 @@ export interface NeoGeoZ80BusState {
 }
 
 export class NeoGeoZ80Bus implements Z80BusInterface {
-  private audioRom: Uint8Array;
+  private audioRom: Uint8Array;        // Game M-ROM
+  private biosRom: Uint8Array;        // BIOS Z80 ROM (sm1.sm1)
   private workRam: Uint8Array;        // 8KB
   private currentBank: number;        // current 16KB bank for 0x8000-0xBFFF
   private bankRegisters: number[];    // 4 bank registers
@@ -46,12 +47,15 @@ export class NeoGeoZ80Bus implements Z80BusInterface {
   private ym2610AddrPort1: number;
   private onYm2610Write: ((port: number, value: number) => void) | null;
   private onYm2610Read: ((port: number) => number) | null;
+  // Simulated YM2610 timer counter (for when no real YM2610 is connected)
+  private ym2610TimerCounter: number;
 
   // Reply to 68K
   private onSoundReply: ((value: number) => void) | null;
 
   constructor() {
     this.audioRom = new Uint8Array(0);
+    this.biosRom = new Uint8Array(0);
     this.workRam = new Uint8Array(0x2000); // 8KB
     this.currentBank = 0;
     this.bankRegisters = [0, 0, 0, 0];
@@ -65,10 +69,12 @@ export class NeoGeoZ80Bus implements Z80BusInterface {
     this.ym2610AddrPort1 = 0;
     this.onYm2610Write = null;
     this.onYm2610Read = null;
+    this.ym2610TimerCounter = 0;
     this.onSoundReply = null;
   }
 
   loadAudioRom(data: Uint8Array): void { this.audioRom = data; }
+  loadBiosRom(data: Uint8Array): void { this.biosRom = data; }
 
   setYm2610WriteCallback(cb: (port: number, value: number) => void): void {
     this.onYm2610Write = cb;
@@ -103,12 +109,16 @@ export class NeoGeoZ80Bus implements Z80BusInterface {
   read(address: number): number {
     address &= 0xFFFF;
 
-    // M-ROM fixed: 0x0000-0x7FFF
+    // Fixed ROM: 0x0000-0x7FFF
+    // On Neo-Geo, the BIOS Z80 ROM (sm1.sm1) is mapped here at boot.
+    // It contains the bootloader that copies the game M-ROM into Work RAM.
+    // If no BIOS ROM available, fall back to game M-ROM directly.
     if (address <= 0x7FFF) {
-      return address < this.audioRom.length ? this.audioRom[address]! : 0xFF;
+      const rom = this.biosRom.length > 0 ? this.biosRom : this.audioRom;
+      return address < rom.length ? rom[address]! : 0xFF;
     }
 
-    // M-ROM banked: 0x8000-0xBFFF (16KB window)
+    // Banked ROM: 0x8000-0xBFFF (16KB window into game M-ROM)
     if (address <= 0xBFFF) {
       const bankOffset = this.currentBank * 0x4000;
       const romAddr = bankOffset + (address - 0x8000);
@@ -147,11 +157,16 @@ export class NeoGeoZ80Bus implements Z80BusInterface {
 
       case 0x04: // YM2610 status port 0
       case 0x05: // YM2610 data port 0 read
-        return this.onYm2610Read ? this.onYm2610Read(port & 1) : 0;
+        if (this.onYm2610Read) return this.onYm2610Read(port & 1);
+        // No real YM2610: simulate timer flags so BIOS Z80 can proceed.
+        // Status register: bit 0 = timer A flag, bit 1 = timer B flag, bit 7 = busy
+        this.ym2610TimerCounter++;
+        return (this.ym2610TimerCounter & 0x10) ? 0x03 : 0x00;
 
       case 0x06: // YM2610 status port 1
       case 0x07: // YM2610 data port 1 read
-        return this.onYm2610Read ? this.onYm2610Read((port & 1) + 2) : 0;
+        if (this.onYm2610Read) return this.onYm2610Read((port & 1) + 2);
+        return 0;
 
       default:
         return 0xFF;

@@ -29,6 +29,7 @@ import type { NeoGeoRomSet } from './memory/neogeo-rom-loader';
 import {
   NGO_FRAMEBUFFER_SIZE,
   NGO_M68K_CYCLES_PER_SCANLINE,
+  NGO_Z80_CLOCK,
   NGO_VTOTAL,
   NGO_VBLANK_LINE,
   NGO_FRAME_RATE,
@@ -161,7 +162,8 @@ export class NeoGeoEmulator {
     this.bus.loadProgramRom(romSet.programRom);
     this.bus.loadBiosRom(romSet.biosRom);
 
-    // Load audio ROM
+    // Load audio ROMs — BIOS Z80 (sm1.sm1) at 0x0000, game M-ROM banked
+    this.z80Bus.loadBiosRom(romSet.biosZRom);
     this.z80Bus.loadAudioRom(romSet.audioRom);
 
     // Load video ROMs
@@ -207,13 +209,15 @@ export class NeoGeoEmulator {
           console.log(`[Neo-Geo] Z80 reply=0x${e.data.value.toString(16)}`);
           this.bus.setSoundReply(e.data.value);
         } else if (e.data.type === 'z80debug') {
-          console.log(`[Neo-Geo] Worker Z80 PC=0x${e.data.pc.toString(16)} at frame ${e.data.frame}`);
+          const ram = e.data.ram?.map((b: number) => b.toString(16).padStart(2, '0')).join(' ') ?? '';
+          console.log(`[Neo-Geo] Worker Z80: PC=0x${e.data.pc.toString(16)} SP=0x${e.data.sp.toString(16)} frame=${e.data.frame} nmi=${e.data.nmiEnabled} latch=0x${e.data.soundLatch?.toString(16)} RAM@PC=[${ram}]`);
         }
       };
 
       this.audioWorker.postMessage({
         type: 'init',
         audioRom: romSet.audioRom.buffer,
+        biosZRom: romSet.biosZRom.buffer,
         voiceRom: romSet.voiceRom.buffer,
         sab,
         sampleRate: this.audioOutput.getSampleRate(),
@@ -310,11 +314,13 @@ export class NeoGeoEmulator {
       // Timer tick
       this.bus.tickTimer();
 
-      // Synthetic Z80 reply: toggle bit 6 every 8 scanlines to unblock BIOS handshake.
-      // The 68K tight-loops polling 0x320001 — it needs to see a 0→1 transition within a frame.
+      // Synthetic Z80 reply: toggle bit 6 every 8 scanlines.
+      // The 68K polls 0x320001 for a 0→1 transition on bit 6 (Z80 ready signal).
+      // TODO: replace with proper Z80 BIOS handshake once Z80 runs on main thread with YM2610.
       if (this.frameCount < 300 && (scanline & 7) === 0) {
         this.bus.setSoundReply((scanline & 8) ? 0x40 : 0x00);
       }
+
 
       // Check pending IRQs — don't auto-acknowledge; the BIOS/game
       // clears IRQs by writing to the LSPC control register (0x3C000C)
@@ -334,12 +340,11 @@ export class NeoGeoEmulator {
         }
       }
 
-      // Run Z80 on main thread when audio worker isn't ready yet.
-      if (!this.audioWorkerReady && scanline === 0 && this.frameCount < 3) {
-        console.log(`[Neo-Geo] Z80 main-thread running, frame=${this.frameCount}`);
-      }
-      if (!this.audioWorkerReady) {
-        let z80Cycles = 256;
+      // Run Z80 on main thread — interleaved with 68K per scanline.
+      // The Z80 reply must be visible to the 68K immediately (same JS context),
+      // so the Z80 cannot run in a separate Worker for the handshake to work.
+      {
+        let z80Cycles = Math.round(NGO_Z80_CLOCK / NGO_FRAME_RATE / NGO_VTOTAL); // ~256 cycles/scanline
         while (z80Cycles > 0) {
           if (this.z80Bus.shouldFireNmi()) {
             this.z80.nmi();
