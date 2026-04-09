@@ -117,6 +117,11 @@ export class NeoGeoBus implements BusInterface {
     this.soundCommandPending = false;
   }
 
+  /** Called when 68K writes a sound command */
+  markSoundCommandPending(): void {
+    this.soundCommandPending = true;
+  }
+
   /** Set I/O port values (called by InputManager) */
   setPortP1(value: number): void { this.portP1 = value; }
   setPortP2(value: number): void { this.portP2 = value; }
@@ -325,13 +330,11 @@ export class NeoGeoBus implements BusInterface {
       return;
     }
 
-    // Sound command: 0x320000 (write)
+    // Sound command: 0x320000 (write) — any byte write sets the command
     if (address >= 0x320000 && address <= 0x320001) {
-      if (address & 1) {
-        this.soundLatchToZ80 = value;
-        this.soundCommandPending = true;
-        this._soundLatchCallback?.(value);
-      }
+      this.soundLatchToZ80 = value;
+      this.soundCommandPending = true;
+      this._soundLatchCallback?.(value);
       return;
     }
 

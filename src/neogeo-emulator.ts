@@ -72,6 +72,8 @@ export class NeoGeoEmulator {
   private frameDebt = 0;
   private frameCount = 0;
   private firstFrame = true;
+  private m68kErrorCount = 0;
+  private soundCmdLogCount = 0;
 
   // Callbacks
   private _vblankCallback: (() => void) | null = null;
@@ -92,7 +94,12 @@ export class NeoGeoEmulator {
     // Always push to main-thread Z80 (for immediate handshake visibility).
     // Also forward to audio worker for actual sound playback.
     this.bus.setSoundLatchCallback((value: number) => {
+      if (this.soundCmdLogCount < 20) {
+        console.log(`[Neo-Geo SND] 68K→Z80 cmd=0x${value.toString(16)} frame=${this.frameCount}`);
+        this.soundCmdLogCount++;
+      }
       this.z80Bus.pushSoundLatch(value);
+      this.bus.markSoundCommandPending();
       if (this.audioWorkerReady) {
         this.pendingSoundLatches.push(value);
       }
@@ -359,7 +366,11 @@ export class NeoGeoEmulator {
             const ran = this.m68000.step();
             m68kSlice -= ran;
             m68kLeft -= ran;
-          } catch {
+          } catch (e) {
+            if (this.m68kErrorCount < 3) {
+              console.error(`[Neo-Geo 68K] Error at PC=0x${this.m68000.getPC().toString(16)} frame=${this.frameCount}:`, e);
+            }
+            this.m68kErrorCount++;
             m68kSlice = 0;
             m68kLeft = 0;
           }
@@ -416,36 +427,43 @@ export class NeoGeoEmulator {
    *  with SR mask 7 (all IRQs blocked). We patch the error handler's
    *  MOVE #$0007, ($3C000C) to also include ANDI #$F8FF, SR (lower mask). */
   private patchBiosBoot(biosRom: Uint8Array): void {
-    // Search for: MOVE.W #$0007, ($003C000C) = 33FC 0007 003C 000C
-    // This is the IRQ enable write just before the watchdog loop.
-    // After it, add ANDI #$F8FF, SR to lower the interrupt mask to 0.
+    let patched = 0;
+
+    // Patch 1: Skip ALL boot test error jumps.
+    // Pattern: MOVEQ #N, D6 (7C0N) followed by JMP (4EF9) to error handler.
+    // N = 0-8 for different boot tests. NOP them all to skip errors.
+    for (let i = 0; i < biosRom.length - 8; i++) {
+      if (biosRom[i] === 0x7C && (biosRom[i + 1]! & 0xF0) === 0x00 &&
+          biosRom[i + 2] === 0x4E && biosRom[i + 3] === 0xF9) {
+        const testNum = biosRom[i + 1]!;
+        // NOP out the MOVEQ + JMP (8 bytes = 4 NOPs)
+        for (let j = 0; j < 8; j += 2) {
+          biosRom[i + j] = 0x4E;
+          biosRom[i + j + 1] = 0x71;
+        }
+        console.log(`[Neo-Geo] Patched BIOS: skip boot test ${testNum} error at 0x${i.toString(16)}`);
+        patched++;
+      }
+    }
+
+    // Patch 2: All error handler watchdog loops — lower SR mask.
+    // Pattern: MOVE.W #$0007, ($003C000C) = 33FC 0007 003C 000C
     for (let i = 0; i < biosRom.length - 14; i++) {
       if (biosRom[i] === 0x33 && biosRom[i + 1] === 0xFC &&
           biosRom[i + 2] === 0x00 && biosRom[i + 3] === 0x07 &&
           biosRom[i + 4] === 0x00 && biosRom[i + 5] === 0x3C &&
           biosRom[i + 6] === 0x00 && biosRom[i + 7] === 0x0C) {
-        // The next instruction is MOVE.B D0, ($300001) at i+8: 13C0 0030 0001
-        // Replace it with ANDI #$F8FF, SR (027C F8FF) + NOP NOP
-        // ANDI #$F8FF, SR = 02 7C F8 FF (4 bytes)
-        // Then BRA.S -8 (back to the original BRA target) = 60 FC (or we use 60 F8)
-        biosRom[i + 8] = 0x02;  // ANDI
-        biosRom[i + 9] = 0x7C;  // #imm, SR
-        biosRom[i + 10] = 0xF8; // F8FF = clear mask bits
+        biosRom[i + 8] = 0x02;  // ANDI #$F8FF, SR
+        biosRom[i + 9] = 0x7C;
+        biosRom[i + 10] = 0xF8;
         biosRom[i + 11] = 0xFF;
-        // BRA.S back to the MOVE.B D0, ($300001) — which we just replaced.
-        // Instead, just put a STOP #$2000 to wait for VBlank
-        biosRom[i + 12] = 0x4E; // STOP
-        biosRom[i + 13] = 0x72; // #imm
-        // The next 2 bytes are the STOP immediate value
-        // But STOP is 4 bytes total: 4E72 xxxx. We need 2 more bytes.
-        // Actually, let's just do: ANDI #$F8FF, SR (4 bytes) + BRA.S $-6 (2 bytes)
-        // BRA.S $-6 loops back to the ANDI itself, which is fine — the VBlank IRQ
-        // will break out of this loop via the VBlank handler.
-        biosRom[i + 12] = 0x60; // BRA.S
-        biosRom[i + 13] = 0xF8; // offset -8 (back to i+8, the ANDI)
-        console.log(`[Neo-Geo] Patched BIOS boot at offset 0x${(i + 8).toString(16)}: lower SR mask`);
+        biosRom[i + 12] = 0x60; // BRA.S $-8
+        biosRom[i + 13] = 0xF8;
+        patched++;
       }
     }
+
+    if (patched > 0) console.log(`[Neo-Geo] Applied ${patched} BIOS patches`);
   }
 
   getBus(): NeoGeoBus { return this.bus; }
