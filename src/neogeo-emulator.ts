@@ -94,12 +94,14 @@ export class NeoGeoEmulator {
     // Always push to main-thread Z80 (for immediate handshake visibility).
     // Also forward to audio worker for actual sound playback.
     this.bus.setSoundLatchCallback((value: number) => {
-      if (this.soundCmdLogCount < 20) {
-        console.log(`[Neo-Geo SND] 68K→Z80 cmd=0x${value.toString(16)} frame=${this.frameCount}`);
-        this.soundCmdLogCount++;
-      }
       this.z80Bus.pushSoundLatch(value);
       this.bus.markSoundCommandPending();
+
+      // Command 0x03 = Z80 reset. The Z80 re-initializes but our sm1.sm1 emulation
+      // doesn't reach the point where it writes the HELLO reply. Pre-set it.
+      if (value === 0x03) {
+        this.bus.setSoundReply(0xC3);
+      }
       if (this.audioWorkerReady) {
         this.pendingSoundLatches.push(value);
       }
@@ -107,7 +109,11 @@ export class NeoGeoEmulator {
 
     // Wire Z80 sound reply → 68K
     this.z80Bus.setSoundReplyCallback((value: number) => {
-      this.bus.setSoundReply(value);
+      // If the Z80 writes 0x00 (init/reset), keep the existing reply (preset 0xC3)
+      // to avoid overwriting the HELLO that the BIOS expects
+      if (value !== 0x00) {
+        this.bus.setSoundReply(value);
+      }
     });
 
     // When Z80 reads port 0x00, mark command as consumed (clears pending flag)
@@ -117,8 +123,7 @@ export class NeoGeoEmulator {
 
     // Lazy Z80 sync: when 68K reads sound reply, run Z80 to catch up
     this.bus.setSoundReadSyncCallback(() => {
-      // Run Z80 for a burst so it can process any pending command and write reply
-      let cycles = 512;
+      let cycles = 2000; // More cycles to ensure NMI handler completes
       while (cycles > 0) {
         if (this.z80Bus.shouldFireNmi()) this.z80.nmi();
         cycles -= this.z80.step();
@@ -212,8 +217,7 @@ export class NeoGeoEmulator {
       this.video.setFixRomMode(useBios);
     });
 
-    // Pre-run the Z80 to complete sm1.sm1 init (boot from BIOS Z80 ROM).
-    // The Z80 needs ~200K cycles to initialize before it can respond to commands.
+    // Pre-run the Z80 to complete sm1.sm1 init
     {
       let cycles = 200000;
       while (cycles > 0) {
@@ -221,6 +225,17 @@ export class NeoGeoEmulator {
         cycles -= this.z80.step();
       }
     }
+
+    // HACK: skip BIOS boot and jump directly to game code.
+    // The BIOS gets stuck in its test loop. We switch to P-ROM mode and
+    // set PC to the game's reset vector, letting the game initialize itself.
+    this.bus.write8(0x3A0013, 0); // REG_SWPROM — P-ROM at 0x000000
+    // Read game's initial SP and PC from P-ROM
+    const gameSP = this.bus.read32(0x000000);
+    const gamePC = this.bus.read32(0x000004);
+    console.log(`[Neo-Geo] Direct boot: SP=0x${gameSP.toString(16)} PC=0x${gamePC.toString(16)}`);
+    // Re-initialize 68K with game vectors
+    this.m68000.reset();
 
     console.log(`[Neo-Geo] Loaded ${romSet.name}: ${romSet.description}`);
   }
