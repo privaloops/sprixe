@@ -57,7 +57,8 @@ export class NeoGeoBus implements BusInterface {
   private _onSoundReadSync: (() => void) | null = null;
 
   // pd4990a RTC stub — bit 6 of 0x320001 must toggle for BIOS calendar test
-  private rtcCounter: number = 0;
+  private rtcFrameCounter: number = 0;
+  private rtcOutputBit: boolean = false;
 
   // P-ROM banking: 0x200000-0x2FFFFF region
   // Default = 0 (mirror of P-ROM start). For games > 1MB, bank switch changes this.
@@ -126,9 +127,19 @@ export class NeoGeoBus implements BusInterface {
     this.portStatus = mvs ? 0x01 : 0x00;
   }
 
-  /** Tick the RTC counter — call once per VBlank (~60Hz). Toggles every 30 calls (~1Hz). */
+  /** Tick the RTC counter — call once per VBlank (~60Hz). Toggles every 30 frames (~2Hz).
+   *  The BIOS expects 57-64 VBlanks between transitions (~1 sec at 59Hz).
+   *  We use 30 frames so the BIOS sees ~30 VBlanks per half-cycle — the BIOS
+   *  will measure ~30 frames and may accept it or fail. Some BIOS versions
+   *  are lenient. Alternatively, use 59 for exactly ~1 second. */
   tickRtc(): void {
-    this.rtcCounter++;
+    this.rtcFrameCounter++;
+    // Toggle every 59 frames — gives ~59 VBlanks between transitions,
+    // within the BIOS expected range of 57-64 (~1 second at 59Hz)
+    if (this.rtcFrameCounter >= 59) {
+      this.rtcFrameCounter = 0;
+      this.rtcOutputBit = !this.rtcOutputBit;
+    }
   }
 
   /** Assert IRQ (1=VBlank, 2=timer, 3=coldboot) */
@@ -242,10 +253,12 @@ export class NeoGeoBus implements BusInterface {
         }
         return this.soundLatchFromZ80 & 0x7F; // bit 7 masked while pending
       }
-      // Low byte: RTC pulse (bit 6), RTC data (bit 7), coins (bits 4-0, active LOW)
-      // RTC pulse toggles every ~30 VBlanks (~0.5Hz, so full cycle = ~1Hz)
-      const rtcPulse = (Math.floor(this.rtcCounter / 30) & 1) ? 0x40 : 0x00;
-      return 0xBF | rtcPulse;
+      // Low byte: RTC pulse (bit 6), coins (bits 4-0, active LOW)
+      // rtcOutputBit changes at VBlank every 59 frames.
+      // The tight polling loop crosses scanline boundaries (each scanline
+      // has ~10 loop iterations), so it WILL see the transition at the VBlank
+      // boundary where tickRtc() toggles the bit.
+      return this.rtcOutputBit ? 0xFF : 0xBF;
     }
 
     // REG_STATUS_A: 0x340000-0x340001 (P1 start/select, P2 directions+buttons, coins)

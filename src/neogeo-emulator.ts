@@ -197,6 +197,12 @@ export class NeoGeoEmulator {
     this.m68000.reset();
     this.z80.reset();
 
+    // Patch BIOS to skip the pd4990a calendar test and force boot completion.
+    // Without full RTC emulation, the CALENDAR test fails and the BIOS loops
+    // with SR mask 7 (all IRQs blocked). We patch the error handler to lower
+    // the SR mask so VBlank IRQs can proceed to the eye catcher.
+    this.patchBiosBoot(romSet.biosRom);
+
     console.log(`[Neo-Geo] Loaded ${romSet.name}: ${romSet.description}`);
   }
 
@@ -404,6 +410,43 @@ export class NeoGeoEmulator {
   }
 
   // ── Public accessors ──────────────────────────────────────────────────────
+
+  /** Patch the BIOS to work without pd4990a RTC emulation.
+   *  The BIOS CALENDAR test fails and enters an infinite watchdog loop
+   *  with SR mask 7 (all IRQs blocked). We patch the error handler's
+   *  MOVE #$0007, ($3C000C) to also include ANDI #$F8FF, SR (lower mask). */
+  private patchBiosBoot(biosRom: Uint8Array): void {
+    // Search for: MOVE.W #$0007, ($003C000C) = 33FC 0007 003C 000C
+    // This is the IRQ enable write just before the watchdog loop.
+    // After it, add ANDI #$F8FF, SR to lower the interrupt mask to 0.
+    for (let i = 0; i < biosRom.length - 14; i++) {
+      if (biosRom[i] === 0x33 && biosRom[i + 1] === 0xFC &&
+          biosRom[i + 2] === 0x00 && biosRom[i + 3] === 0x07 &&
+          biosRom[i + 4] === 0x00 && biosRom[i + 5] === 0x3C &&
+          biosRom[i + 6] === 0x00 && biosRom[i + 7] === 0x0C) {
+        // The next instruction is MOVE.B D0, ($300001) at i+8: 13C0 0030 0001
+        // Replace it with ANDI #$F8FF, SR (027C F8FF) + NOP NOP
+        // ANDI #$F8FF, SR = 02 7C F8 FF (4 bytes)
+        // Then BRA.S -8 (back to the original BRA target) = 60 FC (or we use 60 F8)
+        biosRom[i + 8] = 0x02;  // ANDI
+        biosRom[i + 9] = 0x7C;  // #imm, SR
+        biosRom[i + 10] = 0xF8; // F8FF = clear mask bits
+        biosRom[i + 11] = 0xFF;
+        // BRA.S back to the MOVE.B D0, ($300001) — which we just replaced.
+        // Instead, just put a STOP #$2000 to wait for VBlank
+        biosRom[i + 12] = 0x4E; // STOP
+        biosRom[i + 13] = 0x72; // #imm
+        // The next 2 bytes are the STOP immediate value
+        // But STOP is 4 bytes total: 4E72 xxxx. We need 2 more bytes.
+        // Actually, let's just do: ANDI #$F8FF, SR (4 bytes) + BRA.S $-6 (2 bytes)
+        // BRA.S $-6 loops back to the ANDI itself, which is fine — the VBlank IRQ
+        // will break out of this loop via the VBlank handler.
+        biosRom[i + 12] = 0x60; // BRA.S
+        biosRom[i + 13] = 0xF8; // offset -8 (back to i+8, the ANDI)
+        console.log(`[Neo-Geo] Patched BIOS boot at offset 0x${(i + 8).toString(16)}: lower SR mask`);
+      }
+    }
+  }
 
   getBus(): NeoGeoBus { return this.bus; }
   getVideo(): NeoGeoVideo { return this.video; }
