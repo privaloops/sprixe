@@ -39,8 +39,9 @@ export class NeoGeoZ80Bus implements Z80BusInterface {
   private soundLatchQueue: number[];
   private soundLatchPending: boolean;
 
-  // NMI control (NMI fires when 68K writes a sound command)
+  // NMI control (NMI fires once per sound command — edge-triggered)
   private nmiEnabled: boolean;
+  private nmiPulse: boolean;
 
   // YM2610 interface (via I/O ports)
   private ym2610AddrPort0: number;
@@ -66,6 +67,7 @@ export class NeoGeoZ80Bus implements Z80BusInterface {
     this.soundLatchQueue = [];
     this.soundLatchPending = false;
     this.nmiEnabled = true;
+    this.nmiPulse = false;
 
     this.ym2610AddrPort0 = 0;
     this.ym2610AddrPort1 = 0;
@@ -101,12 +103,17 @@ export class NeoGeoZ80Bus implements Z80BusInterface {
     if (!this.soundLatchPending) {
       this.soundLatchValue = this.soundLatchQueue.shift()!;
       this.soundLatchPending = true;
+      this.nmiPulse = true; // Edge-triggered: set pulse flag
     }
   }
 
-  /** Check if NMI should fire (called after 68K writes sound command) */
+  /** Check if NMI should fire — edge-triggered (fires once per command) */
   shouldFireNmi(): boolean {
-    return this.nmiEnabled && this.soundLatchPending;
+    if (this.nmiEnabled && this.nmiPulse) {
+      this.nmiPulse = false; // Consume the pulse — won't re-trigger until next push
+      return true;
+    }
+    return false;
   }
 
   // ---------------------------------------------------------------------------
@@ -159,17 +166,17 @@ export class NeoGeoZ80Bus implements Z80BusInterface {
     port &= 0xFF;
 
     switch (port) {
-      case 0x00: // Sound latch (command from 68K) — reading clears pending
+      case 0x00: // Sound latch (command from 68K) — reading clears NMI pending
+        this.soundLatchPending = false; // Stop NMI re-triggering
         this.onSoundConsumed?.();
         return this.soundLatchValue;
 
       case 0x04: // YM2610 status port 0
       case 0x05: // YM2610 data port 0 read
         if (this.onYm2610Read) return this.onYm2610Read(port & 1);
-        // No real YM2610: simulate timer flags so BIOS Z80 can proceed.
-        // Status register: bit 0 = timer A flag, bit 1 = timer B flag, bit 7 = busy
-        this.ym2610TimerCounter++;
-        return (this.ym2610TimerCounter & 0x10) ? 0x03 : 0x00;
+        // No real YM2610: return "not busy, no timer pending" (0x00).
+        // Timer flags (bits 0-1) should be 0 unless a timer was explicitly set.
+        return 0x00;
 
       case 0x06: // YM2610 status port 1
       case 0x07: // YM2610 data port 1 read

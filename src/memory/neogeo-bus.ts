@@ -90,8 +90,8 @@ export class NeoGeoBus implements BusInterface {
     this.vramAddr = 0;
     this.vramMod = 0;
     this.timerRunning = false;
-    // Pre-set Z80 reply to 0xC3 ("HELLO") — this is what sm1.sm1 sends at boot.
-    // The 68K BIOS checks for this before proceeding with the Z80 comm test.
+    // Pre-set Z80 reply to 0xC3 ("HELLO") — sm1.sm1 should send this at boot
+    // but our Z80 emulation doesn't reach the OUT instruction during init.
     this.soundLatchFromZ80 = 0xC3;
     this.soundCommandPending = false;
   }

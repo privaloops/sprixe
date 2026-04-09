@@ -204,20 +204,23 @@ export class NeoGeoEmulator {
     this.m68000.reset();
     this.z80.reset();
 
-    // Only patch non-UniBIOS ROMs (UniBIOS handles boot tests internally)
-    const biosName = this.detectBiosName(romSet.biosRom);
-    if (!biosName.includes('uni-bios')) {
-      this.patchBiosBoot(romSet.biosRom);
-      // Write AES system type at BIOS offset 0x400 (FBNeo convention)
-      romSet.biosRom[0x400] = 0x80;
-      romSet.biosRom[0x401] = 0x00;
-    }
-    console.log(`[Neo-Geo] Using BIOS: ${biosName}`);
+    // Patch BIOS to skip failing boot tests (calendar, etc.)
+    this.patchBiosBoot(romSet.biosRom);
 
     // Wire ROM banking callbacks
     this.bus.setFixRomSwitchCallback((useBios) => {
       this.video.setFixRomMode(useBios);
     });
+
+    // Pre-run the Z80 to complete sm1.sm1 init (boot from BIOS Z80 ROM).
+    // The Z80 needs ~200K cycles to initialize before it can respond to commands.
+    {
+      let cycles = 200000;
+      while (cycles > 0) {
+        if (this.z80Bus.shouldFireNmi()) this.z80.nmi();
+        cycles -= this.z80.step();
+      }
+    }
 
     console.log(`[Neo-Geo] Loaded ${romSet.name}: ${romSet.description}`);
   }

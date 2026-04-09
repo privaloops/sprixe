@@ -403,13 +403,6 @@ function buildGenericGameDef(
 
 // Known BIOS ROM names in neogeo.zip — AES (home) BIOS first for direct game launch
 const BIOS_68K_NAMES = [
-  'uni-bios_4_0.rom', // Universe BIOS 4.0 — skips hardware tests, most compatible
-  'uni-bios_3_3.rom', // Universe BIOS 3.3
-  'uni-bios_3_2.rom', // Universe BIOS 3.2
-  'uni-bios_3_1.rom', // Universe BIOS 3.1
-  'uni-bios_3_0.rom', // Universe BIOS 3.0
-  'uni-bios_2_3.rom', // Universe BIOS 2.3
-  'uni-bios.rom',     // Universe BIOS (generic name)
   'neo-epo.bin',    // Europe AES — no attract mode, direct game launch
   'neo-po.bin',     // Japan AES
   'aes-bios.bin',   // AES generic
