@@ -28,7 +28,8 @@ export interface NeoGeoZ80BusState {
 }
 
 export class NeoGeoZ80Bus implements Z80BusInterface {
-  private audioRom: Uint8Array;
+  private audioRom: Uint8Array;        // Game M-ROM
+  private biosRom: Uint8Array;        // BIOS Z80 ROM (sm1.sm1)
   private workRam: Uint8Array;        // 8KB
   private currentBank: number;        // current 16KB bank for 0x8000-0xBFFF
   private bankRegisters: number[];    // 4 bank registers
@@ -38,20 +39,26 @@ export class NeoGeoZ80Bus implements Z80BusInterface {
   private soundLatchQueue: number[];
   private soundLatchPending: boolean;
 
-  // NMI control (NMI fires when 68K writes a sound command)
+  // NMI control (NMI fires once per sound command — edge-triggered)
   private nmiEnabled: boolean;
+  private nmiPulse: boolean;
 
   // YM2610 interface (via I/O ports)
   private ym2610AddrPort0: number;
   private ym2610AddrPort1: number;
   private onYm2610Write: ((port: number, value: number) => void) | null;
   private onYm2610Read: ((port: number) => number) | null;
+  // Simulated YM2610 timer counter (for when no real YM2610 is connected)
+  private ym2610TimerCounter: number;
 
   // Reply to 68K
   private onSoundReply: ((value: number) => void) | null;
+  // Called when Z80 reads port 0x00 (consumes sound command)
+  private onSoundConsumed: (() => void) | null;
 
   constructor() {
     this.audioRom = new Uint8Array(0);
+    this.biosRom = new Uint8Array(0);
     this.workRam = new Uint8Array(0x2000); // 8KB
     this.currentBank = 0;
     this.bankRegisters = [0, 0, 0, 0];
@@ -60,15 +67,19 @@ export class NeoGeoZ80Bus implements Z80BusInterface {
     this.soundLatchQueue = [];
     this.soundLatchPending = false;
     this.nmiEnabled = true;
+    this.nmiPulse = false;
 
     this.ym2610AddrPort0 = 0;
     this.ym2610AddrPort1 = 0;
     this.onYm2610Write = null;
     this.onYm2610Read = null;
+    this.ym2610TimerCounter = 0;
     this.onSoundReply = null;
+    this.onSoundConsumed = null;
   }
 
   loadAudioRom(data: Uint8Array): void { this.audioRom = data; }
+  loadBiosRom(data: Uint8Array): void { this.biosRom = data; }
 
   setYm2610WriteCallback(cb: (port: number, value: number) => void): void {
     this.onYm2610Write = cb;
@@ -82,18 +93,27 @@ export class NeoGeoZ80Bus implements Z80BusInterface {
     this.onSoundReply = cb;
   }
 
+  setSoundConsumedCallback(cb: () => void): void {
+    this.onSoundConsumed = cb;
+  }
+
   /** Push a sound command from the 68K */
   pushSoundLatch(value: number): void {
     this.soundLatchQueue.push(value);
     if (!this.soundLatchPending) {
       this.soundLatchValue = this.soundLatchQueue.shift()!;
       this.soundLatchPending = true;
+      this.nmiPulse = true; // Edge-triggered: set pulse flag
     }
   }
 
-  /** Check if NMI should fire (called after 68K writes sound command) */
+  /** Check if NMI should fire — edge-triggered (fires once per command) */
   shouldFireNmi(): boolean {
-    return this.nmiEnabled && this.soundLatchPending;
+    if (this.nmiEnabled && this.nmiPulse) {
+      this.nmiPulse = false; // Consume the pulse — won't re-trigger until next push
+      return true;
+    }
+    return false;
   }
 
   // ---------------------------------------------------------------------------
@@ -103,12 +123,16 @@ export class NeoGeoZ80Bus implements Z80BusInterface {
   read(address: number): number {
     address &= 0xFFFF;
 
-    // M-ROM fixed: 0x0000-0x7FFF
+    // Fixed ROM: 0x0000-0x7FFF
+    // On Neo-Geo, the BIOS Z80 ROM (sm1.sm1) is mapped here at boot.
+    // It contains the bootloader that copies the game M-ROM into Work RAM.
+    // If no BIOS ROM available, fall back to game M-ROM directly.
     if (address <= 0x7FFF) {
-      return address < this.audioRom.length ? this.audioRom[address]! : 0xFF;
+      const rom = this.biosRom.length > 0 ? this.biosRom : this.audioRom;
+      return address < rom.length ? rom[address]! : 0xFF;
     }
 
-    // M-ROM banked: 0x8000-0xBFFF (16KB window)
+    // Banked ROM: 0x8000-0xBFFF (16KB window into game M-ROM)
     if (address <= 0xBFFF) {
       const bankOffset = this.currentBank * 0x4000;
       const romAddr = bankOffset + (address - 0x8000);
@@ -142,16 +166,22 @@ export class NeoGeoZ80Bus implements Z80BusInterface {
     port &= 0xFF;
 
     switch (port) {
-      case 0x00: // Sound latch (command from 68K)
+      case 0x00: // Sound latch (command from 68K) — reading clears NMI pending
+        this.soundLatchPending = false; // Stop NMI re-triggering
+        this.onSoundConsumed?.();
         return this.soundLatchValue;
 
       case 0x04: // YM2610 status port 0
       case 0x05: // YM2610 data port 0 read
-        return this.onYm2610Read ? this.onYm2610Read(port & 1) : 0;
+        if (this.onYm2610Read) return this.onYm2610Read(port & 1);
+        // No real YM2610: return "not busy, no timer pending" (0x00).
+        // Timer flags (bits 0-1) should be 0 unless a timer was explicitly set.
+        return 0x00;
 
       case 0x06: // YM2610 status port 1
       case 0x07: // YM2610 data port 1 read
-        return this.onYm2610Read ? this.onYm2610Read((port & 1) + 2) : 0;
+        if (this.onYm2610Read) return this.onYm2610Read((port & 1) + 2);
+        return 0;
 
       default:
         return 0xFF;

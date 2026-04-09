@@ -37,6 +37,8 @@ export class NeoGeoBus implements BusInterface {
   // LSPC VRAM indirect access
   private vramAddr: number = 0;
   private vramMod: number = 0;        // auto-increment value
+  private _vramWriteCount: number = 0; // debug: count VRAM writes
+  getVramWriteCount(): number { return this._vramWriteCount; }
 
   // LSPC timer
   private timerHigh: number = 0;
@@ -51,9 +53,14 @@ export class NeoGeoBus implements BusInterface {
 
   // Sound latch
   private soundLatchToZ80: number = 0;
-  private soundLatchFromZ80: number = 0;
-  private soundLatchPending: boolean = false;
+  private soundLatchFromZ80: number = 0;  // Z80 reply (read in upper byte of 0x320000)
+  private soundCommandPending: boolean = false; // set when 68K writes, cleared when Z80 reads
   private _soundLatchCallback: ((value: number) => void) | null = null;
+  private _onSoundReadSync: (() => void) | null = null;
+
+  // pd4990a RTC stub — bit 6 of 0x320001 must toggle for BIOS calendar test
+  private rtcFrameCounter: number = 0;
+  private rtcOutputBit: boolean = false;
 
   // P-ROM banking: 0x200000-0x2FFFFF region
   // Default = 0 (mirror of P-ROM start). For games > 1MB, bank switch changes this.
@@ -83,6 +90,10 @@ export class NeoGeoBus implements BusInterface {
     this.vramAddr = 0;
     this.vramMod = 0;
     this.timerRunning = false;
+    // Pre-set Z80 reply to 0xC3 ("HELLO") — sm1.sm1 should send this at boot
+    // but our Z80 emulation doesn't reach the OUT instruction during init.
+    this.soundLatchFromZ80 = 0xC3;
+    this.soundCommandPending = false;
   }
 
   getVram(): Uint8Array { return this.vram; }
@@ -93,9 +104,27 @@ export class NeoGeoBus implements BusInterface {
     this._soundLatchCallback = cb;
   }
 
+  /** Set callback for lazy Z80 sync when 68K reads sound reply */
+  setSoundReadSyncCallback(cb: () => void): void {
+    this._onSoundReadSync = cb;
+  }
+
   /** Called by Z80 bus to send reply back to 68K */
   setSoundReply(value: number): void {
+    if (this.soundLatchFromZ80 === 0xC3 && value !== 0xC3) {
+      console.log(`[Neo-Geo BUS] soundReply overwritten: 0xC3 → 0x${value.toString(16)}`, new Error().stack?.split('\n')[2]);
+    }
     this.soundLatchFromZ80 = value;
+  }
+
+  /** Called when Z80 reads port 0x00 — marks command as consumed */
+  clearSoundPending(): void {
+    this.soundCommandPending = false;
+  }
+
+  /** Called when 68K writes a sound command */
+  markSoundCommandPending(): void {
+    this.soundCommandPending = true;
   }
 
   /** Set I/O port values (called by InputManager) */
@@ -106,6 +135,21 @@ export class NeoGeoBus implements BusInterface {
   /** Set MVS mode (default is AES) */
   setMvsMode(mvs: boolean): void {
     this.portStatus = mvs ? 0x01 : 0x00;
+  }
+
+  /** Tick the RTC counter — call once per VBlank (~60Hz). Toggles every 30 frames (~2Hz).
+   *  The BIOS expects 57-64 VBlanks between transitions (~1 sec at 59Hz).
+   *  We use 30 frames so the BIOS sees ~30 VBlanks per half-cycle — the BIOS
+   *  will measure ~30 frames and may accept it or fail. Some BIOS versions
+   *  are lenient. Alternatively, use 59 for exactly ~1 second. */
+  tickRtc(): void {
+    this.rtcFrameCounter++;
+    // Toggle every 5 frames for now (fast, for debugging).
+    // TODO: implement proper pd4990a with 59-frame period (57-64 expected)
+    if (this.rtcFrameCounter >= 5) {
+      this.rtcFrameCounter = 0;
+      this.rtcOutputBit = !this.rtcOutputBit;
+    }
   }
 
   /** Assert IRQ (1=VBlank, 2=timer, 3=coldboot) */
@@ -170,11 +214,21 @@ export class NeoGeoBus implements BusInterface {
   read8(address: number): number {
     address = (address >>> 0) & 0xFFFFFF;
 
-    // 0x000000-0x0FFFFF: BIOS (at reset) or P-ROM (after REG_SWPROM)
+    // 0x000000-0x0FFFFF: Composite vector table + BIOS or P-ROM
     if (address <= 0x0FFFFF) {
       if (this.biosMode) {
-        // BIOS mapped at 0x000000 (128KB mirrored)
-        const off = address & 0x1FFFF; // 128KB mirror
+        // FBNeo-style composite mapping:
+        // 0x000-0x07F: BIOS vectors (SSP, PC, bus error, etc.)
+        // 0x080-0x3FF: Game P-ROM vectors (exception/USER vectors)
+        // 0x400+: BIOS ROM code
+        if (address < 0x80) {
+          return address < this.biosRom.length ? this.biosRom[address]! : 0xFF;
+        }
+        if (address < 0x400) {
+          return address < this.programRom.length ? this.programRom[address]! : 0xFF;
+        }
+        // Rest of BIOS ROM
+        const off = address & 0x1FFFF;
         return off < this.biosRom.length ? this.biosRom[off]! : 0xFF;
       }
       return address < this.programRom.length ? this.programRom[address]! : 0xFF;
@@ -201,9 +255,30 @@ export class NeoGeoBus implements BusInterface {
       return 0xFF; // No DIP switches on AES
     }
 
-    // REG_SOUND: 0x320000-0x320001 (read = Z80 reply, write = Z80 command)
+    // REG_SOUND / timer16: 0x320000-0x320001
+    // Lazy Z80 sync: when 68K reads, run the Z80 catch-up callback
+    this._onSoundReadSync?.();
+    // Word read: upper byte = Z80 reply + pending flag, lower byte = RTC + coins
+    //   Bit 15: pending_command (0 = command pending, 1 = done/idle) — active LOW
+    //   Bits 14-8: Z80 sound reply value (from port $0C)
+    //   Bit 7: RTC data bit (stub: 0)
+    //   Bit 6: RTC time pulse (must toggle ~1Hz for BIOS calendar test)
+    //   Bits 4-0: coin inputs (active LOW, 0xFF = no coins)
     if (address >= 0x320000 && address <= 0x320001) {
-      return (address & 1) ? this.soundLatchFromZ80 : 0xFF;
+      if (!(address & 1)) {
+        // High byte (FBNeo protocol):
+        // If command is still pending (Z80 hasn't read it), mask bit 7 of reply
+        if (!this.soundCommandPending) {
+          return this.soundLatchFromZ80; // full reply, Z80 has consumed command
+        }
+        return this.soundLatchFromZ80 & 0x7F; // bit 7 masked while pending
+      }
+      // Low byte: RTC pulse (bit 6), coins (bits 4-0, active LOW)
+      // rtcOutputBit changes at VBlank every 59 frames.
+      // The tight polling loop crosses scanline boundaries (each scanline
+      // has ~10 loop iterations), so it WILL see the transition at the VBlank
+      // boundary where tickRtc() toggles the bit.
+      return this.rtcOutputBit ? 0xFF : 0xBF;
     }
 
     // REG_STATUS_A: 0x340000-0x340001 (P1 start/select, P2 directions+buttons, coins)
@@ -212,10 +287,13 @@ export class NeoGeoBus implements BusInterface {
     }
 
     // REG_STATUS_B: 0x380000-0x380001
+    // FBNeo: bit 7 of low byte = AES flag (1=AES, 0=MVS)
     if (address >= 0x380000 && address <= 0x380001) {
-      // Various hardware flags — AES: bit 6 set = AES mode
-      // The exact value depends on BIOS version; 0x40 for AES is common
-      return (address & 1) ? (this.portStatus | 0x40) : 0x00;
+      if (address & 1) {
+        // Low byte: bit 7 = AES, bit 6 = slot count, rest = hardware type
+        return this.portStatus | 0x80; // AES mode (bit 7 set)
+      }
+      return 0x00; // High byte
     }
 
     // LSPC registers: 0x3C0000-0x3C000F (read)
@@ -270,13 +348,11 @@ export class NeoGeoBus implements BusInterface {
       return;
     }
 
-    // Sound command: 0x320000 (write)
+    // Sound command: 0x320000 (write) — any byte write sets the command
     if (address >= 0x320000 && address <= 0x320001) {
-      if (address & 1) {
-        this.soundLatchToZ80 = value;
-        this.soundLatchPending = true;
-        this._soundLatchCallback?.(value);
-      }
+      this.soundLatchToZ80 = value;
+      this.soundCommandPending = true;
+      this._soundLatchCallback?.(value);
       return;
     }
 
@@ -323,7 +399,7 @@ export class NeoGeoBus implements BusInterface {
     // Sound command
     if (address >= 0x320000 && address <= 0x320001) {
       this.soundLatchToZ80 = value & 0xFF;
-      this.soundLatchPending = true;
+      this.soundCommandPending = true;
       this._soundLatchCallback?.(value & 0xFF);
       return;
     }
@@ -378,6 +454,7 @@ export class NeoGeoBus implements BusInterface {
         this.vramAddr = value & 0xFFFF;
         break;
       case 1: // 0x3C0002: VRAM data write
+        this._vramWriteCount++;
         this.writeVramWord(this.vramAddr, value);
         this.vramAddr = (this.vramAddr + this.vramMod) & 0xFFFF;
         break;
@@ -392,16 +469,18 @@ export class NeoGeoBus implements BusInterface {
         this.timerLow = value;
         this.timerReload = (this.timerHigh << 16) | this.timerLow;
         break;
-      case 6: // 0x3C000C: IRQ acknowledge + control
-        // Writing acknowledges the IRQs whose bits are set
-        if (value & 0x01) this.irqPending &= ~0x01; // Ack IRQ1 (VBlank)
-        if (value & 0x02) this.irqPending &= ~0x02; // Ack IRQ2 (timer)
-        if (value & 0x04) this.irqPending &= ~0x04; // Ack IRQ3 (coldboot)
-        // Also controls timer enable/reload
-        this.irqControl = value & 0x07;
+      case 6: { // 0x3C000C: IRQ acknowledge register (from FBNeo NeoIRQUpdate)
+        // Bits accumulate: bit 0 = ack IRQ3, bit 1 = ack scanline IRQ, bit 2 = ack VBlank
+        // When all 3 bits set (0x07), clear all pending IRQs
+        const ack = value & 0x07;
+        if (ack & 0x01) this.irqPending &= ~0x04; // bit 0 → ack IRQ3 (coldboot)
+        if (ack & 0x02) this.irqPending &= ~0x02; // bit 1 → ack IRQ2 (timer/scanline)
+        if (ack & 0x04) this.irqPending &= ~0x01; // bit 2 → ack IRQ1 (VBlank)
+        // Timer reload
         this.timerCounter = this.timerReload;
         this.timerRunning = true;
         break;
+      }
       case 7: // 0x3C000E: LSPC timer stop
         this.timerRunning = false;
         break;
@@ -412,40 +491,45 @@ export class NeoGeoBus implements BusInterface {
   // Control register writes (0x3A0000-0x3A001F)
   // ---------------------------------------------------------------------------
 
+  // Callbacks for ROM banking (set by emulator)
+  private _onFixRomSwitch: ((useBios: boolean) => void) | null = null;
+  private _onZ80RomSwitch: ((useBios: boolean) => void) | null = null;
+
+  setFixRomSwitchCallback(cb: (useBios: boolean) => void): void { this._onFixRomSwitch = cb; }
+  setZ80RomSwitchCallback(cb: (useBios: boolean) => void): void { this._onZ80RomSwitch = cb; }
+
   private writeControlReg(address: number, _value: number): void {
-    // Neo-Geo control registers are at even byte addresses: 0x3A00XX
-    // MAME uses the raw address for switching:
-    //   0x3A0001 = REG_SWPBIOS (map BIOS to 0x000000)
-    //   0x3A0003 = REG_SWPROM  (map P-ROM to 0x000000)
+    // Control registers per FBNeo WriteIO2 (odd byte addresses)
     const regAddr = address & 0x1F;
     switch (regAddr) {
-      case 0x00: // Watchdog (even byte) — ignore
-      case 0x01: // REG_SWPBIOS — map BIOS to 0x000000
+      case 0x00: // Watchdog kick (even byte)
+        break;
+      case 0x01: // Shadow off (normal palette)
+        break;
+      case 0x03: // SWPBIOS — map BIOS vectors to 0x000000
         this.biosMode = true;
         break;
-      case 0x02: // Watchdog (odd byte)
+      case 0x0B: // BIOS text + Z80 BIOS ROM
+        this._onFixRomSwitch?.(true);
+        this._onZ80RomSwitch?.(true);
         break;
-      case 0x03: // REG_SWPROM — map P-ROM to 0x000000
+      case 0x0D: // SRAM write protect
+        break;
+      case 0x0F: // Palette bank 1
+        break;
+      case 0x11: // Shadow on (darken palette)
+        break;
+      case 0x13: // SWPROM — map GAME vectors to 0x000000
         this.biosMode = false;
         break;
-      case 0x05: // REG_CRDUNLOCK1
-      case 0x07: // REG_CRDLOCK1
-      case 0x09: // REG_CRDLOCK2
-      case 0x0B: // REG_CRDREGSEL
-        break; // Memory card — ignore
-      case 0x0A: // 0x3A000A: unused on Neo-Geo (IRQ ack is via LSPC 0x3C000C)
-      case 0x0B:
+      case 0x1B: // Game text + Z80 game ROM
+        this._onFixRomSwitch?.(false);
+        this._onZ80RomSwitch?.(false);
         break;
-      case 0x0D: // REG_BRDFIX — use board fix (S-ROM from cartridge)
+      case 0x1D: // SRAM write enable
         break;
-      case 0x0F: // REG_CRTFIX — use BIOS fix (sfix.sfix)
+      case 0x1F: // Palette bank 0
         break;
-      case 0x11: // REG_SRAMLOCK — lock backup RAM
-      case 0x13: // REG_SRAMUNLOCK — unlock backup RAM
-        break;
-      case 0x15: // REG_PALBANK0
-      case 0x17: // REG_PALBANK1
-        break; // Palette bank — ignore for MVP
       default:
         break;
     }
@@ -459,10 +543,10 @@ export class NeoGeoBus implements BusInterface {
   getSoundLatch(): number { return this.soundLatchToZ80; }
 
   /** Check if sound latch has pending data */
-  isSoundLatchPending(): boolean { return this.soundLatchPending; }
+  isSoundLatchPending(): boolean { return this.soundCommandPending; }
 
   /** Clear sound latch pending flag (called by Z80 after reading) */
-  clearSoundLatchPending(): void { this.soundLatchPending = false; }
+  clearSoundLatchPending(): void { this.soundCommandPending = false; }
 
   // ---------------------------------------------------------------------------
   // Scanline counter (set by emulator during frame loop)

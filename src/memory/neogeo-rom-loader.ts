@@ -401,9 +401,13 @@ function buildGenericGameDef(
 // BIOS
 // ---------------------------------------------------------------------------
 
-// Known BIOS ROM names in neogeo.zip
+// Known BIOS ROM names in neogeo.zip — AES (home) BIOS first for direct game launch
 const BIOS_68K_NAMES = [
-  'sp-s2.sp1',      // Japan MVS (Ver. 3)
+  'sp-s2.sp1',      // Japan MVS (Ver. 3) — most common
+  'neo-epo.bin',    // Europe AES
+  'neo-po.bin',     // Japan AES
+  'aes-bios.bin',   // AES generic
+  'sp-s2.sp1',      // Japan MVS (Ver. 3) — fallback
   'sp-s.sp1',       // Japan MVS (Ver. 2)
   'sp-u2.sp1',      // US MVS (Ver. 2)
   'sp-e.sp1',       // Europe MVS (Ver. 2)

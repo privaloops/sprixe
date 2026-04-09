@@ -109,6 +109,23 @@ function runOneFrame(): void {
 
   workerFrameCount++;
 
+  // Debug: report Z80 state at frame 30
+  if (workerFrameCount === 30 && z80) {
+    const st = z80.getState();
+    // Check if Z80 has written port 0x0C by reading the bus state
+    const busState = z80Bus!.getState();
+    self.postMessage({
+      type: 'z80debug',
+      pc: st.pc,
+      sp: st.sp,
+      frame: workerFrameCount,
+      nmiEnabled: busState.nmiEnabled,
+      soundLatch: busState.soundLatchValue,
+      // Read RAM around PC
+      ram: Array.from({ length: 16 }, (_, i) => z80Bus!.read((st.pc + i) & 0xFFFF)),
+    });
+  }
+
   // Run Z80 for one frame worth of cycles
   let cyclesLeft = Z80_CYCLES_PER_FRAME;
   const BATCH = 16; // Max T-states per step
@@ -188,7 +205,12 @@ self.onmessage = async (e: MessageEvent) => {
           self.postMessage({ type: 'reply', value });
         });
 
-        // Load audio ROM
+        // Load BIOS Z80 ROM (sm1.sm1) — bootloader mapped at 0x0000
+        if (msg.biosZRom) {
+          z80Bus.loadBiosRom(new Uint8Array(msg.biosZRom));
+        }
+
+        // Load game M-ROM — accessible via banking (0x8000-0xBFFF)
         if (msg.audioRom) {
           z80Bus.loadAudioRom(new Uint8Array(msg.audioRom));
         }
