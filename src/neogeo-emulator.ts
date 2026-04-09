@@ -243,8 +243,11 @@ export class NeoGeoEmulator {
         if (this.z80Bus.shouldFireNmi()) this.z80.nmi();
         const ran = this.z80.step();
         cycles -= ran;
-        // Clock YM2610 proportionally
-        this.mainYm2610?.clockCycles(ran);
+        // Clock YM2610 + check IRQ
+        if (this.mainYm2610) {
+          this.mainYm2610.clockCycles(ran);
+          if (this.mainYm2610.getIrq()) this.z80.irq(0xFF);
+        }
       }
     }
 
@@ -424,8 +427,13 @@ export class NeoGeoEmulator {
           const ran = this.z80.step();
           z80Slice -= ran;
           z80Left -= ran;
-          // Clock YM2610 on main thread
-          this.mainYm2610?.clockCycles(ran);
+          // Clock YM2610 on main thread + check IRQ
+          if (this.mainYm2610) {
+            this.mainYm2610.clockCycles(ran);
+            if (this.mainYm2610.getIrq()) {
+              this.z80.irq(0xFF);
+            }
+          }
         }
       }
     }
