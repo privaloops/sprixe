@@ -22,6 +22,7 @@ import { NeoGeoVideo } from './video/neogeo-video';
 import { WebGLRenderer } from './video/renderer-webgl';
 import { Renderer } from './video/renderer';
 import { AudioOutput } from './audio/audio-output';
+import { initYM2610Wasm, YM2610Wasm } from './audio/ym2610-wasm';
 import { InputManager } from './input/input';
 import type { RendererInterface } from './types';
 import { loadNeoGeoRomFromZip } from './memory/neogeo-rom-loader';
@@ -73,6 +74,7 @@ export class NeoGeoEmulator {
   private frameCount = 0;
   private firstFrame = true;
   private m68kErrorCount = 0;
+  private mainYm2610: YM2610Wasm | null = null;
   private soundCmdLogCount = 0;
 
   // Callbacks
@@ -218,15 +220,33 @@ export class NeoGeoEmulator {
       this.video.setFixRomMode(useBios);
     });
 
-    // Pre-run the Z80 to complete sm1.sm1 init
+    // Initialize YM2610 on main thread for Z80 sound handshake
+    try {
+      await initYM2610Wasm();
+      this.mainYm2610 = new YM2610Wasm();
+      this.mainYm2610.loadVRom(romSet.voiceRom);
+      // Wire YM2610 to Z80 bus
+      this.z80Bus.setYm2610WriteCallback((port, value) => {
+        this.mainYm2610!.write(port, value);
+      });
+      this.z80Bus.setYm2610ReadCallback((port) => {
+        return this.mainYm2610!.read(port);
+      });
+    } catch (e) {
+      console.warn('[Neo-Geo] YM2610 main-thread init failed:', e);
+    }
+
+    // Pre-run the Z80 with YM2610 connected to complete sm1.sm1 init
     {
-      let cycles = 200000;
+      let cycles = 500000; // More cycles with real YM2610
       while (cycles > 0) {
         if (this.z80Bus.shouldFireNmi()) this.z80.nmi();
-        cycles -= this.z80.step();
+        const ran = this.z80.step();
+        cycles -= ran;
+        // Clock YM2610 proportionally
+        this.mainYm2610?.clockCycles(ran);
       }
     }
-    this.bus.setSoundReply(0xC3);
 
 
     console.log(`[Neo-Geo] Loaded ${romSet.name}: ${romSet.description}`);
@@ -404,6 +424,8 @@ export class NeoGeoEmulator {
           const ran = this.z80.step();
           z80Slice -= ran;
           z80Left -= ran;
+          // Clock YM2610 on main thread
+          this.mainYm2610?.clockCycles(ran);
         }
       }
     }
