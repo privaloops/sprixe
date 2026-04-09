@@ -141,9 +141,9 @@ export class NeoGeoBus implements BusInterface {
    *  are lenient. Alternatively, use 59 for exactly ~1 second. */
   tickRtc(): void {
     this.rtcFrameCounter++;
-    // Toggle every 59 frames — gives ~59 VBlanks between transitions,
-    // within the BIOS expected range of 57-64 (~1 second at 59Hz)
-    if (this.rtcFrameCounter >= 59) {
+    // Toggle every 5 frames for now (fast, for debugging).
+    // TODO: implement proper pd4990a with 59-frame period (57-64 expected)
+    if (this.rtcFrameCounter >= 5) {
       this.rtcFrameCounter = 0;
       this.rtcOutputBit = !this.rtcOutputBit;
     }
@@ -211,11 +211,21 @@ export class NeoGeoBus implements BusInterface {
   read8(address: number): number {
     address = (address >>> 0) & 0xFFFFFF;
 
-    // 0x000000-0x0FFFFF: BIOS (at reset) or P-ROM (after REG_SWPROM)
+    // 0x000000-0x0FFFFF: Composite vector table + BIOS or P-ROM
     if (address <= 0x0FFFFF) {
       if (this.biosMode) {
-        // BIOS mapped at 0x000000 (128KB mirrored)
-        const off = address & 0x1FFFF; // 128KB mirror
+        // FBNeo-style composite mapping:
+        // 0x000-0x07F: BIOS vectors (SSP, PC, bus error, etc.)
+        // 0x080-0x3FF: Game P-ROM vectors (exception/USER vectors)
+        // 0x400+: BIOS ROM code
+        if (address < 0x80) {
+          return address < this.biosRom.length ? this.biosRom[address]! : 0xFF;
+        }
+        if (address < 0x400) {
+          return address < this.programRom.length ? this.programRom[address]! : 0xFF;
+        }
+        // Rest of BIOS ROM
+        const off = address & 0x1FFFF;
         return off < this.biosRom.length ? this.biosRom[off]! : 0xFF;
       }
       return address < this.programRom.length ? this.programRom[address]! : 0xFF;
