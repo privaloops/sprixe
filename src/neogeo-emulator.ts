@@ -95,25 +95,21 @@ export class NeoGeoEmulator {
     // Also forward to audio worker for actual sound playback.
     this.bus.setSoundLatchCallback((value: number) => {
       this.z80Bus.pushSoundLatch(value);
-      this.bus.markSoundCommandPending();
-
-      // Command 0x03 = Z80 reset. The Z80 re-initializes but our sm1.sm1 emulation
-      // doesn't reach the point where it writes the HELLO reply. Pre-set it.
-      if (value === 0x03) {
-        this.bus.setSoundReply(0xC3);
-      }
+      // Don't mark pending — this masks bit 7 of the reply until Z80 reads port 0x00.
+      // Our Z80 timing is too coarse for this to work correctly, so we skip the
+      // pending mechanism and let the BIOS see the full reply immediately.
       if (this.audioWorkerReady) {
         this.pendingSoundLatches.push(value);
       }
     });
 
     // Wire Z80 sound reply → 68K
-    this.z80Bus.setSoundReplyCallback((value: number) => {
-      // If the Z80 writes 0x00 (init/reset), keep the existing reply (preset 0xC3)
-      // to avoid overwriting the HELLO that the BIOS expects
-      if (value !== 0x00) {
-        this.bus.setSoundReply(value);
-      }
+    this.z80Bus.setSoundReplyCallback((_value: number) => {
+      // Stub: always keep the reply at 0xC3 (HELLO/ready).
+      // Our Z80 sm1.sm1 emulation doesn't produce proper replies.
+      // The BIOS just needs to see 0xC3 to know the Z80 is alive.
+      // Real command replies (echo 0x01→0x01) are handled by the NMI handler
+      // but timing issues prevent them from being visible to the BIOS.
     });
 
     // When Z80 reads port 0x00, mark command as consumed (clears pending flag)
@@ -121,14 +117,8 @@ export class NeoGeoEmulator {
       this.bus.clearSoundPending();
     });
 
-    // Lazy Z80 sync: when 68K reads sound reply, run Z80 to catch up
-    this.bus.setSoundReadSyncCallback(() => {
-      let cycles = 2000; // More cycles to ensure NMI handler completes
-      while (cycles > 0) {
-        if (this.z80Bus.shouldFireNmi()) this.z80.nmi();
-        cycles -= this.z80.step();
-      }
-    });
+    // Lazy Z80 sync: disabled — Z80 runs interleaved per scanline instead.
+    // The lazy sync was too expensive (called thousands of times per frame).
 
     // IRQ acknowledge — clear both CPU and bus pending flags
     this.m68000.setIrqAckCallback(() => {
@@ -225,17 +215,10 @@ export class NeoGeoEmulator {
         cycles -= this.z80.step();
       }
     }
+    // After Z80 pre-boot, set the HELLO reply that the BIOS expects.
+    // sm1.sm1 doesn't send it naturally in our emulation.
+    this.bus.setSoundReply(0xC3);
 
-    // HACK: skip BIOS boot and jump directly to game code.
-    // The BIOS gets stuck in its test loop. We switch to P-ROM mode and
-    // set PC to the game's reset vector, letting the game initialize itself.
-    this.bus.write8(0x3A0013, 0); // REG_SWPROM — P-ROM at 0x000000
-    // Read game's initial SP and PC from P-ROM
-    const gameSP = this.bus.read32(0x000000);
-    const gamePC = this.bus.read32(0x000004);
-    console.log(`[Neo-Geo] Direct boot: SP=0x${gameSP.toString(16)} PC=0x${gamePC.toString(16)}`);
-    // Re-initialize 68K with game vectors
-    this.m68000.reset();
 
     console.log(`[Neo-Geo] Loaded ${romSet.name}: ${romSet.description}`);
   }
@@ -260,8 +243,8 @@ export class NeoGeoEmulator {
           this.audioWorkerReady = true;
           console.log('[Neo-Geo] Audio worker ready');
         } else if (e.data.type === 'reply') {
-          console.log(`[Neo-Geo] Z80 reply=0x${e.data.value.toString(16)}`);
-          this.bus.setSoundReply(e.data.value);
+          // Worker Z80 replies are ignored — the main-thread Z80 handles the
+          // BIOS handshake. Worker heartbeat (R|0x80) would overwrite the preset.
         } else if (e.data.type === 'z80debug') {
           const ram = e.data.ram?.map((b: number) => b.toString(16).padStart(2, '0')).join(' ') ?? '';
           console.log(`[Neo-Geo] Worker Z80: PC=0x${e.data.pc.toString(16)} SP=0x${e.data.sp.toString(16)} frame=${e.data.frame} nmi=${e.data.nmiEnabled} latch=0x${e.data.soundLatch?.toString(16)} RAM@PC=[${ram}]`);
@@ -383,7 +366,7 @@ export class NeoGeoEmulator {
       // This is critical for the BIOS 68K↔Z80 handshake (tight polling loop).
       let m68kLeft = NGO_M68K_CYCLES_PER_SCANLINE;
       let z80Left = Math.round(NGO_Z80_CLOCK / NGO_FRAME_RATE / NGO_VTOTAL);
-      const SLICE = 32; // ~32 68K cycles per slice ≈ ~10 Z80 cycles
+      const SLICE = 128; // 128 68K cycles per slice — balance speed vs handshake responsiveness
 
       while (m68kLeft > 0 || z80Left > 0) {
         // 68K slice
