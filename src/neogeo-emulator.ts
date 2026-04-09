@@ -346,7 +346,6 @@ export class NeoGeoEmulator {
       if (scanline === NGO_VBLANK_LINE) {
         this.video.markPaletteDirty();
         this.video.tickAutoAnim();
-        this.bus.tickRtc();
         this.bus.assertIrq(1); // IRQ1 = VBlank
 
         this._vblankCallback?.();
@@ -382,6 +381,7 @@ export class NeoGeoEmulator {
         while (m68kSlice > 0) {
           try {
             const ran = this.m68000.step();
+            this.bus.addCycles(ran);
             m68kSlice -= ran;
             m68kLeft -= ran;
           } catch (e) {
