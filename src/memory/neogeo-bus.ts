@@ -50,8 +50,15 @@ export class NeoGeoBus implements BusInterface {
   private timerRunning: boolean = false;
 
   // IRQ state (bits: 0=VBlank, 1=timer, 2=coldboot)
-  private irqPending: number = 0x04;  // IRQ3 pending at boot
-  private irqControl: number = 0;
+  private irqPending: number = 0;  // FBNeo: nIRQAcknowledge = ~0 → no pending IRQs at boot
+
+  // LSPC control register (0x3C0006 write)
+  // Upper byte: sprite frame speed, lower byte: IRQ control flags
+  // Bit 4 (0x10): IRQ enable, Bit 5 (0x20): relative offset, Bit 6 (0x40): load at VBlank, Bit 7 (0x80): auto-reload
+  private lspcControl: number = 0;
+
+  // Auto-animation counter (ticked at VBlank, exposed in scanline counter read)
+  private autoAnimCounter: number = 0;
 
   // Sound latch
   private soundLatchToZ80: number = 0;
@@ -89,16 +96,27 @@ export class NeoGeoBus implements BusInterface {
   /** Add 68K cycles to the total (call from emulator per step) */
   addCycles(n: number): void { this.totalCycles += n; }
 
+  /** Increment auto-animation counter (call once per VBlank from emulator) */
+  tickAutoAnim(): void { this.autoAnimCounter++; }
+
   loadProgramRom(data: Uint8Array): void { this.programRom = data; }
   loadBiosRom(data: Uint8Array): void { this.biosRom = data; }
+
+  /** Switch to game mode (P-ROM at 0x000000) for direct boot */
+  switchToGameMode(): void {
+    this.biosMode = false;
+    this.irqPending = 0; // No pending IRQs for direct boot
+  }
 
   /** Reset bus state (call when CPU is reset) */
   resetBus(): void {
     this.biosMode = true; // BIOS mapped at 0x000000 at reset
-    this.irqPending = 0x04; // IRQ3 (coldboot) pending
+    this.irqPending = 0; // No pending IRQs at reset (FBNeo: nIRQAcknowledge = ~0)
     this.vramAddr = 0;
     this.vramMod = 0;
     this.timerRunning = false;
+    this.autoAnimCounter = 0;
+    this.lspcControl = 0;
     // Pre-set Z80 reply to 0xC3 ("HELLO") — sm1.sm1 should send this at boot
     // but our Z80 emulation doesn't reach the OUT instruction during init.
     this.soundLatchFromZ80 = 0xC3;
@@ -141,9 +159,9 @@ export class NeoGeoBus implements BusInterface {
   setPortP2(value: number): void { this.portP2 = value; }
   setPortSystem(value: number): void { this.portSystem = value; }
 
-  /** Set MVS mode (default is AES) */
+  /** Set MVS mode. Bit 7: 0=MVS, 1=AES. Bit 6: 0=1-slot, 1=multi-slot */
   setMvsMode(mvs: boolean): void {
-    this.portStatus = mvs ? 0x01 : 0x00;
+    this.portStatus = mvs ? 0x00 : 0x80;
   }
 
   /** Assert IRQ (1=VBlank, 2=timer, 3=coldboot) */
@@ -155,10 +173,11 @@ export class NeoGeoBus implements BusInterface {
 
   /** Get highest pending IRQ level (1-3), or 0 if none */
   getPendingIrq(): number {
-    const masked = this.irqPending & ~this.irqControl;
-    if (masked & 0x04) return 3; // IRQ3 = coldboot (highest priority)
-    if (masked & 0x02) return 2; // IRQ2 = timer
-    if (masked & 0x01) return 1; // IRQ1 = VBlank
+    // No masking — IRQ control register (lspcControl) governs timer behavior,
+    // not IRQ suppression. FBNeo uses nIRQAcknowledge for ack, not for masking.
+    if (this.irqPending & 0x04) return 3; // IRQ3 = coldboot (highest priority)
+    if (this.irqPending & 0x02) return 2; // IRQ2 = timer
+    if (this.irqPending & 0x01) return 1; // IRQ1 = VBlank
     return 0;
   }
 
@@ -208,16 +227,13 @@ export class NeoGeoBus implements BusInterface {
   read8(address: number): number {
     address = (address >>> 0) & 0xFFFFFF;
 
-    // 0x000000-0x0FFFFF: Composite vector table + BIOS or P-ROM
+    // 0x000000-0x0FFFFF: Composite vector table (FBNeo MapVectorTable)
+    // BIOS mode: 0x00-0x7F = BIOS vectors, 0x80+ = P-ROM
+    // Game mode: entire range = P-ROM
     if (address <= 0x0FFFFF) {
-      if (this.biosMode) {
-        // BIOS mode: entire 0x000000-0x0FFFFF maps to BIOS ROM (128KB mirrored).
-        // FBNeo does a composite mapping (0x80-0x3FF from P-ROM) but only AFTER
-        // the initial boot. During boot, the BIOS needs its own full vector table.
-        const off = address & 0x1FFFF;
-        return off < this.biosRom.length ? this.biosRom[off]! : 0xFF;
+      if (this.biosMode && address < 0x80) {
+        return address < this.biosRom.length ? this.biosRom[address]! : 0xFF;
       }
-      // P-ROM mode: game vectors at 0x000000
       return address < this.programRom.length ? this.programRom[address]! : 0xFF;
     }
 
@@ -271,13 +287,10 @@ export class NeoGeoBus implements BusInterface {
     }
 
     // REG_STATUS_B: 0x380000-0x380001
-    // FBNeo: bit 7 of low byte = AES flag (1=AES, 0=MVS)
+    // FBNeo ReadInput3: even = ~NeoInputBank[2], odd = ~0
+    // With no special inputs, both bytes return 0xFF
     if (address >= 0x380000 && address <= 0x380001) {
-      if (address & 1) {
-        // Low byte: bit 7 = AES, bit 6 = slot count, rest = hardware type
-        return this.portStatus | 0x80; // AES mode (bit 7 set)
-      }
-      return 0x00; // High byte
+      return 0xFF;
     }
 
     // LSPC registers: 0x3C0000-0x3C000F (read)
@@ -423,12 +436,20 @@ export class NeoGeoBus implements BusInterface {
   private readLspc(address: number): number {
     const reg = (address & 0xE) >> 1;
     switch (reg) {
-      case 1: { // 0x3C0002-0x3C0003: VRAM data read
+      case 0: // 0x3C0000-0x3C0001: VRAM data (same as 0x3C0002, per FBNeo)
+      case 1: { // 0x3C0002-0x3C0003: VRAM data read (no auto-increment)
         const word = this.readVramWord(this.vramAddr);
         return (address & 1) ? (word & 0xFF) : ((word >> 8) & 0xFF);
       }
-      case 3: { // 0x3C0006-0x3C0007: current scanline counter
-        const scanVal = this.currentScanline & 0x1FF;
+      case 2: { // 0x3C0004-0x3C0005: VRAM modulo read
+        const mod = this.vramMod & 0xFFFF;
+        return (address & 1) ? (mod & 0xFF) : ((mod >> 8) & 0xFF);
+      }
+      case 3: { // 0x3C0006-0x3C0007: display status (FBNeo format)
+        // FBNeo: ((NeoCurrentScanline() + nScanlineOffset) << 7) | (nNeoSpriteFrame & 7)
+        // NeoCurrentScanline = (SekCurrentScanline + 248) % 264, nScanlineOffset = 0xF8
+        const neoScan = (this.currentScanline + 248) % 264;
+        const scanVal = (((neoScan + 0xF8) & 0x1FF) << 7) | (this.autoAnimCounter & 7);
         return (address & 1) ? (scanVal & 0xFF) : ((scanVal >> 8) & 0xFF);
       }
       default:
@@ -454,6 +475,9 @@ export class NeoGeoBus implements BusInterface {
         break;
       case 2: // 0x3C0004: VRAM modulo
         this.vramMod = value;
+        break;
+      case 3: // 0x3C0006: LSPC control (auto-anim speed + IRQ control flags)
+        this.lspcControl = value;
         break;
       case 4: // 0x3C0008: LSPC timer high
         this.timerHigh = value;
