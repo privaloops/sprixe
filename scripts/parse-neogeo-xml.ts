@@ -12,25 +12,6 @@ import { join } from 'path';
 
 const NEOGEO_XML_URL = 'https://raw.githubusercontent.com/mamedev/mame/master/hash/neogeo.xml';
 
-// MVP target games (non-encrypted)
-const TARGET_GAMES = new Set([
-  // Fighting
-  'kof94', 'kof95', 'kof96', 'kof97', 'kof98',
-  'fatfury1', 'fatfury2', 'fatfury3', 'fatfursp',
-  'samsho', 'samsho2', 'samsho3', 'samsho4',
-  'rbff1', 'rbff2', 'aof', 'aof2', 'aof3',
-  'wh1', 'wh2', 'lastblad', 'lastbld2', 'kizuna',
-  // Beat-em-up / action
-  'mslug', 'mslug2', 'sengoku', 'roboarmy', 'mutnat', 'burningf', 'eightman',
-  // Run-and-gun
-  'nam1975', 'bstars', 'bstars2', 'cyberlip',
-  // Puzzle / sport
-  'puzzledp', 'twinspri', 'pbobblen', 'magdrop2', 'magdrop3', 'socbrawl', 'supersid',
-  // Popular extras
-  'turfmast', 'stakwin', 'galaxyfg', 'wjammers', 'viewpoin', 'kotm', 'kotm2',
-  'savagere', 'tpgolf', 'joyjoy', 'ridhero', 'alpham2',
-]);
-
 interface RomEntry {
   name: string;
   size: number;
@@ -65,9 +46,8 @@ function parseXml(xml: string): GameEntry[] {
     const cloneof = match[2];
     const body = match[3]!;
 
-    // Only include target games (parent sets, not clones)
-    if (!TARGET_GAMES.has(name)) continue;
-    if (cloneof) continue; // Skip clones
+    // Parent sets only (skip clones)
+    if (cloneof) continue;
 
     const descMatch = /<description>([^<]+)<\/description>/.exec(body);
     const yearMatch = /<year>([^<]+)<\/year>/.exec(body);
