@@ -170,20 +170,20 @@ describe('NeoGeoBus', () => {
   });
 
   describe('IRQ system', () => {
-    it('starts with IRQ3 (coldboot) pending', () => {
+    it('starts with no pending IRQs (FBNeo: nIRQAcknowledge = ~0)', () => {
       const bus = new NeoGeoBus();
-      expect(bus.getPendingIrq()).toBe(3);
+      expect(bus.getPendingIrq()).toBe(0);
     });
 
     it('acknowledges IRQs', () => {
       const bus = new NeoGeoBus();
+      bus.assertIrq(3);
       bus.acknowledgeIrq(3);
       expect(bus.getPendingIrq()).toBe(0);
     });
 
     it('asserts VBlank IRQ', () => {
       const bus = new NeoGeoBus();
-      bus.acknowledgeIrq(3); // Clear coldboot
       bus.assertIrq(1); // VBlank
       expect(bus.getPendingIrq()).toBe(1);
     });
@@ -191,7 +191,7 @@ describe('NeoGeoBus', () => {
     it('prioritizes IRQ3 over IRQ1', () => {
       const bus = new NeoGeoBus();
       bus.assertIrq(1);
-      // IRQ3 already pending from boot
+      bus.assertIrq(3);
       expect(bus.getPendingIrq()).toBe(3);
     });
   });

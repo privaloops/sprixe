@@ -207,13 +207,11 @@ export class NeoGeoEmulator {
     // Initialize audio worker
     await this.initAudioWorker(romSet);
 
-    // Reset bus and CPUs (bus must reset first — sets BIOS mode for 68K vectors)
+    // Reset bus and CPUs
     this.bus.resetBus();
     this.m68000.reset();
     this.z80.reset();
 
-    // No BIOS patches — pd4990a handles the CALENDAR test naturally.
-    // Patching the ROM breaks the SYSTEM ROM checksum test.
 
     // Wire ROM banking callbacks
     this.bus.setFixRomSwitchCallback((useBios) => {
@@ -370,18 +368,21 @@ export class NeoGeoEmulator {
       if (scanline === NGO_VBLANK_LINE) {
         this.video.markPaletteDirty();
         this.video.tickAutoAnim();
+        this.bus.tickAutoAnim(); // Sync bus counter for LSPC scanline register
+
         this.bus.assertIrq(1); // IRQ1 = VBlank
+
 
         this._vblankCallback?.();
       }
 
-      // Coldboot IRQ on first frame
-      if (this.firstFrame && scanline === 0) {
-        this.bus.assertIrq(3); // IRQ3 = coldboot
-      }
+      // No coldboot IRQ3 — FBNeo doesn't fire it. The BIOS reset vector
+      // handles initialization, VBlank IRQ1 drives the boot state machine.
 
       // Timer tick
       this.bus.tickTimer();
+
+
 
 
 
