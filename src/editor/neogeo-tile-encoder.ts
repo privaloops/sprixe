@@ -86,10 +86,10 @@ export function readNeoGeoTile(
   const pixels = new Uint8Array(256); // 16x16
   const tileOffset = tileCode * NGO_TILE_BYTES;
 
-  // Block 0-63 = left half (pixels 0-7), block 64-127 = right half (pixels 8-15)
+  // Block 64-127 = left half (pixels 0-7), block 0-63 = right half (pixels 8-15) per FBNeo
   for (let y = 0; y < 16; y++) {
-    decodeNeoGeoRow(rom, tileOffset + y * 4, pixels, y * 16);           // left 8 pixels
-    decodeNeoGeoRow(rom, tileOffset + 64 + y * 4, pixels, y * 16 + 8); // right 8 pixels
+    decodeNeoGeoRow(rom, tileOffset + 64 + y * 4, pixels, y * 16);     // left 8 pixels
+    decodeNeoGeoRow(rom, tileOffset + y * 4, pixels, y * 16 + 8);      // right 8 pixels
   }
 
   return pixels;
@@ -106,8 +106,8 @@ export function writeNeoGeoPixel(
   colorIndex: number,
 ): void {
   const tileOffset = tileCode * NGO_TILE_BYTES;
-  // Block 0-63 = left half (pixels 0-7), block 64-127 = right half (pixels 8-15)
-  const blockBase = tileOffset + ((localX >> 3) * 64);
+  // Block 64-127 = left half (pixels 0-7), block 0-63 = right half (pixels 8-15) per FBNeo
+  const blockBase = tileOffset + (localX < 8 ? 64 : 0);
   const groupBase = blockBase + localY * 4;
 
   // Decode the 8 pixels of this group

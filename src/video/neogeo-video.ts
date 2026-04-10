@@ -103,6 +103,7 @@ export class NeoGeoVideo {
   private fb32: Uint32Array;          // same buffer as Uint32Array view
   private paletteDirty: boolean;
   private autoAnimCounter: number;
+  private tileMask: number;  // FBNeo nNeoTileMask — wraps tile codes to ROM range
 
   constructor() {
     this.vram = new Uint8Array(0x11000);  // ~68KB
@@ -116,6 +117,7 @@ export class NeoGeoVideo {
     this.fb32 = new Uint32Array(buffer);
     this.paletteDirty = true;
     this.autoAnimCounter = 0;
+    this.tileMask = 0;
   }
 
   setRoms(
@@ -126,6 +128,11 @@ export class NeoGeoVideo {
     this.spritesRom = spritesRom;
     this.fixedRom = fixedRom;
     this.biosFixedRom = biosFixedRom;
+    // Compute tile mask: next power-of-2 tile count minus 1 (FBNeo nNeoTileMask)
+    const tileCount = spritesRom.length / NGO_TILE_BYTES;
+    let pot = 1;
+    while (pot < tileCount) pot <<= 1;
+    this.tileMask = pot - 1;
   }
 
   getVram(): Uint8Array { return this.vram; }
@@ -356,17 +363,16 @@ export class NeoGeoVideo {
         flipH = (w1 & 1) === 1;
         if (w1 & 0x08) tc = (tc & ~7) | (this.autoAnimCounter & 7);
         else if (w1 & 0x04) tc = (tc & ~3) | (this.autoAnimCounter & 3);
+        tc &= this.tileMask; // Wrap tile code to ROM range (FBNeo nNeoTileMask)
         tileOff = tc * NGO_TILE_BYTES;
         palBase = ((w1 >> 8) & 0xFF) * 16;
       }
 
-      if (tileOff + NGO_TILE_BYTES > rom.length) continue;
-
-      // Decode the full 16-pixel row (block 0-63 = left, 64-127 = right)
+      // Decode the full 16-pixel row (block 64-127 = left, 0-63 = right per FBNeo)
       const fy = flipV ? (15 - tileRow) : tileRow;
-      decodeNeoGeoRow(rom, tileOff + fy * 4, halfBuf, 0);
-      for (let i = 0; i < 8; i++) fullRow[i] = halfBuf[i]!;
       decodeNeoGeoRow(rom, tileOff + 64 + fy * 4, halfBuf, 0);
+      for (let i = 0; i < 8; i++) fullRow[i] = halfBuf[i]!;
+      decodeNeoGeoRow(rom, tileOff + fy * 4, halfBuf, 0);
       for (let i = 0; i < 8; i++) fullRow[8 + i] = halfBuf[i]!;
 
       // Draw 16 source pixels
@@ -434,6 +440,57 @@ export class NeoGeoVideo {
   // ---------------------------------------------------------------------------
   // Editor methods
   // ---------------------------------------------------------------------------
+
+  /** Diagnostic: dump sprite table state to console */
+  dumpSpriteTable(): void {
+    const romSize = this.spritesRom.length;
+    const maxTileCode = romSize / NGO_TILE_BYTES;
+    let active = 0, outOfBounds = 0, zeroTile = 0;
+    const chains: { master: number; length: number; x: number; y: number; tiles: number[] }[] = [];
+    let currentChain: typeof chains[0] | null = null;
+
+    console.log(`[NeoGeo Sprite Diag] ROM size: ${romSize} bytes (${maxTileCode} tiles)`);
+
+    for (let i = 1; i <= NGO_MAX_SPRITES; i++) {
+      const scb3 = this.readVramWord(NGO_SCB3_BASE + i);
+      const sticky = ((scb3 >> 6) & 1) === 1;
+      const height = (scb3 & 0x3F) + 1;
+      const scb1Base = NGO_SCB1_BASE + i * 64;
+      const w0 = this.readVramWord(scb1Base);
+      const w1 = this.readVramWord(scb1Base + 1);
+      const tc = w0 | ((w1 & 0xF0) << 12);
+      const scb4 = this.readVramWord(NGO_SCB4_BASE + i);
+      const x = (scb4 >> 7) & 0x1FF;
+
+      if (tc === 0 && height === 1) { zeroTile++; continue; }
+      active++;
+
+      const tileOff = tc * NGO_TILE_BYTES;
+      if (tileOff + NGO_TILE_BYTES > romSize) outOfBounds++;
+
+      if (!sticky || !currentChain) {
+        if (currentChain) chains.push(currentChain);
+        const yRaw = scb3 >> 7;
+        let y = 0x200 - (yRaw & 0x1FF);
+        if (y > 0x110) y -= 0x200;
+        currentChain = { master: i, length: 1, x, y, tiles: [tc] };
+      } else {
+        currentChain.length++;
+        currentChain.tiles.push(tc);
+      }
+    }
+    if (currentChain) chains.push(currentChain);
+
+    console.log(`[NeoGeo Sprite Diag] Active: ${active}, Zero: ${zeroTile}, OutOfBounds: ${outOfBounds}`);
+    console.log(`[NeoGeo Sprite Diag] Chains: ${chains.length}`);
+
+    // Show first 20 non-trivial chains
+    const interesting = chains.filter(c => c.tiles.some(t => t !== 0));
+    for (const c of interesting.slice(0, 20)) {
+      const oob = c.tiles.filter(t => t * NGO_TILE_BYTES + NGO_TILE_BYTES > romSize).length;
+      console.log(`  Sprite ${c.master}: chain=${c.length}, x=${c.x}, y=${c.y}, tiles=[${c.tiles.slice(0, 8).join(',')}${c.tiles.length > 8 ? '...' : ''}], OOB=${oob}`);
+    }
+  }
 
   /** Get a sprite entry for the editor */
   inspectSpriteAt(screenX: number, screenY: number): NeoGeoSpriteEntry | null {
