@@ -520,53 +520,81 @@ export class NeoGeoVideo {
   // Editor methods
   // ---------------------------------------------------------------------------
 
-  /** Diagnostic: dump sprite table state to console */
+  /** Diagnostic: dump full sprite table with SCB2 zoom values */
   dumpSpriteTable(): void {
     const romSize = this.spritesRom.length;
-    const maxTileCode = romSize / NGO_TILE_BYTES;
-    let active = 0, outOfBounds = 0, zeroTile = 0;
-    const chains: { master: number; length: number; x: number; y: number; tiles: number[] }[] = [];
-    let currentChain: typeof chains[0] | null = null;
+    const maxTile = romSize / NGO_TILE_BYTES;
 
-    console.log(`[NeoGeo Sprite Diag] ROM size: ${romSize} bytes (${maxTileCode} tiles)`);
+    interface ChainInfo {
+      master: number; width: number; x: number; yRaw: number; screenY: number;
+      size: number; yZoom: number; xZoom: number;
+      tiles: number[]; palettes: number[];
+    }
+
+    const chains: ChainInfo[] = [];
+    let cur: ChainInfo | null = null;
+    let active = 0;
 
     for (let i = 1; i <= NGO_MAX_SPRITES; i++) {
+      const scb2 = this.readVramWord(NGO_SCB2_BASE + i);
       const scb3 = this.readVramWord(NGO_SCB3_BASE + i);
-      const sticky = ((scb3 >> 6) & 1) === 1;
-      const height = (scb3 & 0x3F) + 1;
+      const scb4 = this.readVramWord(NGO_SCB4_BASE + i);
+      const sticky = (scb3 >> 6) & 1;
+      const size = scb3 & 0x3F;
+      const yRaw = (0x200 - (scb3 >> 7)) & 0x1FF;
+      const x = (scb4 >> 7) & 0x1FF;
+      const yZoom = scb2 & 0xFF;
+      const xZoom = (scb2 >> 8) & 0x0F;
+
+      // Read first tile of this sprite column
       const scb1Base = NGO_SCB1_BASE + i * 64;
       const w0 = this.readVramWord(scb1Base);
       const w1 = this.readVramWord(scb1Base + 1);
       const tc = w0 | ((w1 & 0xF0) << 12);
-      const scb4 = this.readVramWord(NGO_SCB4_BASE + i);
-      const x = (scb4 >> 7) & 0x1FF;
+      const pal = (w1 >> 8) & 0xFF;
 
-      if (tc === 0 && height === 1) { zeroTile++; continue; }
+      if (tc === 0 && size === 0) continue;
       active++;
 
-      const tileOff = tc * NGO_TILE_BYTES;
-      if (tileOff + NGO_TILE_BYTES > romSize) outOfBounds++;
-
-      if (!sticky || !currentChain) {
-        if (currentChain) chains.push(currentChain);
-        const yVirt = (0x200 - (scb3 >> 7)) & 0x1FF;
-        const y = yVirt - VLINE_TOP;
-        currentChain = { master: i, length: 1, x, y, tiles: [tc] };
+      if (!sticky || !cur) {
+        if (cur) chains.push(cur);
+        cur = {
+          master: i, width: 1, x, yRaw, screenY: yRaw - VLINE_TOP,
+          size, yZoom, xZoom, tiles: [tc], palettes: [pal],
+        };
       } else {
-        currentChain.length++;
-        currentChain.tiles.push(tc);
+        cur.width++;
+        cur.tiles.push(tc);
+        cur.palettes.push(pal);
       }
     }
-    if (currentChain) chains.push(currentChain);
+    if (cur) chains.push(cur);
 
-    console.log(`[NeoGeo Sprite Diag] Active: ${active}, Zero: ${zeroTile}, OutOfBounds: ${outOfBounds}`);
-    console.log(`[NeoGeo Sprite Diag] Chains: ${chains.length}`);
+    console.log(`[Sprite Diag] ${active} active, ${chains.length} chains, ROM=${(romSize / 1024) | 0}KB (${maxTile} tiles)`);
+    console.log(`[Sprite Diag] L0 zoom ROM: ${this.zoomRom.length >= 0x10000 ? 'loaded' : 'fallback'}`);
 
-    // Show first 20 non-trivial chains
-    const interesting = chains.filter(c => c.tiles.some(t => t !== 0));
-    for (const c of interesting.slice(0, 20)) {
-      const oob = c.tiles.filter(t => t * NGO_TILE_BYTES + NGO_TILE_BYTES > romSize).length;
-      console.log(`  Sprite ${c.master}: chain=${c.length}, x=${c.x}, y=${c.y}, tiles=[${c.tiles.slice(0, 8).join(',')}${c.tiles.length > 8 ? '...' : ''}], OOB=${oob}`);
+    // Show all chains with size > 0 (fighters may have tile[0]=0 with data in later tiles)
+    const rendered = chains.filter(c => c.size > 0);
+    console.log(`[Sprite Diag] ${rendered.length} chains with size>0`);
+
+    for (const c of rendered) {
+      // Read up to 4 tiles deep per first sprite column to find actual tile data
+      const scb1 = NGO_SCB1_BASE + c.master * 64;
+      const deepTiles: string[] = [];
+      for (let t = 0; t < Math.min(c.size, 4); t++) {
+        const w0 = this.readVramWord(scb1 + t * 2);
+        const w1 = this.readVramWord(scb1 + t * 2 + 1);
+        const tc = w0 | ((w1 & 0xF0) << 12);
+        deepTiles.push(`0x${tc.toString(16)}`);
+      }
+
+      const tileStr = c.tiles.slice(0, 6).map(t => `0x${t.toString(16)}`).join(',');
+      const extra = c.tiles.length > 6 ? `...(${c.tiles.length})` : '';
+      console.log(
+        `  #${c.master}: w=${c.width} x=${c.x} yRaw=${c.yRaw} scrY=${c.screenY}` +
+        ` size=${c.size} yZoom=0x${c.yZoom.toString(16).toUpperCase()} xZoom=${c.xZoom}` +
+        ` pal=${c.palettes[0]} cols=[${tileStr}${extra}] depth=[${deepTiles.join(',')}]`
+      );
     }
   }
 
