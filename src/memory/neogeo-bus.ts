@@ -8,8 +8,8 @@
  *   0x300000-0x300001 : Port P1 (joystick + A/B/C/D, active LOW)
  *   0x300080-0x300081 : REG_DIPSW
  *   0x320000-0x320001 : REG_SOUND (read=Z80 reply, write=Z80 command)
- *   0x340000-0x340001 : Port system (start, coin, select)
- *   0x380000-0x380001 : REG_STATUS_B (MVS/AES flag)
+ *   0x340000-0x340001 : REG_STATUS_A (P2 joystick)
+ *   0x380000-0x380001 : REG_STATUS_B (system starts/selects)
  *   0x3A0000-0x3A001F : Control registers (watchdog, IRQ ack)
  *   0x3C0000-0x3C000F : LSPC registers (VRAM addr/data/mod, timer, IRQ)
  *   0x400000-0x401FFF : Palette RAM (8KB)
@@ -214,12 +214,30 @@ export class NeoGeoBus implements BusInterface {
     return 0;
   }
 
+  // Debug: trace VRAM writes to SCB2/3/4 for specific sprites
+  private _vramTraceSprites: Set<number> | null = null;
+  enableVramTrace(spriteIndices: number[]): void {
+    this._vramTraceSprites = new Set(spriteIndices);
+    console.log(`[VRAM Trace] Watching sprites: ${spriteIndices.join(',')}`);
+  }
+  disableVramTrace(): void { this._vramTraceSprites = null; }
+
   /** Write VRAM word at given address */
   writeVramWord(addr: number, value: number): void {
-    const off = (addr & 0xFFFF) * 2;
+    const a = addr & 0xFFFF;
+    const off = a * 2;
     if (off + 1 < this.vram.length) {
       this.vram[off] = (value >> 8) & 0xFF;
       this.vram[off + 1] = value & 0xFF;
+    }
+    // Trace ALL SCB2 writes (zoom values) — log only non-full-zoom writes
+    if (this._vramTraceSprites) {
+      if (a >= 0x8000 && a < 0x8200) {
+        const sprIdx = a - 0x8000;
+        const xz = (value >> 8) & 0xF;
+        const yz = value & 0xFF;
+        console.log(`[VRAM] SCB2[${sprIdx}] = 0x${value.toString(16).padStart(4,'0')} xZoom=${xz} yZoom=${yz}`);
+      }
     }
   }
 
@@ -252,8 +270,9 @@ export class NeoGeoBus implements BusInterface {
     }
 
     // Port P1: 0x300000-0x300001
+    // FBNeo: even byte = P1 joystick+buttons, odd byte = test/service (MVS) or 0xFF
     if (address >= 0x300000 && address <= 0x300001) {
-      return (address & 1) ? this.portP1 : 0xFF;
+      return (address & 1) ? 0xFF : this.portP1;
     }
 
     // REG_DIPSW: 0x300080-0x300081
@@ -279,20 +298,21 @@ export class NeoGeoBus implements BusInterface {
         }
         return this.soundLatchFromZ80 & 0x7F; // bit 7 masked while pending
       }
-      // Low byte: bits 7-6 = pd4990a (DO, TP), bits 5-0 = 0x3F (inputs)
+      // Low byte: bits 7-6 = pd4990a (DO, TP), bits 5-0 = coin/service inputs
       const rtcBits = this.rtc.read(); // bit 1 = DO, bit 0 = TP
-      return 0x3F | ((rtcBits & 3) << 6); // map to bits 7-6
+      return (this.portCoins & 0x3F) | ((rtcBits & 3) << 6);
     }
 
-    // REG_STATUS_A: 0x340000-0x340001 (P2 + system starts/selects)
+    // REG_STATUS_A: 0x340000-0x340001 (P2 joystick only)
+    // FBNeo: even byte = P2 joystick+buttons, odd byte = 0xFF
     if (address >= 0x340000 && address <= 0x340001) {
-      return (address & 1) ? this.portSystem : this.portP2;
+      return (address & 1) ? 0xFF : this.portP2;
     }
 
     // REG_STATUS_B: 0x380000-0x380001
-    // Even: bit 7: 0=MVS, 1=AES. Odd: Coin1/Coin2/Service (active LOW)
+    // FBNeo: even byte = system (starts/selects), odd byte = 0xFF
     if (address >= 0x380000 && address <= 0x380001) {
-      return (address & 1) ? this.portCoins : 0x00;
+      return (address & 1) ? 0xFF : this.portSystem;
     }
 
     // LSPC registers: 0x3C0000-0x3C000F (read)
@@ -463,9 +483,22 @@ export class NeoGeoBus implements BusInterface {
     }
   }
 
+  private _lspcByteBuffer: number = -1; // pending high byte for byte-pair writes
   private writeLspc(address: number, value: number): void {
-    // Byte writes to LSPC are unusual — typically word writes
-    // Buffer and handle via writeLspcWord when second byte arrives
+    // Log byte writes — they may be critical for VRAM addressing
+    if (this._vramTraceSprites) {
+      console.log(`[LSPC BYTE] addr=0x${address.toString(16)} val=0x${value.toString(16).padStart(2,'0')}`);
+    }
+    // Buffer byte writes and assemble into word when both bytes arrive
+    if (!(address & 1)) {
+      // Even byte (high byte) — buffer it
+      this._lspcByteBuffer = value;
+    } else if (this._lspcByteBuffer >= 0) {
+      // Odd byte (low byte) — assemble word and dispatch
+      const word = (this._lspcByteBuffer << 8) | value;
+      this._lspcByteBuffer = -1;
+      this.writeLspcWord(address & 0xFFFFFE, word);
+    }
   }
 
   private writeLspcWord(address: number, value: number): void {

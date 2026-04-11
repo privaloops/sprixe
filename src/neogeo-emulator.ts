@@ -314,9 +314,16 @@ export class NeoGeoEmulator {
     this.audioOutput.suspend();
   }
 
-  pause(): void { this.paused = !this.paused; }
-  isPaused(): boolean { return this.paused; }
-  isRunning(): boolean { return this.running; }
+  pause(): void {
+    if (!this.running) return;
+    this.paused = true;
+  }
+  resume(): void {
+    if (!this.running || !this.paused) return;
+    this.paused = false;
+  }
+  isPaused(): boolean { return this.running && this.paused; }
+  isRunning(): boolean { return this.running && !this.paused; }
 
   setVblankCallback(cb: () => void): void { this._vblankCallback = cb; }
 
@@ -497,17 +504,17 @@ export class NeoGeoEmulator {
                   (a2 << 4) | (b2 << 5) | (c2 << 6) | (d2 << 7);
     this.bus.setPortP2(p2Neo);
 
-    // System: Start/Select at 0x340001
+    // System port at 0x380000: bit0=Start1, bit1=Select1, bit2=Start2, bit3=Select2
     const sys = this.input.readPort(4);
     const start1 = (sys >> 4) & 1;  // CPS1 bit 4
     const start2 = (sys >> 5) & 1;  // CPS1 bit 5
-    const sysNeo = 0xFC | start1 | (start2 << 1); // bits 2-7 = 1 (released)
+    const sysNeo = 0xFA | start1 | (start2 << 2); // select1/2 = 1 (released)
     this.bus.setPortSystem(sysNeo);
 
-    // Coins at 0x380001
+    // Coins at 0x320001: bit0=Coin1, bit1=Coin2, bit2=Service (active LOW)
     const coin1 = (sys >> 0) & 1;   // CPS1 bit 0
     const coin2 = (sys >> 1) & 1;   // CPS1 bit 1
-    const coinsNeo = 0xF8 | coin1 | (coin2 << 1); // bit 2=service(released)
+    const coinsNeo = 0x3C | coin1 | (coin2 << 1); // service=1, bits 3-5=1
     this.bus.setPortCoins(coinsNeo);
   }
 

@@ -83,29 +83,32 @@ describe('NeoGeoBus', () => {
   });
 
   describe('I/O ports', () => {
-    it('reads P1 port (active LOW, default all released)', () => {
+    it('reads P1 port at even byte (active LOW, default all released)', () => {
       const bus = new NeoGeoBus();
-      // Default: 0xFF (all buttons released)
+      // P1 at 0x300000 (even byte), odd returns 0xFF
+      expect(bus.read8(0x300000)).toBe(0xFF);
       expect(bus.read8(0x300001)).toBe(0xFF);
     });
 
-    it('reflects P1 port changes', () => {
+    it('reflects P1 port changes at even byte', () => {
       const bus = new NeoGeoBus();
       bus.setPortP1(0xFE); // button A pressed (bit 0 low)
-      expect(bus.read8(0x300001)).toBe(0xFE);
+      expect(bus.read8(0x300000)).toBe(0xFE);
+      expect(bus.read8(0x300001)).toBe(0xFF); // odd = unused
     });
 
-    it('reads P2 port via REG_STATUS_A', () => {
+    it('reads P2 port via REG_STATUS_A even byte', () => {
       const bus = new NeoGeoBus();
       bus.setPortP2(0xFD);
-      // P2 is in the high byte of REG_STATUS_A (0x340000)
       expect(bus.read8(0x340000)).toBe(0xFD);
+      expect(bus.read8(0x340001)).toBe(0xFF); // odd = unused
     });
 
-    it('reads system port', () => {
+    it('reads system port at 0x380000 (starts/selects)', () => {
       const bus = new NeoGeoBus();
       bus.setPortSystem(0xFB);
-      expect(bus.read8(0x340001)).toBe(0xFB);
+      expect(bus.read8(0x380000)).toBe(0xFB);
+      expect(bus.read8(0x380001)).toBe(0xFF); // odd = unused
     });
 
     it('reads and writes memory card RAM', () => {

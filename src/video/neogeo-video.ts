@@ -96,6 +96,12 @@ export interface SpriteGroup {
 const VLINE_TOP = 0x10;   // first visible line (16)
 const VLINE_BOT = 0xF0;   // first line below visible area (240)
 
+// X zoom bitmasks (from MAME): each entry selects which of 16 source pixels to draw
+const ZOOM_X_TABLES: readonly number[] = [
+  0x0080, 0x0880, 0x0888, 0x2888, 0x288a, 0x2a8a, 0x2aaa, 0xaaaa,
+  0xaaea, 0xbaea, 0xbaeb, 0xbbeb, 0xbbef, 0xfbef, 0xfbff, 0xffff,
+];
+
 export class NeoGeoVideo {
   private vram: Uint8Array;
   private spritesRom: Uint8Array;
@@ -307,6 +313,7 @@ export class NeoGeoVideo {
   private readonly sprYRaw = new Uint16Array(NGO_MAX_SPRITES + 1);  // Y in 512-line space
   private readonly sprSize = new Uint8Array(NGO_MAX_SPRITES + 1);   // raw size (0-63)
   private readonly sprYZoom = new Uint8Array(NGO_MAX_SPRITES + 1);  // vertical shrink (0-255)
+  private readonly sprXZoom = new Uint8Array(NGO_MAX_SPRITES + 1);  // horizontal zoom (0-15)
 
   /** Prepare framebuffer for a new frame (clear + palette). Call once before renderSlice(). */
   beginFrame(): void {
@@ -324,7 +331,7 @@ export class NeoGeoVideo {
 
     // Forward pass: hardware maintains running X/Y/size registers across sticky chains
     let chainX = 0, chainYRaw = 0, chainSize = 0, chainYZoom = 0;
-    let prevXZoom = 0;
+    let xZoom = 0;
     for (let i = 1; i <= NGO_MAX_SPRITES; i++) {
       const scb2 = this.readVramWord(NGO_SCB2_BASE + i);
       const scb3 = this.readVramWord(NGO_SCB3_BASE + i);
@@ -337,18 +344,17 @@ export class NeoGeoVideo {
         const scb4 = this.readVramWord(NGO_SCB4_BASE + i);
         chainX = (scb4 >> 7) & 0x1FF;
         if (chainX >= 0x1E0) chainX -= 0x200;
+        xZoom = (scb2 >> 8) & 0x0F;
       } else {
-        chainX += prevXZoom + 1;
-      }
-
-      if (chainSize > 0) {
-        prevXZoom = (scb2 >> 8) & 0x0F;
+        chainX += xZoom + 1;
+        xZoom = (scb2 >> 8) & 0x0F;
       }
 
       this.sprX[i] = chainX;
       this.sprYRaw[i] = chainYRaw;
       this.sprSize[i] = chainSize;
       this.sprYZoom[i] = chainYZoom;
+      this.sprXZoom[i] = xZoom;
     }
 
     for (let i = 1; i <= NGO_MAX_SPRITES; i++) {
@@ -386,11 +392,13 @@ export class NeoGeoVideo {
     const yRaw = this.sprYRaw[index]!;
     const size = this.sprSize[index]!;
     const yZoom = this.sprYZoom[index]!;
+    const xZoom = this.sprXZoom[index]!;
 
     if (size === 0) return;
     if (index >= this._dbgHideFrom && index < this._dbgHideTo) return;
 
     const scb1Base = NGO_SCB1_BASE + index * 64;
+    const zoomXMask = ZOOM_X_TABLES[xZoom]!;
     const zoomTbl = this.zoomRom;
     const zoomOff = yZoom << 8;
     // Total virtual lines this sprite occupies (wraps full space when size >= 32)
@@ -417,41 +425,34 @@ export class NeoGeoVideo {
       // Clamp to slice range [y0, y1)
       if (screenY < y0 || screenY >= y1) { line++; continue; }
 
-      // Which half of the sprite column (0-15 or 16-31 in tile indices)
-      let tileBase = line >= 0x100 ? 16 : 0;
-      let zIdx = line & 0xFF;
+      // MAME algorithm: inversion-based tile/row mapping
+      let zoomLine = line & 0xFF;
+      let invert = line >= 0x100;
+      if (invert) zoomLine ^= 0xFF;
 
-      // Multi-section sprites with zoom: handle the gap between zoomed halves
-      if (size > 0x10 && yZoom < 0xFF) {
-        const gap = 0xFF - yZoom;
-        if (size <= 0x20) {
-          // Two-section: skip the empty zone in the second half
-          if (line >= 0x100) {
-            if (zIdx < gap) { line += gap - zIdx; continue; }
-            zIdx -= gap;
-          }
-        } else {
-          // Full-strip: tiles wrap continuously via modulo
-          if (line >= 0x100) {
-            zIdx -= gap;
-            if (zIdx < 0) {
-              zIdx = yZoom - (-zIdx - 1) % (yZoom + 1);
-              tileBase = 0;
-            }
-          } else if (zIdx > yZoom) {
-            zIdx = zIdx % (yZoom + 1);
-            tileBase = 16;
-          }
+      // Full-strip sprites (size > 32): continuous wrapping via modulo
+      if (size > 0x20) {
+        const period = (yZoom + 1) << 1;
+        zoomLine = zoomLine % period;
+        if (zoomLine > yZoom) {
+          zoomLine = period - 1 - zoomLine;
+          invert = !invert;
         }
       }
 
       // Beyond the zoom range for this level — nothing to draw
-      if (zIdx > yZoom) { line++; continue; }
+      if (zoomLine > yZoom) { line++; continue; }
 
       // Look up the shrink table: which source tile and row to render
-      const entry = zoomTbl[zoomOff + zIdx]!;
-      const tileIdx = tileBase + (entry >> 4);
-      const tileRow = entry & 0x0F;
+      const entry = zoomTbl[zoomOff + zoomLine]!;
+      let tileIdx = entry >> 4;
+      let tileRow = entry & 0x0F;
+
+      // Inversion flips tile index across full 0-31 range and row within tile
+      if (invert) {
+        tileIdx ^= 0x1F;
+        tileRow ^= 0x0F;
+      }
 
       // Read tile from SCB1 (cached until tile changes)
       if (tileIdx !== cachedTile) {
@@ -475,15 +476,23 @@ export class NeoGeoVideo {
       decodeNeoGeoRow(rom, tileOff + fy * 4, halfBuf, 0);
       for (let i = 0; i < 8; i++) fullRow[8 + i] = halfBuf[i]!;
 
-      // Blit 16 source pixels to framebuffer
+      // Blit with X zoom: bitmask selects which of 16 source pixels to output
       const rowBase = screenY * NGO_SCREEN_WIDTH;
+      let zxBit = zoomXMask;
+      let outX = x;
+      const xInc = flipH ? -1 : 1;
+      let srcStart = flipH ? 15 : 0;
       for (let p = 0; p < 16; p++) {
-        const colorIdx = fullRow[p]!;
-        if (colorIdx === 0) continue;
-        const px = flipH ? (x + 15 - p) : (x + p);
-        if (px >= 0 && px < NGO_SCREEN_WIDTH) {
-          fb32[rowBase + px] = this.paletteCache[palBase + colorIdx]!;
+        if (zxBit & 0x8000) {
+          const colorIdx = fullRow[srcStart]!;
+          if (colorIdx !== 0 && outX >= 0 && outX < NGO_SCREEN_WIDTH) {
+            fb32[rowBase + outX] = this.paletteCache[palBase + colorIdx]!;
+          }
+          outX++;
         }
+        zxBit = (zxBit << 1) & 0xFFFF;
+        if (zxBit === 0) break;
+        srcStart += xInc;
       }
 
       line++;
