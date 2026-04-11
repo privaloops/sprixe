@@ -74,6 +74,12 @@ export class NeoGeoBus implements BusInterface {
   // Total 68K cycles accumulated (for RTC tick counting)
   private totalCycles = 0;
 
+  // Watchdog timer: counts down each VBlank, triggers reset at 0.
+  // MAME: 3244030 ticks / 24MHz = ~0.135s ≈ 8 frames at 59.185 Hz.
+  // Kicked by writing to 0x300001 (MAME: watchdog_timer_device).
+  private watchdogCounter: number = 8;
+  private _watchdogResetCallback: (() => void) | null = null;
+
   // P-ROM banking: 0x200000-0x2FFFFF region
   // Default = 0 (mirror of P-ROM start). For games > 1MB, bank switch changes this.
   private pRomBankOffset: number = 0;
@@ -127,6 +133,7 @@ export class NeoGeoBus implements BusInterface {
     // but our Z80 emulation doesn't reach the OUT instruction during init.
     this.soundLatchFromZ80 = 0xC3;
     this.soundCommandPending = false;
+    this.watchdogCounter = 8;
   }
 
   getVram(): Uint8Array { return this.vram; }
@@ -158,6 +165,28 @@ export class NeoGeoBus implements BusInterface {
   /** Called when 68K writes a sound command */
   markSoundCommandPending(): void {
     this.soundCommandPending = true;
+  }
+
+  /** Register callback for watchdog-triggered system reset */
+  setWatchdogResetCallback(cb: () => void): void {
+    this._watchdogResetCallback = cb;
+  }
+
+  /** Tick watchdog — call once per VBlank. Returns true if reset triggered. */
+  tickWatchdog(): boolean {
+    if (this.watchdogCounter > 0) {
+      this.watchdogCounter--;
+      if (this.watchdogCounter === 0) {
+        this._watchdogResetCallback?.();
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Kick watchdog (reset counter to 8 frames). Called on write to 0x300001. */
+  private kickWatchdog(): void {
+    this.watchdogCounter = 8;
   }
 
   /** Set I/O port values (called by InputManager) */
@@ -314,9 +343,10 @@ export class NeoGeoBus implements BusInterface {
     }
 
     // REG_STATUS_B: 0x380000-0x380001
-    // FBNeo: even byte = system (starts/selects), odd byte = 0xFF
+    // Even byte: bit 7 = MVS/AES (0=MVS, 1=AES), bits 0-6 = starts/selects
     if (address >= 0x380000 && address <= 0x380001) {
-      return (address & 1) ? 0xFF : this.portSystem;
+      if (address & 1) return 0xFF;
+      return (this.portSystem & 0x7F) | (this.portStatus & 0x80);
     }
 
     // LSPC registers: 0x3C0000-0x3C000F (read)
@@ -377,6 +407,13 @@ export class NeoGeoBus implements BusInterface {
     // Work RAM: 0x100000-0x10FFFF
     if (address >= 0x100000 && address <= 0x10FFFF) {
       this.workRam[address - 0x100000] = value;
+      return;
+    }
+
+    // Watchdog kick: write to 0x300001 (odd byte, mirrored 0x300000-0x31FFFF)
+    // MAME: map(0x300001).mirror(0x01fffe).w("watchdog", reset_w)
+    if (address >= 0x300000 && address <= 0x31FFFF && (address & 1)) {
+      this.kickWatchdog();
       return;
     }
 

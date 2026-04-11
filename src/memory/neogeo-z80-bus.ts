@@ -51,6 +51,9 @@ export class NeoGeoZ80Bus implements Z80BusInterface {
   // Simulated YM2610 timer counter (for when no real YM2610 is connected)
   private ym2610TimerCounter: number;
 
+  // ROM banking: BIOS vs game M-ROM at 0x0000-0x7FFF
+  private useGameRom: boolean = false;
+
   // Reply to 68K
   private onSoundReply: ((value: number) => void) | null;
   // Called when Z80 reads port 0x00 (consumes sound command)
@@ -80,6 +83,9 @@ export class NeoGeoZ80Bus implements Z80BusInterface {
 
   loadAudioRom(data: Uint8Array): void { this.audioRom = data; }
   loadBiosRom(data: Uint8Array): void { this.biosRom = data; }
+
+  /** Switch Z80 fixed ROM at 0x0000-0x7FFF between BIOS and game M-ROM */
+  setUseGameRom(useGame: boolean): void { this.useGameRom = useGame; }
 
   setYm2610WriteCallback(cb: (port: number, value: number) => void): void {
     this.onYm2610Write = cb;
@@ -132,7 +138,9 @@ export class NeoGeoZ80Bus implements Z80BusInterface {
     // It contains the bootloader that copies the game M-ROM into Work RAM.
     // If no BIOS ROM available, fall back to game M-ROM directly.
     if (address <= 0x7FFF) {
-      const rom = this.biosRom.length > 0 ? this.biosRom : this.audioRom;
+      // BIOS ROM at boot, game M-ROM after REG_BRDFIX switch (0x3A001B)
+      const rom = (this.useGameRom || this.biosRom.length === 0)
+        ? this.audioRom : this.biosRom;
       return address < rom.length ? rom[address]! : 0xFF;
     }
 

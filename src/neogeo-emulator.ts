@@ -207,15 +207,34 @@ export class NeoGeoEmulator {
     // Initialize audio worker
     await this.initAudioWorker(romSet);
 
+    // Configure MVS mode (arcade board) — affects BIOS boot path
+    this.bus.setMvsMode(true);
+
     // Reset bus and CPUs
     this.bus.resetBus();
+
     this.m68000.reset();
     this.z80.reset();
 
+    // Assert IRQ3 (coldboot) on first frame — MAME: m_irq3_pending = 1
+    // The BIOS IRQ3 handler initializes the system on first boot.
+    this.bus.assertIrq(3);
+
+
+    // Watchdog reset: full soft reset when watchdog expires
+    this.bus.setWatchdogResetCallback(() => {
+      console.log('[Neo-Geo] Watchdog reset triggered');
+      this.bus.resetBus();
+      this.m68000.reset();
+      this.z80.reset();
+    });
 
     // Wire ROM banking callbacks
     this.bus.setFixRomSwitchCallback((useBios) => {
       this.video.setFixRomMode(useBios);
+    });
+    this.bus.setZ80RomSwitchCallback((useBios) => {
+      this.z80Bus.setUseGameRom(!useBios);
     });
 
     // Initialize YM2610 on main thread for Z80 sound handshake
@@ -387,11 +406,13 @@ export class NeoGeoEmulator {
 
         this.bus.assertIrq(1); // IRQ1 = VBlank
 
+        // Watchdog: decrement each VBlank, reset system if expired
+        this.bus.tickWatchdog();
+
         this._vblankCallback?.();
       }
 
-      // No coldboot IRQ3 — FBNeo doesn't fire it. The BIOS reset vector
-      // handles initialization, VBlank IRQ1 drives the boot state machine.
+      // IRQ3 (coldboot) is asserted once at loadRom() — not per-frame.
 
       // Timer tick — flush slice before IRQ2 handler modifies VRAM
       const timerFired = this.bus.tickTimer();
