@@ -236,6 +236,9 @@ export class NeoGeoEmulator {
     this.bus.setZ80RomSwitchCallback((useBios) => {
       this.z80Bus.setUseGameRom(!useBios);
     });
+    this.bus.setPaletteBankCallback((bank) => {
+      this.video.setPaletteBank(bank);
+    });
 
     // Initialize YM2610 on main thread for Z80 sound handshake
     try {

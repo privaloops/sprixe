@@ -109,7 +109,8 @@ export class NeoGeoVideo {
   private biosFixedRom: Uint8Array;
   private zoomRom: Uint8Array;       // L0 ROM (000-lo.lo) — shrink lookup table
   private paletteRam: Uint8Array;
-  private paletteCache: Uint32Array;  // 4096 entries, decoded ABGR
+  private paletteCache: Uint32Array;  // 4096 entries, decoded ABGR (active bank)
+  private paletteBankOffset: number;  // 0 or 0x2000 bytes (matches bus bank)
   private fb: Uint8Array;             // 320x224x4 RGBA
   private fb32: Uint32Array;          // same buffer as Uint32Array view
   private paletteDirty: boolean;
@@ -124,8 +125,9 @@ export class NeoGeoVideo {
     this.fixedRom = new Uint8Array(0);
     this.biosFixedRom = new Uint8Array(0);
     this.zoomRom = NeoGeoVideo.buildDefaultZoomTable();
-    this.paletteRam = new Uint8Array(0x2000); // 8KB
+    this.paletteRam = new Uint8Array(0x4000); // 16KB (2 banks)
     this.paletteCache = new Uint32Array(4096);
+    this.paletteBankOffset = 0;
     const buffer = new ArrayBuffer(NGO_SCREEN_WIDTH * NGO_SCREEN_HEIGHT * 4);
     this.fb = new Uint8Array(buffer);
     this.fb32 = new Uint32Array(buffer);
@@ -208,14 +210,24 @@ export class NeoGeoVideo {
   // ---------------------------------------------------------------------------
 
   private rebuildPaletteCache(): void {
+    const off = this.paletteBankOffset;
     for (let i = 0; i < 4096; i++) {
-      const word = (this.paletteRam[i * 2]! << 8) | this.paletteRam[i * 2 + 1]!;
+      const word = (this.paletteRam[off + i * 2]! << 8) | this.paletteRam[off + i * 2 + 1]!;
       this.paletteCache[i] = decodeNeoGeoColor(word);
     }
     this.paletteDirty = false;
   }
 
   markPaletteDirty(): void { this.paletteDirty = true; }
+
+  /** Switch active palette bank (0 or 1). MAME: set_palette_bank. */
+  setPaletteBank(bank: number): void {
+    const newOffset = bank ? 0x2000 : 0;
+    if (newOffset !== this.paletteBankOffset) {
+      this.paletteBankOffset = newOffset;
+      this.paletteDirty = true;
+    }
+  }
 
   // ---------------------------------------------------------------------------
   // Sprite entry reading

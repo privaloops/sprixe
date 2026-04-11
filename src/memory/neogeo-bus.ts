@@ -26,7 +26,8 @@ export class NeoGeoBus implements BusInterface {
   private biosRom: Uint8Array;
   private workRam: Uint8Array;        // 64KB
   private backupRam: Uint8Array;      // 64KB BIOS SRAM
-  private paletteRam: Uint8Array;     // 8KB (4096 x 16-bit words)
+  private paletteRam: Uint8Array;     // 16KB (2 banks × 4096 × 16-bit words)
+  private paletteBankOffset: number = 0; // 0 or 0x2000 bytes (0x1000 words)
   private vram: Uint8Array;           // 68KB VRAM (accessed indirectly)
   private memCardRam: Uint8Array;     // 4KB memory card RAM
 
@@ -94,7 +95,7 @@ export class NeoGeoBus implements BusInterface {
     this.biosRom = new Uint8Array(0);
     this.workRam = new Uint8Array(0x10000);   // 64KB
     this.backupRam = new Uint8Array(0x10000); // 64KB
-    this.paletteRam = new Uint8Array(0x2000); // 8KB
+    this.paletteRam = new Uint8Array(0x4000); // 16KB (2 banks)
     this.vram = new Uint8Array(0x11000);      // ~68KB (slow 64KB + fast ~4KB)
     this.memCardRam = new Uint8Array(0x1000); // 4KB memory card
     // pd4990a RTC — uses 68K cycle count for timing
@@ -354,9 +355,9 @@ export class NeoGeoBus implements BusInterface {
       return this.readLspc(address);
     }
 
-    // Palette RAM: 0x400000-0x401FFF
+    // Palette RAM: 0x400000-0x401FFF (banked, 2 × 8KB)
     if (address >= 0x400000 && address <= 0x401FFF) {
-      return this.paletteRam[address - 0x400000]!;
+      return this.paletteRam[this.paletteBankOffset + (address - 0x400000)]!;
     }
 
     // Memory card RAM: 0x800000-0x800FFF (2KB, only odd bytes used)
@@ -444,9 +445,9 @@ export class NeoGeoBus implements BusInterface {
       return;
     }
 
-    // Palette RAM: 0x400000-0x401FFF
+    // Palette RAM: 0x400000-0x401FFF (banked, 2 × 8KB)
     if (address >= 0x400000 && address <= 0x401FFF) {
-      this.paletteRam[address - 0x400000] = value;
+      this.paletteRam[this.paletteBankOffset + (address - 0x400000)] = value;
       return;
     }
 
@@ -596,12 +597,14 @@ export class NeoGeoBus implements BusInterface {
   // Control register writes (0x3A0000-0x3A001F)
   // ---------------------------------------------------------------------------
 
-  // Callbacks for ROM banking (set by emulator)
+  // Callbacks for ROM banking and palette (set by emulator)
   private _onFixRomSwitch: ((useBios: boolean) => void) | null = null;
   private _onZ80RomSwitch: ((useBios: boolean) => void) | null = null;
+  private _onPaletteBankSwitch: ((bank: number) => void) | null = null;
 
   setFixRomSwitchCallback(cb: (useBios: boolean) => void): void { this._onFixRomSwitch = cb; }
   setZ80RomSwitchCallback(cb: (useBios: boolean) => void): void { this._onZ80RomSwitch = cb; }
+  setPaletteBankCallback(cb: (bank: number) => void): void { this._onPaletteBankSwitch = cb; }
 
   private writeControlReg(address: number, _value: number): void {
     // Control registers per FBNeo WriteIO2 (odd byte addresses)
@@ -620,7 +623,9 @@ export class NeoGeoBus implements BusInterface {
         break;
       case 0x0D: // SRAM write protect
         break;
-      case 0x0F: // Palette bank 1
+      case 0x0F: // Palette bank 1 (HC259 Q7 set)
+        this.paletteBankOffset = 0x2000;
+        this._onPaletteBankSwitch?.(1);
         break;
       case 0x11: // Shadow on (darken palette)
         break;
@@ -633,7 +638,9 @@ export class NeoGeoBus implements BusInterface {
         break;
       case 0x1D: // SRAM write enable
         break;
-      case 0x1F: // Palette bank 0
+      case 0x1F: // Palette bank 0 (HC259 Q7 clear)
+        this.paletteBankOffset = 0;
+        this._onPaletteBankSwitch?.(0);
         break;
       default:
         break;

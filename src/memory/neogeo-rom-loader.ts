@@ -121,11 +121,16 @@ export function assembleProgramRom(
   entries: NeoGeoRomEntry[],
   fileMap: Map<string, Uint8Array>,
 ): Uint8Array {
-  // Calculate total size from entries
+  // Calculate total size from entries — account for ROM_CONTINUE (file > declared size)
   let totalSize = 0;
   for (const entry of entries) {
-    const end = entry.offset + entry.size;
-    if (end > totalSize) totalSize = end;
+    const data = fileMap.get(entry.name.toLowerCase());
+    const fileSize = data?.length ?? entry.size;
+    // If file is larger than declared size, the continuation fills offset 0
+    const effectiveEnd = entry.offset + entry.size;
+    if (effectiveEnd > totalSize) totalSize = effectiveEnd;
+    // ROM_CONTINUE: extra data from the file goes to offset 0
+    if (fileSize > entry.size && fileSize > totalSize) totalSize = fileSize;
   }
   const result = new Uint8Array(totalSize);
 
@@ -134,11 +139,20 @@ export function assembleProgramRom(
     if (data === undefined) continue;
 
     if (entry.loadFlag === 'load16_word_swap') {
-      // Swap each pair of bytes (big-endian word swap)
+      // Load declared portion at entry.offset
       const len = Math.min(data.length, entry.size);
       for (let i = 0; i < len; i += 2) {
         result[entry.offset + i] = data[i + 1] ?? 0;
         result[entry.offset + i + 1] = data[i] ?? 0;
+      }
+      // ROM_CONTINUE: if file has more data than declared, load remainder at offset 0
+      // MAME pattern: ROM_LOAD16_WORD_SWAP at 0x100000 + ROM_CONTINUE at 0x000000
+      if (data.length > entry.size) {
+        const remaining = Math.min(data.length - entry.size, entry.offset);
+        for (let i = 0; i < remaining; i += 2) {
+          result[i] = data[entry.size + i + 1] ?? 0;
+          result[i + 1] = data[entry.size + i] ?? 0;
+        }
       }
     } else {
       // Linear copy
