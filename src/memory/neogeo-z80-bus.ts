@@ -267,6 +267,15 @@ export class NeoGeoZ80Bus implements Z80BusInterface {
   // State management
   // ---------------------------------------------------------------------------
 
+  /** Reset latch + NMI state (call after Z80 reset to avoid stuck NMI) */
+  resetLatchState(): void {
+    this.soundLatchValue = 0;
+    this.soundLatchQueue.length = 0;
+    this.soundLatchPending = false;
+    this.nmiPulse = false;
+    this.nmiEnabled = true;
+  }
+
   getState(): NeoGeoZ80BusState {
     return {
       currentBank: this.currentBank,

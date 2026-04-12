@@ -142,4 +142,5 @@ export class YM2610Wasm {
   setIrqCallback(cb: (asserted: boolean) => void): void {
     this.irqCallback = cb;
   }
+
 }

@@ -36,6 +36,7 @@ import {
   NGO_FRAMEBUFFER_SIZE,
   NGO_M68K_CYCLES_PER_SCANLINE,
   NGO_Z80_CLOCK,
+  NGO_YM2610_CLOCK,
   NGO_VTOTAL,
   NGO_VBLANK_LINE,
   NGO_FRAME_RATE,
@@ -46,6 +47,7 @@ import {
 // ── Timing ────────────────────────────────────────────────────────────────
 
 const FRAME_MS = 1000 / NGO_FRAME_RATE;
+const YM_CLOCK_RATIO = NGO_YM2610_CLOCK / NGO_Z80_CLOCK; // 8 MHz / 4 MHz = 2
 
 // ── Emulator ──────────────────────────────────────────────────────────────
 
@@ -280,6 +282,12 @@ export class NeoGeoEmulator {
     });
     this.bus.setZ80RomSwitchCallback((useBios) => {
       this.z80Bus.setUseGameRom(!useBios);
+      console.log(`[Neo-Geo] Z80 ROM switch: useBios=${useBios} → useGameRom=${!useBios}, worker=${!!this.audioWorker}, workerReady=${this.audioWorkerReady}`);
+      // Forward ROM switch to audio worker — the worker Z80 must also
+      // switch from BIOS to game M-ROM to execute the sound driver.
+      if (this.audioWorker) {
+        this.audioWorker.postMessage({ type: 'rom-switch', useGameRom: !useBios });
+      }
     });
     this.bus.setPaletteBankCallback((bank) => {
       this.video.setPaletteBank(bank);
@@ -308,10 +316,12 @@ export class NeoGeoEmulator {
         if (this.z80Bus.shouldFireNmi()) this.z80.nmi();
         const ran = this.z80.step();
         cycles -= ran;
-        // Clock YM2610 + check IRQ
+        // Clock YM2610 at 8 MHz (2× Z80's 4 MHz) + check IRQ
         if (this.mainYm2610) {
-          this.mainYm2610.clockCycles(ran);
-          if (this.mainYm2610.getIrq()) this.z80.irq(0xFF);
+          this.mainYm2610.clockCycles(ran * YM_CLOCK_RATIO);
+          if (this.mainYm2610.getIrq()) {
+            this.z80.irq(0xFF);
+          }
         }
       }
     }
@@ -515,9 +525,9 @@ export class NeoGeoEmulator {
           const ran = this.z80.step();
           z80Slice -= ran;
           z80Left -= ran;
-          // Clock YM2610 on main thread + check IRQ
+          // Clock YM2610 at 8 MHz (2× Z80's 4 MHz) + check IRQ
           if (this.mainYm2610) {
-            this.mainYm2610.clockCycles(ran);
+            this.mainYm2610.clockCycles(ran * YM_CLOCK_RATIO);
             if (this.mainYm2610.getIrq()) {
               this.z80.irq(0xFF);
             }

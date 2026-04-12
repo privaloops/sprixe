@@ -13,13 +13,15 @@ import { Z80 } from '../cpu/z80';
 import { NeoGeoZ80Bus } from '../memory/neogeo-z80-bus';
 import { initYM2610Wasm, YM2610Wasm, YM2610_SAMPLE_RATE } from './ym2610-wasm';
 import { LinearResampler } from './resampler';
-import { NGO_Z80_CLOCK, NGO_FRAME_RATE } from '../neogeo-constants';
+import { NGO_Z80_CLOCK, NGO_YM2610_CLOCK, NGO_FRAME_RATE } from '../neogeo-constants';
 import { RING_BUFFER_SAMPLES, SAB_DATA_OFFSET } from './audio-output';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
 const FRAME_MS = 1000 / NGO_FRAME_RATE;
 const Z80_CYCLES_PER_FRAME = Math.round(NGO_Z80_CLOCK / NGO_FRAME_RATE);
+// YM2610 runs at 8 MHz, Z80 at 4 MHz → multiply Z80 T-states by this ratio
+const YM_CLOCK_RATIO = NGO_YM2610_CLOCK / NGO_Z80_CLOCK; // = 2
 
 // ── Ring buffer writer ───────────────────────────────────────────────────
 
@@ -32,17 +34,13 @@ class RingBufferWriter {
     this.data = new Float32Array(sab, SAB_DATA_OFFSET, RING_BUFFER_SAMPLES * 2);
   }
 
-  get freeSlots(): number {
+  write(left: Float32Array, right: Float32Array, numSamples: number): number {
     const writePtr = Atomics.load(this.ctrl, 0);
     const readPtr = Atomics.load(this.ctrl, 1);
-    return (RING_BUFFER_SAMPLES - 1 - ((writePtr - readPtr + RING_BUFFER_SAMPLES) % RING_BUFFER_SAMPLES));
-  }
-
-  write(left: Float32Array, right: Float32Array, numSamples: number): number {
-    const free = this.freeSlots;
+    const free = RING_BUFFER_SAMPLES - 1 - ((writePtr - readPtr + RING_BUFFER_SAMPLES) % RING_BUFFER_SAMPLES);
     const toWrite = Math.min(numSamples, free);
 
-    let wp = Atomics.load(this.ctrl, 0);
+    let wp = writePtr;
     for (let i = 0; i < toWrite; i++) {
       const base = (wp % RING_BUFFER_SAMPLES) * 2;
       this.data[base] = left[i] ?? 0;
@@ -109,26 +107,8 @@ function runOneFrame(): void {
 
   workerFrameCount++;
 
-  // Debug: report Z80 state at frame 30
-  if (workerFrameCount === 30 && z80) {
-    const st = z80.getState();
-    // Check if Z80 has written port 0x0C by reading the bus state
-    const busState = z80Bus!.getState();
-    self.postMessage({
-      type: 'z80debug',
-      pc: st.pc,
-      sp: st.sp,
-      frame: workerFrameCount,
-      nmiEnabled: busState.nmiEnabled,
-      soundLatch: busState.soundLatchValue,
-      // Read RAM around PC
-      ram: Array.from({ length: 16 }, (_, i) => z80Bus!.read((st.pc + i) & 0xFFFF)),
-    });
-  }
-
   // Run Z80 for one frame worth of cycles
   let cyclesLeft = Z80_CYCLES_PER_FRAME;
-  const BATCH = 16; // Max T-states per step
 
   while (cyclesLeft > 0) {
     // Check NMI
@@ -139,8 +119,8 @@ function runOneFrame(): void {
     const ran = z80.step();
     cyclesLeft -= ran;
 
-    // Clock YM2610 proportionally
-    ym2610.clockCycles(ran);
+    // Clock YM2610 proportionally (8 MHz = 2× Z80's 4 MHz)
+    ym2610.clockCycles(ran * YM_CLOCK_RATIO);
 
     // Check YM2610 IRQ → Z80 IRQ
     if (ym2610.getIrq()) {
@@ -245,6 +225,19 @@ self.onmessage = async (e: MessageEvent) => {
 
     case 'latch':
       z80Bus?.pushSoundLatch(msg.value);
+      break;
+
+    case 'rom-switch':
+      // 68K switched Z80 ROM between BIOS and game M-ROM.
+      // Reset Z80 + latch state so the sound driver reinitializes.
+      if (z80Bus && z80) {
+        z80Bus.setUseGameRom(msg.useGameRom);
+        z80Bus.resetLatchState();
+        z80.reset();
+        ym2610?.reset();
+        lastAudioTime = 0;
+        audioDebt = 0;
+      }
       break;
 
     case 'reset':
