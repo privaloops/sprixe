@@ -32,6 +32,7 @@ export interface AudioPanelEmulator {
   getAdpcmASize?(): number;
   getScannedSamples?(): { startByte: number; endByte: number; type: 'A' | 'B' }[];
   scanSamples?(): void;
+  requestLiveSamples?(): void;
   updateVoiceRom?(offset: number, data: Uint8Array): void;
 }
 
@@ -118,6 +119,7 @@ export class AudioPanel {
   // Sample browser
   private sampleSortKey: "id" | "duration" | "size" = "id";
   private sampleSortAsc = true;
+  private _livePollId: ReturnType<typeof setInterval> | undefined;
   private sampleTableBody: HTMLElement | null = null;
   private phrases: PhraseInfo[] = [];
   private sampleAudioCtx: AudioContext | null = null;
@@ -183,7 +185,11 @@ export class AudioPanel {
     if (this.active) this.startUpdateLoop();
   }
 
-  destroy(): void { this.close(); this.container.innerHTML = ""; }
+  destroy(): void {
+    if (this._livePollId) clearInterval(this._livePollId);
+    this.close();
+    this.container.innerHTML = "";
+  }
 
   private open(): void {
     this.active = true;
@@ -403,19 +409,26 @@ export class AudioPanel {
     this.tracksTabBtn?.classList.toggle("active", tab === "tracks");
     this.samplesTabBtn?.classList.toggle("active", tab === "samples");
     if (tab === "samples") {
-      // Trigger sample scan for Neo-Geo (if not already done)
-      if (this.isNeoGeo && (this.emulator.getScannedSamples?.()?.length ?? 0) === 0) {
-        this.emulator.scanSamples?.();
-        // Poll for results (scan is async in worker)
+      if (this.isNeoGeo) {
+        // Request live-captured samples from gameplay + trigger scan as fallback
+        this.emulator.requestLiveSamples?.();
+        if ((this.emulator.getScannedSamples?.()?.length ?? 0) === 0) {
+          this.emulator.scanSamples?.();
+        }
+        // Poll for results (both scan and live are async in worker)
         const pollId = setInterval(() => {
+          if (this.activeTab !== 'samples') { clearInterval(pollId); return; }
+          this.emulator.requestLiveSamples?.();
           const samples = this.emulator.getScannedSamples?.() ?? [];
-          if (samples.length > 0 || this.activeTab !== 'samples') {
-            clearInterval(pollId);
-            if (samples.length > 0) this.refreshSampleTable();
-          }
-        }, 500);
+          if (samples.length > 0) this.refreshSampleTable();
+        }, 1000);
+        // Stop polling when leaving samples tab (handled by activeTab check above)
+        this._livePollId = pollId;
       }
       this.refreshSampleTable();
+    } else if (this._livePollId) {
+      clearInterval(this._livePollId);
+      this._livePollId = undefined;
     }
   }
 

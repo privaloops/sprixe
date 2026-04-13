@@ -635,13 +635,18 @@ self.onmessage = async (e: MessageEvent) => {
             }
           }
         });
-        // Stub YM2610 read: simulate timer overflow periodically
+        // Stub YM2610 read: simulate timer overflow + ADPCM end flags
         let scanReadCount = 0;
         scanBus.setYm2610ReadCallback((port) => {
           scanReadCount++;
           if (port === 0) {
-            // Status register: simulate Timer A overflow every ~50 reads
-            return (scanReadCount % 50 < 5) ? 0x01 : 0x00;
+            // Status register: Timer A (bit 0) + Timer B (bit 1) overflow
+            return (scanReadCount % 50 < 5) ? 0x03 : 0x00;
+          }
+          if (port === 1) {
+            // Extended status: ADPCM-A end flags (bits 0-5) + ADPCM-B end (bit 7)
+            // Return all channels finished so drivers don't stall waiting for playback end
+            return 0xBF;
           }
           return 0;
         });
@@ -665,21 +670,22 @@ self.onmessage = async (e: MessageEvent) => {
           }
         }
 
-        // Init: let Z80 boot from BIOS
+        // Init: let Z80 boot from BIOS (500ms worth of cycles)
         scanZ80.reset();
-        runScanZ80(300000);
+        runScanZ80(2_000_000);
 
-        // Switch to game ROM
+        // Switch to game ROM (500ms init for driver setup, timer tables, etc.)
         scanBus.setUseGameRom(true);
         scanZ80.reset();
-        runScanZ80(300000);
+        runScanZ80(2_000_000);
 
-        // Send all possible sound commands
+        // Send all possible sound commands (~37ms each for sequencer processing)
         for (let cmd = 0x01; cmd <= 0xFF; cmd++) {
           scanBus.pushSoundLatch(cmd);
-          runScanZ80(30000);
+          runScanZ80(150_000);
         }
 
+        // Post scan results separately — live captures (from real YM2610) are the primary source
         const samples = Array.from(scanSamples.values()).sort((a, b) => a.startByte - b.startByte);
         self.postMessage({ type: 'samples', samples });
       } catch (err) {
@@ -694,6 +700,12 @@ self.onmessage = async (e: MessageEvent) => {
         ym2610.patchVRom(msg.offset, new Uint8Array(msg.data));
       }
       break;
+
+    case 'get-live-samples': {
+      const live = Array.from(capturedSamples.values()).sort((a, b) => a.startByte - b.startByte);
+      self.postMessage({ type: 'samples', samples: live });
+      break;
+    }
 
     case 'diag':
       self.postMessage({ type: 'diag', frame: workerFrameCount });

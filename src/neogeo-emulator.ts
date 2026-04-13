@@ -181,17 +181,18 @@ export class NeoGeoEmulator {
     await this.loadRom(romSet);
   }
 
-  /** Try to fetch neogeo.zip from the server */
+  /** Try to fetch neogeo.zip from the server (checks neogeo/ subfolder first, then root) */
   private async fetchBios(): Promise<File | undefined> {
-    try {
-      const resp = await fetch('/roms/neogeo.zip');
-      if (!resp.ok) throw new Error(`${resp.status}`);
-      const blob = await resp.blob();
-      return new File([blob], 'neogeo.zip', { type: 'application/zip' });
-    } catch {
-      console.warn('[Neo-Geo] neogeo.zip not found at /roms/neogeo.zip — BIOS required for boot');
-      return undefined;
+    for (const path of ['/roms/neogeo/neogeo.zip', '/roms/neogeo.zip']) {
+      try {
+        const resp = await fetch(path);
+        if (!resp.ok) continue;
+        const blob = await resp.blob();
+        return new File([blob], 'neogeo.zip', { type: 'application/zip' });
+      } catch { /* try next */ }
     }
+    console.warn('[Neo-Geo] neogeo.zip not found — BIOS required for boot');
+    return undefined;
   }
 
   async loadRom(romSet: NeoGeoRomSet): Promise<void> {
@@ -359,8 +360,13 @@ export class NeoGeoEmulator {
         if (e.data.type === 'ready') {
           this.audioWorkerReady = true;
         } else if (e.data.type === 'samples') {
-          this.scannedSamples = e.data.samples;
-          console.log(`[Neo-Geo] Sample scan: ${this.scannedSamples.length} samples discovered`);
+          // Merge new samples with existing ones (dedup by start:end:type key)
+          const existing = new Map(this.scannedSamples.map(s => [`${s.type}:${s.startByte}:${s.endByte}`, s]));
+          for (const s of e.data.samples) {
+            existing.set(`${s.type}:${s.startByte}:${s.endByte}`, s);
+          }
+          this.scannedSamples = Array.from(existing.values()).sort((a, b) => a.startByte - b.startByte);
+          console.log(`[Neo-Geo] Samples: ${this.scannedSamples.length} total`);
         } else if (e.data.type === 'error') {
           console.error('[Neo-Geo] Audio worker error:', e.data.message);
         } else if (e.data.type === 'reply') {
@@ -626,6 +632,13 @@ export class NeoGeoEmulator {
   getAudioRom(): Uint8Array | null { return this.audioRom; }
   getAdpcmASize(): number { return this.adpcmASize; }
   getScannedSamples(): { startByte: number; endByte: number; type: 'A' | 'B' }[] { return this.scannedSamples; }
+
+  /** Request live-captured samples from the audio worker (accumulated during gameplay) */
+  requestLiveSamples(): void {
+    if (this.audioWorker && this.audioWorkerReady) {
+      this.audioWorker.postMessage({ type: 'get-live-samples' });
+    }
+  }
 
   /** Trigger ADPCM sample scan (sends all sound commands to Z80, captures addresses) */
   scanSamples(): void {
