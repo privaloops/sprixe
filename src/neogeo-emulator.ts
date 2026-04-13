@@ -48,6 +48,10 @@ import {
 
 const FRAME_MS = 1000 / NGO_FRAME_RATE;
 const YM_CLOCK_RATIO = NGO_YM2610_CLOCK / NGO_Z80_CLOCK; // 8 MHz / 4 MHz = 2
+// Z80 cycles to run when processing a sound command handshake
+const Z80_HANDSHAKE_BURST = 10_000;
+// Z80 cycles to pre-run during ROM load (sm1.sm1 init sequence)
+const Z80_PRERUN_CYCLES = 500_000;
 
 // ── Emulator ──────────────────────────────────────────────────────────────
 
@@ -105,7 +109,7 @@ export class NeoGeoEmulator {
       this.z80Bus.pushSoundLatch(value);
 
       // Run Z80 to process the command via NMI
-      let z80Run = 10000;
+      let z80Run = Z80_HANDSHAKE_BURST;
       while (z80Run > 0) {
         if (this.z80Bus.shouldFireNmi()) this.z80.nmi();
         z80Run -= this.z80.step();
@@ -278,7 +282,6 @@ export class NeoGeoEmulator {
     });
     this.bus.setZ80RomSwitchCallback((useBios) => {
       this.z80Bus.setUseGameRom(!useBios);
-      console.log(`[Neo-Geo] Z80 ROM switch: useBios=${useBios} → useGameRom=${!useBios}, worker=${!!this.audioWorker}, workerReady=${this.audioWorkerReady}`);
       // Forward ROM switch to audio worker — the worker Z80 must also
       // switch from BIOS to game M-ROM to execute the sound driver.
       if (this.audioWorker) {
@@ -307,7 +310,7 @@ export class NeoGeoEmulator {
 
     // Pre-run the Z80 with YM2610 connected to complete sm1.sm1 init
     {
-      let cycles = 500000;
+      let cycles = Z80_PRERUN_CYCLES;
       while (cycles > 0) {
         if (this.z80Bus.shouldFireNmi()) this.z80.nmi();
         const ran = this.z80.step();
@@ -590,73 +593,6 @@ export class NeoGeoEmulator {
   }
 
   // ── Public accessors ──────────────────────────────────────────────────────
-
-  /** Patch the BIOS to work without pd4990a RTC emulation.
-   *  The BIOS CALENDAR test fails and enters an infinite watchdog loop
-   *  with SR mask 7 (all IRQs blocked). We patch the error handler's
-   *  MOVE #$0007, ($3C000C) to also include ANDI #$F8FF, SR (lower mask). */
-  private patchBiosBoot(biosRom: Uint8Array): void {
-    let patched = 0;
-
-    // Patch 1: Skip ALL boot test error jumps.
-    // Pattern: MOVEQ #N, D6 (7C0N) followed by JMP (4EF9) to error handler.
-    // N = 0-8 for different boot tests. NOP them all to skip errors.
-    for (let i = 0; i < biosRom.length - 8; i++) {
-      if (biosRom[i] === 0x7C && (biosRom[i + 1]! & 0xF0) === 0x00 &&
-          biosRom[i + 2] === 0x4E && biosRom[i + 3] === 0xF9) {
-        const testNum = biosRom[i + 1]!;
-        // NOP out the MOVEQ + JMP (8 bytes = 4 NOPs)
-        for (let j = 0; j < 8; j += 2) {
-          biosRom[i + j] = 0x4E;
-          biosRom[i + j + 1] = 0x71;
-        }
-        console.log(`[Neo-Geo] Patched BIOS: skip boot test ${testNum} error at 0x${i.toString(16)}`);
-        patched++;
-      }
-    }
-
-    // Patch 2: Calendar range check — safety net alongside pd4990a.
-    // At 0xC11C14: BCS.W $C11D8C (6500 0176) — "count < 57" → NOP NOP
-    // At 0xC11C1C: BCC.W $C11D8C (6400 016E) — "count >= 64" → NOP NOP
-    for (let i = 0; i < biosRom.length - 4; i++) {
-      // BCS.W to error handler
-      if (biosRom[i] === 0x65 && biosRom[i + 1] === 0x00 &&
-          biosRom[i + 2] === 0x01 && biosRom[i + 3] === 0x76) {
-        biosRom[i] = 0x4E; biosRom[i + 1] = 0x71;
-        biosRom[i + 2] = 0x4E; biosRom[i + 3] = 0x71;
-        console.log(`[Neo-Geo] Patched BIOS: NOP calendar BCS at 0x${i.toString(16)}`);
-        patched++;
-      }
-      // BCC.W to error handler
-      if (biosRom[i] === 0x64 && biosRom[i + 1] === 0x00 &&
-          biosRom[i + 2] === 0x01 && biosRom[i + 3] === 0x6E) {
-        biosRom[i] = 0x4E; biosRom[i + 1] = 0x71;
-        biosRom[i + 2] = 0x4E; biosRom[i + 3] = 0x71;
-        console.log(`[Neo-Geo] Patched BIOS: NOP calendar BCC at 0x${i.toString(16)}`);
-        patched++;
-      }
-    }
-
-    // Patch 3 disabled — overwriting watchdog loops caused code fallthrough crashes.
-    // VBlank handlers still run correctly with irqMask=7 (they use a lower mask internally).
-
-    if (patched > 0) console.log(`[Neo-Geo] Applied ${patched} BIOS patches`);
-  }
-
-  /** Try to identify the BIOS by looking for known strings */
-  private detectBiosName(biosRom: Uint8Array): string {
-    // UniBIOS has "UNIVERSE BIOS" string
-    const str = String.fromCharCode(...biosRom.subarray(0, Math.min(0x200, biosRom.length))
-      .filter(b => b >= 0x20 && b < 0x7F));
-    if (str.includes('UNIVERSE') || str.includes('UNI-BIOS')) return 'uni-bios';
-    // Search more broadly
-    for (let i = 0; i < biosRom.length - 10; i++) {
-      if (biosRom[i] === 0x55 && biosRom[i+1] === 0x4E && biosRom[i+2] === 0x49) { // "UNI"
-        return 'uni-bios';
-      }
-    }
-    return 'standard';
-  }
 
   getBus(): NeoGeoBus { return this.bus; }
   getVideo(): NeoGeoVideo { return this.video; }

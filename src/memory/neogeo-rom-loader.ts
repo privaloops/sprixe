@@ -6,9 +6,10 @@
  * and performs Neo-Geo C-ROM byte interleaving.
  */
 
-import JSZip from 'jszip';
 import { NEOGEO_GAME_DEFS } from './neogeo-game-defs';
 import type { NeoGeoGameDef, NeoGeoRomEntry } from './neogeo-game-defs';
+import { extractZip, buildFileMap } from './rom-utils';
+import type { RomFileEntry } from './rom-utils';
 
 export type { NeoGeoGameDef, NeoGeoRomEntry } from './neogeo-game-defs';
 
@@ -27,11 +28,6 @@ export interface NeoGeoRomSet {
   loRom: Uint8Array;          // L0 ROM (shrink tables, 64KB)
   gameDef: NeoGeoGameDef;
   originalFiles: Map<string, Uint8Array>;
-}
-
-interface RomFileEntry {
-  name: string;
-  data: Uint8Array;
 }
 
 // ---------------------------------------------------------------------------
@@ -78,37 +74,6 @@ function identifyNeoGeoGame(fileNames: string[]): NeoGeoGameDef | null {
   return null;
 }
 
-/** Extract all files from a ZIP as RomFileEntry[]. */
-async function extractZip(file: File | ArrayBuffer): Promise<RomFileEntry[]> {
-  const arrayBuffer = file instanceof ArrayBuffer ? file : await file.arrayBuffer();
-  const zip = await JSZip.loadAsync(arrayBuffer);
-  const entries: RomFileEntry[] = [];
-  const promises: Promise<void>[] = [];
-
-  zip.forEach((relativePath, zipEntry) => {
-    if (zipEntry.dir) return;
-    const name = relativePath.includes('/')
-      ? relativePath.substring(relativePath.lastIndexOf('/') + 1)
-      : relativePath;
-    promises.push(
-      zipEntry.async('uint8array').then(data => {
-        entries.push({ name, data });
-      })
-    );
-  });
-
-  await Promise.all(promises);
-  return entries;
-}
-
-/** Build a filename -> data map from the extracted entries. */
-function buildFileMap(entries: RomFileEntry[]): Map<string, Uint8Array> {
-  const map = new Map<string, Uint8Array>();
-  for (const entry of entries) {
-    map.set(entry.name.toLowerCase(), entry.data);
-  }
-  return map;
-}
 
 // ---------------------------------------------------------------------------
 // ROM assembly

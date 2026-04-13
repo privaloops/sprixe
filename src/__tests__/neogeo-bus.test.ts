@@ -107,8 +107,17 @@ describe('NeoGeoBus', () => {
     it('reads system port at 0x380000 (starts/selects)', () => {
       const bus = new NeoGeoBus();
       bus.setPortSystem(0xFB);
-      expect(bus.read8(0x380000)).toBe(0xFB);
+      // read8 returns (portSystem & 0x7F) | (portStatus & 0x80)
+      // portStatus defaults to 0x00 (MVS mode), so 0xFB & 0x7F = 0x7B
+      expect(bus.read8(0x380000)).toBe(0x7B);
       expect(bus.read8(0x380001)).toBe(0xFF); // odd = unused
+    });
+
+    it('reads system port with AES mode (bit 7 set)', () => {
+      const bus = new NeoGeoBus();
+      bus.setMvsMode(false); // AES → portStatus = 0x80
+      bus.setPortSystem(0xFB);
+      expect(bus.read8(0x380000)).toBe(0xFB); // 0x7B | 0x80 = 0xFB
     });
 
     it('reads and writes memory card RAM', () => {

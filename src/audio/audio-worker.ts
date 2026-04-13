@@ -12,8 +12,8 @@ import { initOPMWasm, NukedOPMWasm } from './nuked-opm-wasm';
 import { OKI6295, type OKI6295State } from './oki6295';
 import { LinearResampler } from './resampler';
 import { YM2151_SAMPLE_RATE, OKI6295_SAMPLE_RATE, Z80_CLOCK, PIXEL_CLOCK, CPS_HTOTAL, CPS_VTOTAL, FRAME_RATE } from '../constants';
-import { RING_BUFFER_SAMPLES, SAB_DATA_OFFSET } from './audio-output';
 import { VizWriter } from './audio-viz';
+import { RingBufferWriter, clip } from './audio-shared';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -21,48 +21,6 @@ const FRAME_MS = 1000 / FRAME_RATE;
 const Z80_CYCLES_PER_FRAME = Math.round(Z80_CLOCK / FRAME_RATE);
 const YM_SAMPLES_PER_FRAME = Math.ceil(YM2151_SAMPLE_RATE / FRAME_RATE);
 const OKI_SAMPLES_PER_FRAME = Math.ceil(OKI6295_SAMPLE_RATE / FRAME_RATE);
-
-// ── Ring buffer writer ───────────────────────────────────────────────────
-
-class RingBufferWriter {
-  private readonly ctrl: Int32Array;
-  private readonly data: Float32Array;
-
-  constructor(sab: SharedArrayBuffer) {
-    this.ctrl = new Int32Array(sab, 0, 2);
-    this.data = new Float32Array(sab, SAB_DATA_OFFSET, RING_BUFFER_SAMPLES * 2);
-  }
-
-  get freeSlots(): number {
-    const writePtr = Atomics.load(this.ctrl, 0);
-    const readPtr = Atomics.load(this.ctrl, 1);
-    return (RING_BUFFER_SAMPLES - 1 - ((writePtr - readPtr + RING_BUFFER_SAMPLES) % RING_BUFFER_SAMPLES));
-  }
-
-  write(left: Float32Array, right: Float32Array, numSamples: number): number {
-    const free = this.freeSlots;
-    const toWrite = Math.min(numSamples, free);
-
-    let wp = Atomics.load(this.ctrl, 0);
-    for (let i = 0; i < toWrite; i++) {
-      const base = (wp % RING_BUFFER_SAMPLES) * 2;
-      this.data[base] = left[i] ?? 0;
-      this.data[base + 1] = right[i] ?? 0;
-      wp = (wp + 1) % RING_BUFFER_SAMPLES;
-    }
-
-    Atomics.store(this.ctrl, 0, wp);
-    return toWrite;
-  }
-}
-
-// ── Soft limiter ─────────────────────────────────────────────────────────
-
-function clip(s: number): number {
-  if (s > 0.95) return 0.95 + 0.05 * Math.tanh((s - 0.95) * 10);
-  if (s < -0.95) return -0.95 - 0.05 * Math.tanh((-s - 0.95) * 10);
-  return s;
-}
 
 // ── Worker state ─────────────────────────────────────────────────────────
 

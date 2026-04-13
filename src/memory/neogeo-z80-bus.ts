@@ -269,7 +269,6 @@ export class NeoGeoZ80Bus implements Z80BusInterface {
         break;
 
       case 0x0C: // Sound reply to 68K
-        console.log(`[Neo-Geo Z80] Reply to 68K: 0x${value.toString(16)}`);
         this.onSoundReply?.(value);
         break;
 

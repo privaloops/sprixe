@@ -14,7 +14,7 @@ import { NeoGeoZ80Bus } from '../memory/neogeo-z80-bus';
 import { initYM2610Wasm, YM2610Wasm, YM2610_SAMPLE_RATE } from './ym2610-wasm';
 import { LinearResampler } from './resampler';
 import { NGO_Z80_CLOCK, NGO_YM2610_CLOCK, NGO_FRAME_RATE } from '../neogeo-constants';
-import { RING_BUFFER_SAMPLES, SAB_DATA_OFFSET } from './audio-output';
+import { RingBufferWriter, clip } from './audio-shared';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -22,44 +22,6 @@ const FRAME_MS = 1000 / NGO_FRAME_RATE;
 const Z80_CYCLES_PER_FRAME = Math.round(NGO_Z80_CLOCK / NGO_FRAME_RATE);
 // YM2610 runs at 8 MHz, Z80 at 4 MHz → multiply Z80 T-states by this ratio
 const YM_CLOCK_RATIO = NGO_YM2610_CLOCK / NGO_Z80_CLOCK; // = 2
-
-// ── Ring buffer writer ───────────────────────────────────────────────────
-
-class RingBufferWriter {
-  private readonly ctrl: Int32Array;
-  private readonly data: Float32Array;
-
-  constructor(sab: SharedArrayBuffer) {
-    this.ctrl = new Int32Array(sab, 0, 2);
-    this.data = new Float32Array(sab, SAB_DATA_OFFSET, RING_BUFFER_SAMPLES * 2);
-  }
-
-  write(left: Float32Array, right: Float32Array, numSamples: number): number {
-    const writePtr = Atomics.load(this.ctrl, 0);
-    const readPtr = Atomics.load(this.ctrl, 1);
-    const free = RING_BUFFER_SAMPLES - 1 - ((writePtr - readPtr + RING_BUFFER_SAMPLES) % RING_BUFFER_SAMPLES);
-    const toWrite = Math.min(numSamples, free);
-
-    let wp = writePtr;
-    for (let i = 0; i < toWrite; i++) {
-      const base = (wp % RING_BUFFER_SAMPLES) * 2;
-      this.data[base] = left[i] ?? 0;
-      this.data[base + 1] = right[i] ?? 0;
-      wp = (wp + 1) % RING_BUFFER_SAMPLES;
-    }
-
-    Atomics.store(this.ctrl, 0, wp);
-    return toWrite;
-  }
-}
-
-// ── Soft limiter ─────────────────────────────────────────────────────────
-
-function clip(s: number): number {
-  if (s > 0.95) return 0.95 + 0.05 * Math.tanh((s - 0.95) * 10);
-  if (s < -0.95) return -0.95 - 0.05 * Math.tanh((-s - 0.95) * 10);
-  return s;
-}
 
 // ── Worker state ─────────────────────────────────────────────────────────
 
