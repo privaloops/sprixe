@@ -11,6 +11,7 @@
 
 import { kcToNoteName, type VizReader, type AudioLayout } from "./audio-viz";
 import { parsePhraseTable, decodeSample, encodeSample, replaceSampleInRom, OKI_SAMPLE_RATE, type PhraseInfo } from "./oki-codec";
+import { parseAdpcmASampleTable, decodeAdpcmASample, encodeAdpcmASample, replaceAdpcmASample, ADPCM_A_SAMPLE_RATE } from "./neogeo-adpcm";
 import JSZip from "jszip";
 import type { Emulator } from "../emulator";
 import { showToast } from "../ui/toast";
@@ -21,10 +22,15 @@ export interface AudioPanelEmulator {
   getFrameCount(): number;
   getGameName(): string;
   getFpsDisplay?(): string | number;
-  // CPS1-only (optional for Neo-Geo)
+  // CPS1: OKI samples
   getOkiRom?(): Uint8Array | null;
   updateOkiRom?(rom: Uint8Array): void;
   getRomStore?(): { onModified?: (() => void) | null } | null;
+  // Neo-Geo: ADPCM-A samples
+  getVoiceRom?(): Uint8Array | null;
+  getAudioRom?(): Uint8Array | null;
+  getAdpcmASize?(): number;
+  updateVoiceRom?(offset: number, data: Uint8Array): void;
 }
 
 // Default layout (CPS1), overridden per-system via vizSAB
@@ -338,8 +344,8 @@ export class AudioPanel {
     this.tracksContent.appendChild(okiSection);
     c.appendChild(this.tracksContent);
 
-    // -- Samples tab content (CPS1 only — requires OKI ROM) --
-    const hasSamples = !!this.emulator.getOkiRom;
+    // -- Samples tab content (CPS1 OKI or Neo-Geo ADPCM-A) --
+    const hasSamples = !!this.emulator.getOkiRom || !!this.emulator.getVoiceRom;
     this.samplesContent = el("div", "aud-tab-content") as HTMLDivElement;
     this.samplesContent.style.display = "none";
     if (hasSamples) this.buildSamplesTab();
@@ -363,7 +369,8 @@ export class AudioPanel {
     exportBtn.style.cssText = "font-size:0.6rem;padding:3px 8px;";
     exportBtn.addEventListener("click", () => this.exportSamples());
     const fmtHint = el("span", "smp-fmt-hint");
-    fmtHint.textContent = "WAV mono 7575 Hz";
+    const isNeoGeo = !!this.emulator.getVoiceRom;
+    fmtHint.textContent = isNeoGeo ? "WAV mono 18519 Hz" : "WAV mono 7575 Hz";
     actions.append(importBtn, exportBtn, fmtHint);
     sc.appendChild(actions);
 
@@ -406,14 +413,28 @@ export class AudioPanel {
     this.refreshSampleTable();
   }
 
+  /** Is this a Neo-Geo emulator (ADPCM-A) or CPS1 (OKI)? */
+  private get isNeoGeo(): boolean { return !!this.emulator.getVoiceRom && !this.emulator.getOkiRom; }
+
+  /** Get the sample ROM (V-ROM for Neo-Geo, OKI ROM for CPS1) */
+  private getSampleRom(): Uint8Array | null {
+    return this.emulator.getOkiRom?.() ?? this.emulator.getVoiceRom?.() ?? null;
+  }
+
   private refreshSampleTable(): void {
     if (!this.sampleTableBody) return;
-    const rom = this.emulator.getOkiRom?.() ?? null;
+    const rom = this.getSampleRom();
     if (!rom) {
-      this.sampleTableBody.innerHTML = `<tr><td colspan="5" style="color:#555;text-align:center;padding:12px;">No OKI ROM</td></tr>`;
+      this.sampleTableBody.innerHTML = `<tr><td colspan="5" style="color:#555;text-align:center;padding:12px;">No sample ROM</td></tr>`;
       return;
     }
-    this.phrases = parsePhraseTable(rom);
+    if (this.isNeoGeo) {
+      const mRom = this.emulator.getAudioRom?.();
+      if (!mRom) { this.sampleTableBody.innerHTML = ''; return; }
+      this.phrases = parseAdpcmASampleTable(mRom, rom.length, rom);
+    } else {
+      this.phrases = parsePhraseTable(rom);
+    }
     const dir = this.sampleSortAsc ? 1 : -1;
     const key = this.sampleSortKey;
     this.phrases.sort((a, b) => {
@@ -538,11 +559,13 @@ export class AudioPanel {
   }
 
   private playSample(phrase: PhraseInfo): void {
-    const rom = this.emulator.getOkiRom?.();
+    const rom = this.getSampleRom();
     if (!rom) return;
-    const pcm = decodeSample(rom, phrase);
+    const ngo = this.isNeoGeo;
+    const pcm = ngo ? decodeAdpcmASample(rom, phrase) : decodeSample(rom, phrase);
+    const rate = ngo ? ADPCM_A_SAMPLE_RATE : OKI_SAMPLE_RATE;
     const ctx = this.getAudioCtx();
-    const buffer = ctx.createBuffer(1, pcm.length, OKI_SAMPLE_RATE);
+    const buffer = ctx.createBuffer(1, pcm.length, rate);
     buffer.getChannelData(0).set(pcm);
     const source = ctx.createBufferSource();
     source.buffer = buffer;
@@ -551,29 +574,49 @@ export class AudioPanel {
   }
 
   private async replaceWithFile(phraseId: number, file: File, dropZone: HTMLElement): Promise<void> {
-    const rom = this.emulator.getOkiRom?.();
+    const rom = this.getSampleRom();
     if (!rom) return;
+    const ngo = this.isNeoGeo;
     try {
       dropZone.textContent = "Encoding...";
       const ctx = this.getAudioCtx();
       const arrayBuf = await file.arrayBuffer();
       const audioBuf = await ctx.decodeAudioData(arrayBuf);
       const pcm = audioBuf.getChannelData(0);
-      const adpcm = encodeSample(pcm, audioBuf.sampleRate);
-      const result = replaceSampleInRom(rom, phraseId, adpcm);
-      if (result.success) {
-        this.emulator.updateOkiRom?.(rom);
-        this.emulator.getRomStore?.()?.onModified?.();
-        dropZone.textContent = "\u2713 OK";
-        dropZone.classList.add("replaced");
-        if (result.truncated) {
-          this.showToast(`Sample #${phraseId} replaced (truncated: ${result.keptMs}ms / ${result.originalMs}ms)`, true);
-        } else {
-          this.showToast(`Sample #${phraseId} replaced`, true);
+
+      if (ngo) {
+        const phrase = this.phrases.find(p => p.id === phraseId);
+        if (!phrase) { this.showToast(`Sample #${phraseId}: not found`, false); return; }
+        const adpcm = encodeAdpcmASample(pcm, audioBuf.sampleRate);
+        const result = replaceAdpcmASample(rom, phrase, adpcm);
+        if (result.success) {
+          this.emulator.updateVoiceRom?.(phrase.startByte, rom.subarray(phrase.startByte, phrase.endByte));
+          dropZone.textContent = "\u2713 OK";
+          dropZone.classList.add("replaced");
+          if (result.truncated) {
+            this.showToast(`Sample #${phraseId} replaced (truncated: ${result.keptMs}ms / ${result.originalMs}ms)`, true);
+          } else {
+            this.showToast(`Sample #${phraseId} replaced`, true);
+          }
+          setTimeout(() => this.refreshSampleTable(), 1000);
         }
-        setTimeout(() => this.refreshSampleTable(), 1000);
       } else {
-        this.showToast(`Sample #${phraseId}: invalid slot`, false);
+        const adpcm = encodeSample(pcm, audioBuf.sampleRate);
+        const result = replaceSampleInRom(rom, phraseId, adpcm);
+        if (result.success) {
+          this.emulator.updateOkiRom?.(rom);
+          this.emulator.getRomStore?.()?.onModified?.();
+          dropZone.textContent = "\u2713 OK";
+          dropZone.classList.add("replaced");
+          if (result.truncated) {
+            this.showToast(`Sample #${phraseId} replaced (truncated: ${result.keptMs}ms / ${result.originalMs}ms)`, true);
+          } else {
+            this.showToast(`Sample #${phraseId} replaced`, true);
+          }
+          setTimeout(() => this.refreshSampleTable(), 1000);
+        } else {
+          this.showToast(`Sample #${phraseId}: invalid slot`, false);
+        }
       }
     } catch (err) {
       this.showToast(`Sample #${phraseId}: error`, false);
@@ -582,14 +625,16 @@ export class AudioPanel {
   }
 
   private async exportSamples(): Promise<void> {
-    const rom = this.emulator.getOkiRom?.();
+    const rom = this.getSampleRom();
     if (!rom || this.phrases.length === 0) return;
+    const ngo = this.isNeoGeo;
+    const rate = ngo ? ADPCM_A_SAMPLE_RATE : OKI_SAMPLE_RATE;
     const gameName = this.emulator.getGameName();
     const zip = new JSZip();
     for (const phrase of this.phrases) {
-      const pcm = decodeSample(rom, phrase);
+      const pcm = ngo ? decodeAdpcmASample(rom, phrase) : decodeSample(rom, phrase);
       if (pcm.length === 0) continue;
-      zip.file(`${String(phrase.id).padStart(2, "0")}.wav`, pcmToWav(pcm, OKI_SAMPLE_RATE));
+      zip.file(`${String(phrase.id).padStart(2, "0")}.wav`, pcmToWav(pcm, rate));
     }
     const blob = await zip.generateAsync({ type: "blob" });
     const url = URL.createObjectURL(blob);
@@ -615,8 +660,9 @@ export class AudioPanel {
   }
 
   private async importFromZip(file: File): Promise<void> {
-    const rom = this.emulator.getOkiRom?.();
+    const rom = this.getSampleRom();
     if (!rom) return;
+    const ngo = this.isNeoGeo;
     const zip = await JSZip.loadAsync(await file.arrayBuffer());
     const ctx = this.getAudioCtx();
     let replaced = 0;
@@ -627,17 +673,29 @@ export class AudioPanel {
       try {
         const buf = await entry.async("arraybuffer");
         const audioBuf = await ctx.decodeAudioData(buf);
-        const adpcm = encodeSample(audioBuf.getChannelData(0), audioBuf.sampleRate);
-        if (replaceSampleInRom(rom, phraseId, adpcm)) replaced++;
+        if (ngo) {
+          const phrase = this.phrases.find(p => p.id === phraseId);
+          if (!phrase) continue;
+          const adpcm = encodeAdpcmASample(audioBuf.getChannelData(0), audioBuf.sampleRate);
+          if (replaceAdpcmASample(rom, phrase, adpcm).success) {
+            this.emulator.updateVoiceRom?.(phrase.startByte, rom.subarray(phrase.startByte, phrase.endByte));
+            replaced++;
+          }
+        } else {
+          const adpcm = encodeSample(audioBuf.getChannelData(0), audioBuf.sampleRate);
+          if (replaceSampleInRom(rom, phraseId, adpcm).success) replaced++;
+        }
       } catch { /* skip bad files */ }
     }
-    if (replaced > 0) { this.emulator.updateOkiRom?.(rom); this.emulator.getRomStore?.()?.onModified?.(); this.refreshSampleTable(); }
+    if (!ngo && replaced > 0) { this.emulator.updateOkiRom?.(rom); this.emulator.getRomStore?.()?.onModified?.(); }
+    if (replaced > 0) this.refreshSampleTable();
     this.showToast(replaced > 0 ? `Imported ${replaced} sample${replaced > 1 ? "s" : ""}` : "No samples imported", replaced > 0);
   }
 
   private async importFromFiles(files: File[]): Promise<void> {
-    const rom = this.emulator.getOkiRom?.();
+    const rom = this.getSampleRom();
     if (!rom) return;
+    const ngo = this.isNeoGeo;
     const ctx = this.getAudioCtx();
     let replaced = 0;
     for (const file of files) {
@@ -646,11 +704,22 @@ export class AudioPanel {
       try {
         const buf = await file.arrayBuffer();
         const audioBuf = await ctx.decodeAudioData(buf);
-        const adpcm = encodeSample(audioBuf.getChannelData(0), audioBuf.sampleRate);
-        if (replaceSampleInRom(rom, phraseId, adpcm)) replaced++;
+        if (ngo) {
+          const phrase = this.phrases.find(p => p.id === phraseId);
+          if (!phrase) continue;
+          const adpcm = encodeAdpcmASample(audioBuf.getChannelData(0), audioBuf.sampleRate);
+          if (replaceAdpcmASample(rom, phrase, adpcm).success) {
+            this.emulator.updateVoiceRom?.(phrase.startByte, rom.subarray(phrase.startByte, phrase.endByte));
+            replaced++;
+          }
+        } else {
+          const adpcm = encodeSample(audioBuf.getChannelData(0), audioBuf.sampleRate);
+          if (replaceSampleInRom(rom, phraseId, adpcm).success) replaced++;
+        }
       } catch { /* skip */ }
     }
-    if (replaced > 0) { this.emulator.updateOkiRom?.(rom); this.emulator.getRomStore?.()?.onModified?.(); this.refreshSampleTable(); }
+    if (!ngo && replaced > 0) { this.emulator.updateOkiRom?.(rom); this.emulator.getRomStore?.()?.onModified?.(); }
+    if (replaced > 0) this.refreshSampleTable();
     this.showToast(replaced > 0 ? `Imported ${replaced} sample${replaced > 1 ? "s" : ""}` : "No samples imported", replaced > 0);
   }
 

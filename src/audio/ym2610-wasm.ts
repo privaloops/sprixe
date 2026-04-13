@@ -53,6 +53,7 @@ export async function initYM2610Wasm(): Promise<void> {
  */
 export class YM2610Wasm {
   private irqCallback: ((asserted: boolean) => void) | null = null;
+  private vRomPtr = 0; // WASM heap pointer to V-ROM buffer
 
   constructor() {
     if (!wasmModule) {
@@ -67,8 +68,8 @@ export class YM2610Wasm {
    * offset by adpcmASize in the combined buffer.
    */
   loadVRom(vromData: Uint8Array, adpcmASize?: number): void {
-    const ptr = wasmModule!._ym2610_alloc_rom(vromData.length);
-    wasmModule!.HEAPU8.set(vromData, ptr);
+    this.vRomPtr = wasmModule!._ym2610_alloc_rom(vromData.length);
+    wasmModule!.HEAPU8.set(vromData, this.vRomPtr);
     // Set ADPCM-A/B split: default = full ROM (no split)
     wasmModule!._ym2610_set_adpcm_a_size(adpcmASize ?? vromData.length);
   }
@@ -141,6 +142,13 @@ export class YM2610Wasm {
   /** Reset the chip */
   reset(): void {
     wasmModule!._ym2610_reset();
+  }
+
+  /** Patch bytes in the V-ROM WASM heap (for sample replacement) */
+  patchVRom(offset: number, data: Uint8Array): void {
+    if (this.vRomPtr > 0) {
+      wasmModule!.HEAPU8.set(data, this.vRomPtr + offset);
+    }
   }
 
   /** Set IRQ callback */

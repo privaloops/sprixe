@@ -530,6 +530,12 @@ self.onmessage = async (e: MessageEvent) => {
       }
       break;
 
+    case 'patch-vrom':
+      if (ym2610) {
+        ym2610.patchVRom(msg.offset, new Uint8Array(msg.data));
+      }
+      break;
+
     case 'diag':
       self.postMessage({ type: 'diag', frame: workerFrameCount });
       break;

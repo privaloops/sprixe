@@ -90,6 +90,9 @@ export class NeoGeoEmulator {
   private frameCount = 0;
   private firstFrame = true;
   private m68kErrorCount = 0;
+  private voiceRom: Uint8Array | null = null;
+  private audioRom: Uint8Array | null = null;
+  private adpcmASize = 0;
   private mainYm2610: YM2610Wasm | null = null;
 
   // Callbacks
@@ -255,6 +258,9 @@ export class NeoGeoEmulator {
 
     this.gameName = romSet.name;
     this.romLoaded = true;
+    this.voiceRom = romSet.voiceRom;
+    this.audioRom = romSet.audioRom;
+    this.adpcmASize = romSet.adpcmASize;
 
     // Initialize audio worker
     await this.initAudioWorker(romSet);
@@ -611,6 +617,24 @@ export class NeoGeoEmulator {
   getFrameCount(): number { return this.frameCount; }
   getGameName(): string { return this.gameName; }
   getVizReader(): VizReader | null { return this.vizReader; }
+  getVoiceRom(): Uint8Array | null { return this.voiceRom; }
+  getAudioRom(): Uint8Array | null { return this.audioRom; }
+  getAdpcmASize(): number { return this.adpcmASize; }
+
+  /** Update V-ROM after sample replacement and sync to worker WASM */
+  updateVoiceRom(offset: number, data: Uint8Array): void {
+    if (!this.voiceRom) return;
+    this.voiceRom.set(data, offset);
+    // Sync to audio worker (worker patches WASM heap)
+    if (this.audioWorker) {
+      this.audioWorker.postMessage({
+        type: 'patch-vrom',
+        offset,
+        data: data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength),
+      });
+    }
+  }
+
   /** Stub for CPS1 API compatibility — Neo-Geo has no DIP switches in I/O ports */
   getIoPorts(): Uint8Array { return new Uint8Array(0x20).fill(0xFF); }
 }
