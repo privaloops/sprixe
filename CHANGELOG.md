@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Fixed
+- **Neo-Geo CMC fix layer (HUD)** — Games with CMC encryption (garou, kof99, mslug3) now display their HUD correctly (health bars, timer, score, combos). Three bugs fixed:
+  - S-ROM buffer allocation when no `fixed` ROM files in game def (was 0 bytes → no fix tiles)
+  - Per-game S-ROM size (garou/mslug3 need 512KB, not 128KB) — wrong size shifted the extraction offset in the C-ROM
+  - Fix layer banking (VRAM $7500/$7580) for games with S-ROM > 128KB — extends 12-bit tile codes to 14-bit via per-row (Garou type) or per-tile (KOF2000 type) bank registers
+
 ## [1.0.0-beta.2] - 2026-04-06
 
 ### Added
