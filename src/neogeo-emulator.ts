@@ -26,7 +26,7 @@ import {
   getProtectionType, Kof98Protection, kof98Decrypt68k,
   MslugxProtection, SmaProtection, smaDecrypt68k,
 } from './memory/neogeo-protection';
-import { CMC42_KEYS, CMC50_KEYS, cmcGfxDecrypt, cmcSfixDecrypt } from './memory/neogeo-cmc';
+import { CMC42_KEYS, CMC50_KEYS, CMC_SFIX_SIZES, CMC_SFIX_DEFAULT, CMC_FIX_BANK_TYPE, FixBankType, cmcGfxDecrypt, cmcSfixDecrypt } from './memory/neogeo-cmc';
 import { initYM2610Wasm, YM2610Wasm } from './audio/ym2610-wasm';
 import { InputManager } from './input/input';
 import { VizReader, VIZ_SAB_SIZE } from './audio/audio-viz';
@@ -240,8 +240,14 @@ export class NeoGeoEmulator {
 
     // CMC GFX decryption — applies to C-ROM (sprites) + S-ROM (fix layer)
     // SMA games also need CMC (they have both P-ROM and C-ROM encryption)
+    // CMC games extract their S-ROM (fix tiles) from the end of the C-ROM.
+    // Size varies per game (128KB–512KB), from MAME neogeo.xml "fixed" region.
     const cmcKey42 = CMC42_KEYS[romSet.name];
     const cmcKey50 = CMC50_KEYS[romSet.name];
+    if ((cmcKey42 !== undefined || cmcKey50 !== undefined) && romSet.fixedRom.length === 0) {
+      const sfixSize = CMC_SFIX_SIZES[romSet.name] ?? CMC_SFIX_DEFAULT;
+      romSet.fixedRom = new Uint8Array(sfixSize);
+    }
     if (cmcKey42 !== undefined) {
       console.log(`[Neo-Geo] CMC42 GFX decrypt (key=0x${cmcKey42.toString(16)}): ${romSet.spritesRom.length / 1024 / 1024}MB`);
       cmcGfxDecrypt(romSet.spritesRom, romSet.spritesRom.length, cmcKey42, false);
@@ -264,6 +270,7 @@ export class NeoGeoEmulator {
 
     // Load video ROMs (including L0 shrink table for sprite scaling)
     this.video.setRoms(romSet.spritesRom, romSet.fixedRom, romSet.biosSRom, romSet.loRom);
+    this.video.setFixBankType(CMC_FIX_BANK_TYPE[romSet.name] ?? FixBankType.NONE);
     // Share VRAM and palette RAM between bus and video
     this.video.setVram(this.bus.getVram());
     this.video.setPaletteRam(this.bus.getPaletteRam());

@@ -403,6 +403,47 @@ export const CMC50_KEYS: Record<string, number> = {
   kof2003: 0x9D, kof2003h: 0x9D, jockeygp: 0xAC,
 };
 
+// S-ROM (fix layer) sizes for CMC games — from MAME neogeo.xml "fixed" region sizes
+// Default is 0x20000 (128KB). Games with larger fix tile sets listed here.
+export const CMC_SFIX_SIZES: Record<string, number> = {
+  garou: 0x80000, garouh: 0x80000,
+  mslug3: 0x80000, mslug3h: 0x80000, mslug3a: 0x80000,
+  kof2000: 0x80000, kof2000n: 0x80000,
+  kof2001: 0x80000, kof2001h: 0x80000,
+  mslug4: 0x80000, mslug4h: 0x80000,
+  kof2002: 0x80000, kof2002b: 0x80000,
+  matrim: 0x80000,
+  samsho5: 0x80000, samsho5h: 0x80000,
+  samsh5sp: 0x80000, samsh5sph: 0x80000,
+  mslug5: 0x80000, mslug5h: 0x80000,
+  svc: 0x80000, svcsplus: 0x80000,
+  kof2003: 0x80000, kof2003h: 0x80000,
+};
+export const CMC_SFIX_DEFAULT = 0x20000;
+
+// Fix layer banking types — from MAME neogeo_spr.h
+export enum FixBankType {
+  NONE = 0,   // no banking (fix ROM ≤ 128KB)
+  GAROU = 1,  // per-row sticky bank (garou, mslug3, mslug4)
+  KOF2000 = 2, // per-tile bank (kof2000, svc, kof2003)
+}
+
+// Per-game fix bank type — games with fix ROM > 128KB
+export const CMC_FIX_BANK_TYPE: Record<string, FixBankType> = {
+  garou: FixBankType.GAROU, garouh: FixBankType.GAROU,
+  mslug3: FixBankType.GAROU, mslug3h: FixBankType.GAROU, mslug3a: FixBankType.GAROU,
+  mslug4: FixBankType.GAROU, mslug4h: FixBankType.GAROU,
+  kof2000: FixBankType.KOF2000, kof2000n: FixBankType.KOF2000,
+  kof2001: FixBankType.KOF2000, kof2001h: FixBankType.KOF2000,
+  kof2002: FixBankType.KOF2000, kof2002b: FixBankType.KOF2000,
+  matrim: FixBankType.KOF2000,
+  samsho5: FixBankType.KOF2000, samsho5h: FixBankType.KOF2000,
+  samsh5sp: FixBankType.KOF2000, samsh5sph: FixBankType.KOF2000,
+  mslug5: FixBankType.KOF2000, mslug5h: FixBankType.KOF2000,
+  svc: FixBankType.KOF2000, svcsplus: FixBankType.KOF2000,
+  kof2003: FixBankType.KOF2000, kof2003h: FixBankType.KOF2000,
+};
+
 function cmcDecryptPair(
   c0: number, c1: number,
   table0hi: Uint8Array, table0lo: Uint8Array, table1: Uint8Array,
@@ -466,7 +507,11 @@ export function cmcGfxDecrypt(
   }
 }
 
-/** Extract S-ROM (fix layer) data from end of C-ROM with bit shuffle */
+/**
+ * Extract S-ROM (fix layer) data from end of C-ROM with bit shuffle.
+ * Formula from MAME prot_cmc.cpp::sfix_decrypt and FBNeo NeoCMCExtractSData.
+ * Within each 32-byte block, bits [4:0] are reordered: [b4 b3 b2 b1 b0] → [b2 b1 b0 ~b3 b4]
+ */
 export function cmcSfixDecrypt(
   cRom: Uint8Array, cRomSize: number,
   sRom: Uint8Array, sRomSize: number,

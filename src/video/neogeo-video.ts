@@ -25,6 +25,7 @@ import {
   NGO_TILE_BYTES, NGO_FIX_TILE_BYTES,
 } from '../neogeo-constants';
 import { decodeNeoGeoRow, decodeFixRow } from '../editor/neogeo-tile-encoder';
+import { FixBankType } from '../memory/neogeo-cmc';
 
 // ---------------------------------------------------------------------------
 // Palette decoding
@@ -190,8 +191,14 @@ export class NeoGeoVideo {
 
   /** Switch fix layer ROM source (BIOS sfix.sfix vs game S-ROM) */
   private useBiosFixRom: boolean = true;
+  /** Fix layer banking type for CMC games with S-ROM > 128KB */
+  private fixBankType: FixBankType = FixBankType.NONE;
+  /** Pre-allocated buffers for fix layer rendering (avoid per-frame GC) */
+  private readonly fixRow = new Uint8Array(8);
+  private readonly garouBanks = new Int32Array(32);
 
   setFixRomMode(useBios: boolean): void { this.useBiosFixRom = useBios; }
+  setFixBankType(type: FixBankType): void { this.fixBankType = type; }
 
   // ---------------------------------------------------------------------------
   // VRAM helpers
@@ -520,7 +527,23 @@ export class NeoGeoVideo {
 
     const fb32 = this.fb32;
     const fixRom = this.useBiosFixRom ? this.biosFixedRom : this.fixedRom;
-    const row = new Uint8Array(8);
+    const row = this.fixRow;
+    const banked = !this.useBiosFixRom && this.fixBankType !== FixBankType.NONE;
+
+    // Type 1 (Garou/mslug3): pre-compute per-row sticky bank from VRAM $7500/$7580
+    const garouBanks = this.garouBanks;
+    if (banked && this.fixBankType === FixBankType.GAROU) {
+      let bank = 0;
+      let k = 0;
+      for (let y = 0; y < 32; y++) {
+        if (this.readVramWord(0x7500 + k) === 0x0200 &&
+            (this.readVramWord(0x7580 + k) & 0xFF00) === 0xFF00) {
+          bank = this.readVramWord(0x7580 + k) & 3;
+        }
+        garouBanks[y] = bank;
+        k += 2;
+      }
+    }
 
     for (let col = 0; col < 40; col++) {
       for (let rowIdx = 0; rowIdx < 32; rowIdx++) {
@@ -528,7 +551,18 @@ export class NeoGeoVideo {
         const vramAddr = NGO_FIX_BASE + col * 32 + rowIdx;
         const word = this.readVramWord(vramAddr);
         const palette = (word >> 12) & 0x0F;
-        const tileCode = word & 0x0FFF;
+        let tileCode = word & 0x0FFF;
+
+        // CMC fix banking: extend 12-bit tile code with 2-bit bank (^ 3 inverts bank bits per MAME)
+        if (banked) {
+          if (this.fixBankType === FixBankType.GAROU) {
+            tileCode += 0x1000 * ((garouBanks[(rowIdx - 2) & 31]! ^ 3));
+          } else if (this.fixBankType === FixBankType.KOF2000) {
+            const bankRow = (rowIdx - 1) & 31;
+            const bankWord = this.readVramWord(0x7500 + bankRow + 32 * ((col / 6) | 0));
+            tileCode += 0x1000 * (((bankWord >> ((5 - (col % 6)) * 2)) & 3) ^ 3);
+          }
+        }
 
         const tileOffset = tileCode * NGO_FIX_TILE_BYTES;
         if (tileOffset + NGO_FIX_TILE_BYTES > fixRom.length) continue;

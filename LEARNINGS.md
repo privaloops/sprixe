@@ -1,5 +1,21 @@
 # Learnings
 
+## Session April 14
+
+### Neo-Geo CMC fix layer — three layers of bugs
+
+**Context:** CMC-encrypted games (garou, kof99, mslug3) had no HUD. The fix layer was blank or garbled.
+
+**Root cause 1 — empty buffer:** CMC games have no `fixed:` in their game def (S-ROM is embedded in C-ROM). The ROM loader returns `Uint8Array(0)`. `cmcSfixDecrypt` loops 0 times → no data.
+
+**Root cause 2 — wrong extraction size:** The S-ROM size varies per game (kof99=128KB, garou/mslug3=512KB). Hardcoding 128KB reads from the wrong C-ROM offset for 512KB games — you get the last quarter of the sfix region instead of the full thing. MAME `neogeo.xml` has authoritative sizes per game.
+
+**Root cause 3 — no fix layer banking:** The LSPC2 VRAM tile code is 12 bits (4096 tiles = 128KB). Games with 512KB S-ROM use banking via VRAM $7500-$75BF. Two schemes exist: Garou type (per-row sticky bank) and KOF2000 type (per-tile, 6 tiles per VRAM word). The 2-bit bank is XOR'd with 3 (inverted) and extends the tile code to 14 bits.
+
+**Key insight — MAME sfix_table vs sfix_decrypt:** MAME has TWO sfix functions. `sfix_table` (a 32-byte LUT in `neogeo_cmc.cpp`) is for the older `neogeo_sfix_decrypt`. The actual `prot_cmc.cpp::sfix_decrypt` uses an arithmetic formula identical to FBNeo's `NeoCMCExtractSData`. Using the LUT instead of the formula produces wrong byte ordering.
+
+**Key insight — FBNeo NeoDecodeText:** FBNeo applies `NeoDecodeText` (byte reorder + nibble swap) to ALL S-ROM data during loading, converting from hardware column-major to FBNeo's internal format. Our `decodeFixRow` handles column-major directly at render time, so we must NOT apply this conversion — just the raw extraction formula.
+
 ## Session April 3
 
 ### Pose deduplication — two independent bugs causing duplicates
