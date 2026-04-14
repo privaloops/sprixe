@@ -666,13 +666,83 @@ cps1-web/
 └── tsconfig.base.json                 # Shared TS config
 ```
 
-### 3.2 Shared Emulator Engine Extraction
+### 3.2 Shared Emulator Engine — Stratégie de Mutualisation
 
-**Moves to `@sprixe/engine`**: cpu/, video/ (renderers, cps1-video, neogeo-video), audio/ (workers, WASM, OKI, resampler), memory/ (bus, ROM loaders, game-defs), input/, emulator.ts, neogeo-emulator.ts, game-catalog.ts, save-state.ts, constants, types, dip-switches.
+Le principe : **logique dans `@sprixe/engine`, UI dans chaque produit**. Les deux produits (edit + frontend) partagent la même logique mais ont des UI radicalement différentes (clavier+souris vs gamepad-only).
 
-**Stays in `@sprixe/edit`**: editor/, debug/, ui/, audio-panel.ts, fm-patch-editor.ts, audio-viz.ts, GameScreen.ts, frame-state.ts, sprite-sheet.ts, rom-store.ts, beta-gate.ts.
+#### Ce qui va dans `@sprixe/engine`
 
-**New API needed**: `loadRomFromBuffer(name: string, data: ArrayBuffer)` on both Emulator and NeoGeoEmulator (currently only accept `File`). The frontend loads ROMs from IndexedDB as ArrayBuffer.
+**Émulation (déjà identifié)** :
+- cpu/, video/, audio/, memory/
+- `emulator.ts`, `neogeo-emulator.ts`
+- `game-catalog.ts`, `constants.ts`, `neogeo-constants.ts`, `types.ts`
+
+**Input — logique pure** :
+- `InputManager` (Gamepad API polling, axis→digital, device assignment, reconnection)
+- `InputMapping` type (button index → rôle)
+- `InputPersistence` — save/load mappings (localStorage abstrait)
+- `GamepadProbe` — écouter un bouton pressé et retourner son index (utilisé par les 2 UIs de config)
+
+**Save state — logique pure** :
+- `SaveStateSerializer` — serialize/deserialize CPU+memory snapshots
+- `SaveState` interface, `SlotInfo` interface
+- `bufToB64()`, `b64ToBuf()` — encodage binaire
+- **Pas** le storage (localStorage vs IndexedDB — chaque produit choisit)
+
+**Interface commune `EmulatorLike`** (pour que les composants partagés ne dépendent pas du type concret) :
+```ts
+interface EmulatorLike {
+  // Lifecycle
+  isRunning(): boolean;
+  isPaused(): boolean;
+  pause(): void;
+  resume(): void;
+  start(): void;
+  stop(): void;
+
+  // Audio
+  suspendAudio(): void;
+  resumeAudio(): void;
+
+  // State
+  getFrameCount(): number;
+  getFpsDisplay(): number;
+  getGameName(): string;
+
+  // Input
+  getInputManager(): InputManager;
+
+  // Save state
+  saveState(): SaveState;
+  loadState(state: SaveState): void;
+}
+```
+
+Les deux émulateurs (`Emulator` et `NeoGeoEmulator`) implémentent cette interface. Les composants partagés (shortcuts, save state logic) typent contre `EmulatorLike` au lieu de `Emulator`.
+
+**New API needed** : `loadRomFromBuffer(name: string, data: ArrayBuffer)` on both emulators (frontend loads ROMs from IndexedDB, not file picker).
+
+#### Ce qui reste dans `@sprixe/edit`
+
+- editor/, debug/, rom-store.ts, beta-gate.ts
+- ui/ (gamepad-config.ts, keyboard-config.ts, save-state-ui.ts, controls-bar.ts, etc.)
+- audio-panel.ts, fm-patch-editor.ts, audio-viz.ts
+- GameScreen.ts, frame-state.ts, sprite-sheet.ts
+
+Ces modules utilisent les APIs de `@sprixe/engine` mais ont leur propre UI DOM.
+
+#### Ce qui est nouveau dans `@sprixe/frontend`
+
+Le frontend construit sa propre UI pour les mêmes fonctionnalités, optimisée gamepad :
+
+| Fonctionnalité | `@sprixe/engine` (partagé) | `@sprixe/edit` (UI) | `@sprixe/frontend` (UI) |
+|---------------|---------------------------|--------------------|-----------------------|
+| **Config manette** | `InputManager`, `GamepadProbe` | Modal clavier+souris, dropdown device | Écran premier lancement, séquentiel, gamepad-only |
+| **Save/Load state** | `SaveStateSerializer`, `SaveState` | Modal 4 slots, F5/F8 shortcuts | Pause menu slots, gamepad nav, IndexedDB backend |
+| **Pause/Resume** | `EmulatorLike.pause/resume()` | Touche P, bouton emu-bar | Coin hold 1s, phone remote |
+| **Mute/Volume** | `EmulatorLike.suspendAudio()` | Touche M, bouton emu-bar | Pause menu slider, phone remote |
+| **ROM loading** | `loadRomFromZip()`, `loadRomFromBuffer()` | Drag-drop, file picker, game select | IndexedDB + phone upload |
+| **FPS display** | `EmulatorLike.getFpsDisplay()` | Debug panel, audio panel | Emu-bar counter |
 
 ### 3.3 Key New Modules
 
