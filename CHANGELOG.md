@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Fixed
+- **Neo-Geo ADPCM-B silence** — Games with a single V-ROM pool (fatfury1, blazstar, mslug2, etc.) had no in-game audio because ADPCM-B reads were offset by the full ROM size, reading zeros. The YM2610 WASM wrapper now reads from the same address space when there is no A/B split.
 - **Neo-Geo auto-animation speed** — Background animations on kof97/kof98/kof99 were cycling at 60fps instead of the game's programmed speed. The LSPC2 speed divider register (0x3C0006 upper byte) was stored but never consulted. Counter now increments every (speed+1) VBlanks.
 - **Neo-Geo CMC fix layer (HUD)** — Games with CMC encryption (garou, kof99, mslug3) now display their HUD correctly (health bars, timer, score, combos). Three bugs fixed:
   - S-ROM buffer allocation when no `fixed` ROM files in game def (was 0 bytes → no fix tiles)
