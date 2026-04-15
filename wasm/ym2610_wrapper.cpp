@@ -38,8 +38,11 @@ public:
             return 0;
         }
         if (type == ymfm::ACCESS_ADPCM_B) {
-            // ADPCM-B reads from [adpcm_a_size..combined_rom_size)
-            uint32_t rom_addr = adpcm_a_size + address;
+            // Shared pool (no split): A and B read from the same ROM
+            // Split pools: B reads from [adpcm_a_size..combined_rom_size)
+            uint32_t rom_addr = (adpcm_a_size >= combined_rom_size)
+                ? address % combined_rom_size   // shared: wrap around like hardware
+                : adpcm_a_size + address;
             if (rom_addr < combined_rom_size)
                 return combined_rom[rom_addr];
             return 0;
