@@ -22,13 +22,15 @@
    - 3.2 [Shared Emulator Engine Extraction](#32-shared-emulator-engine-extraction)
    - 3.3 [New Modules](#33-new-modules)
    - 3.4 [Build Pipeline](#34-build-pipeline)
-   - 3.5 [IndexedDB ROM Storage](#35-indexeddb-rom-storage)
-   - 3.6 [Service Worker / PWA](#36-service-worker--pwa)
-   - 3.7 [Local Upload Server](#37-local-upload-server)
-   - 3.8 [Input System Architecture](#38-input-system-architecture)
+   - 3.5 [Monorepo Package Configs](#35-monorepo-package-configs)
+   - 3.7 [Service Worker / PWA](#37-service-worker--pwa)
+   - 3.8 [ROM Transfer (WebRTC P2P)](#38-rom-transfer-webrtc-p2p)
+   - 3.9 [Input System Architecture](#39-input-system-architecture)
+   - 3.10 [Media CDN Pipeline](#310-media-cdn-pipeline)
 4. [Kiosk / RPi Image](#4-kiosk--rpi-image)
 5. [Implementation Phases](#5-implementation-phases)
 6. [Risks and Mitigations](#6-risks-and-mitigations)
+7. [Agent Execution Guide](#7-agent-execution-guide)
 
 ---
 
@@ -44,11 +46,11 @@ The product lives in a monorepo with 4 packages: `@sprixe/engine` (shared emulat
 |----------|--------|--------|
 | Layout | Vertical list + video preview | Readable at 1m, video gameplay preview after 1s |
 | Package manager | npm workspaces | Already used, no new tooling |
-| Upload server | Hono (Node.js) | Same language (TS), ultra lightweight, single process |
+| ROM transfer | WebRTC P2P (PeerJS) | ROMs never touch server, fast on local WiFi |
 | Hotkey system | Coin hold 1s = pause menu | No collision with gameplay, works on all encoders |
 | Phone | Telecommande + upload | Pause, save, load, quit, volume — résout le problème des panels sans Start/Select |
 | Scope V1 | CPS-1 + Neo-Geo only | Native emulators, no EmulatorJS |
-| Media | Pre-packaged screenshots + MP4 gameplay clips | Screenshot default, video after 1s on selected game |
+| Media | Lazy-loaded from CDN (screenshots, videos, marquees) | Fetched on-demand, cached in IndexedDB |
 
 ---
 
@@ -236,16 +238,18 @@ Compatible with ALL USB encoders: Xin-Mo, Zero Delay, Brook, GP2040-CE, I-PAC (c
 - Wraps around (bottom → top)
 
 **Preview panel (right)**:
-- **Default**: Screenshot (pre-packaged, from ScreenScraper/libretro-thumbnails)
+- **Default**: Screenshot (lazy-loaded from CDN, source: ScreenScraper/libretro-thumbnails)
 - **After 1s on same game**: Crossfade to MP4 gameplay clip (5-10s loop, with game audio)
 - **Fallback** (no screenshot): Placeholder gradient with title text in large font, system color
 - Below video: title, year · publisher · system, favorite toggle
 
-**Media assets** (pre-packaged):
-- Screenshots: ~300 PNG files, 384×224 or 320×224 native resolution
-- Videos: ~300 MP4 files, 5-10s loop, 384×224, H.264, ~500KB-2MB each
-- Total media budget: ~300-600MB for full CPS-1 + Neo-Geo catalog
-- Stored in IndexedDB alongside ROMs, or bundled in the RPi image
+**Media assets** (lazy-loaded from CDN):
+- Screenshots: PNG, 384×224 or 320×224 native resolution — fetched on-demand when game is selected
+- Videos: MP4, 5-10s loop, 384×224, H.264, ~500KB-2MB — fetched after 1s hover on selected game
+- Marquees: PNG decorative art — fetched when game detail is visible
+- **Nothing pre-bundled** — assets loaded from CDN (e.g. `cdn.sprixe.app/media/{system}/{romName}/`)
+- Cached in IndexedDB after first fetch (offline-ready via PWA)
+- Placeholder: gradient + title text in system color until screenshot loads
 
 **Filter bar**:
 - Horizontal pills: ALL | CPS-1 | NEO-GEO | ★ FAVORITES
@@ -359,7 +363,7 @@ Triggered by: Coin hold 1s, OR phone remote "Pause" button.
 
 The phone that uploaded ROMs stays connected via WebSocket and becomes a **remote control**. This is the primary way to manage the borne without touching the arcade panel.
 
-#### Phone UI (served at `http://<local-ip>:8042`)
+#### Phone UI (served at `https://sprixe.app/send/{roomId}`)
 
 Two tabs: **Upload** and **Remote**.
 
@@ -405,16 +409,16 @@ Two tabs: **Upload** and **Remote**.
 - Quit to menu (with confirmation)
 - Disabled buttons when no game running (greyed out)
 
-**WebSocket protocol** (frontend ↔ upload server ↔ phone):
+**WebRTC data channel protocol** (kiosk ↔ phone, P2P):
 
 ```
-Server → Phone:
+Kiosk → Phone:
   {"type": "state", "screen": "playing", "game": "sf2", "title": "Street Fighter II", "paused": false}
   {"type": "state", "screen": "browser"}
   {"type": "save-slots", "slots": [{"slot":0,"ts":1713020400},{"slot":1,"ts":0},...]}
   {"type": "volume", "level": 80}
 
-Phone → Server → Frontend:
+Phone → Kiosk:
   {"type": "cmd", "action": "pause"}
   {"type": "cmd", "action": "resume"}
   {"type": "cmd", "action": "save", "slot": 0}
@@ -422,6 +426,8 @@ Phone → Server → Frontend:
   {"type": "cmd", "action": "quit"}
   {"type": "cmd", "action": "volume", "level": 60}
 ```
+
+Same data channel used for both ROM transfer and remote control. No server in the loop after initial WebRTC handshake.
 
 ---
 
@@ -471,10 +477,12 @@ QR code available at:
 2. Settings > Network
 3. Phone already connected → always accessible
 
-QR code encodes: `http://<local-ip>:8042`
+QR code encodes: `https://sprixe.app/send/{roomId}`
+
+The room ID is generated by the kiosk and registered with the signaling server.
 
 When upload begins:
-- Toast at bottom: "Uploading Metal Slug... 45%"
+- Toast at bottom: "Receiving Metal Slug... 45%"
 - On completion: "Metal Slug added!" + game appears in list with "NEW" badge glow (2s)
 
 #### Phone Side (Upload tab)
@@ -504,24 +512,39 @@ When upload begins:
 └──────────────────────────────┘
 ```
 
-**Upload protocol**:
+**WebRTC P2P transfer protocol**:
+
 ```
-POST /api/upload  (multipart/form-data)
-
-Server → Phone (SSE):
-  event: progress   {"percent": 45, "filename": "sf2.zip"}
-  event: complete   {"filename": "sf2.zip", "game": "Street Fighter II", "system": "cps1"}
-  event: error      {"filename": "bad.zip", "error": "Unknown ROM format"}
+1. Kiosk generates roomId, creates RTCPeerConnection + RTCDataChannel
+2. Kiosk registers offer with signaling server (WebSocket on Vercel serverless)
+3. QR code → phone opens https://sprixe.app/send/{roomId}
+4. Phone connects to signaling server, receives offer, sends answer
+5. P2P data channel established (same WiFi = fast local transfer)
+6. Phone sends ROM files via data channel (chunked, with progress)
+7. Kiosk receives chunks, reassembles, identifies ROM, stores in IndexedDB
 ```
 
-**Server-side flow**:
-1. Receive ZIP via multipart upload → save to `/tmp/sprixe-uploads/`
-2. Send WebSocket notification to frontend: `{"type": "rom-uploaded", "filename": "sf2.zip"}`
-3. Frontend fetches file, identifies ROM using engine's ROM loader, stores in IndexedDB
-4. Frontend acks: `{"type": "rom-stored", "id": "sf2", "system": "cps1"}`
-5. Server deletes temp file, notifies phone of success
+**Signaling server** (Vercel serverless or PeerJS):
+- Only exchanges SDP offers/answers + ICE candidates (~1KB)
+- ROM data NEVER touches the server — 100% P2P
+- Fallback if WebRTC fails: relay through signaling server (slower but works)
 
-ROM identification happens in the browser (reuses existing `rom-loader.ts` and `neogeo-rom-loader.ts`). No logic duplication on the server.
+**Phone → Kiosk data channel messages**:
+```
+{"type": "file-start", "name": "mslug.zip", "size": 4521984}
+{"type": "chunk", "idx": 0, "data": <ArrayBuffer>}    // 64KB chunks
+{"type": "chunk", "idx": 1, "data": <ArrayBuffer>}
+{"type": "file-end", "name": "mslug.zip"}
+```
+
+**Kiosk → Phone data channel messages**:
+```
+{"type": "progress", "name": "mslug.zip", "percent": 67}
+{"type": "complete", "name": "mslug.zip", "game": "Metal Slug", "system": "neogeo"}
+{"type": "error", "name": "bad.zip", "error": "Unknown ROM format"}
+```
+
+ROM identification happens in the browser (reuses existing `rom-loader.ts` and `neogeo-rom-loader.ts`). No server-side logic.
 
 ---
 
@@ -603,8 +626,10 @@ cps1-web/
 │       │   │   ├── metadata-db.ts      # Game metadata + screenshots/videos
 │       │   │   ├── settings-store.ts   # Settings persistence (localStorage)
 │       │   │   └── play-history.ts     # Recently played, favorites, play counts
-│       │   ├── upload/
-│       │   │   └── ws-client.ts        # WebSocket client for upload + remote
+│       │   ├── transfer/
+│       │   │   ├── peer-host.ts        # WebRTC host (kiosk side, creates room)
+│       │   │   ├── peer-send.ts        # WebRTC sender (phone side)
+│       │   │   └── signaling.ts        # Signaling server client (WebSocket)
 │       │   ├── service-worker.ts       # PWA offline support
 │       │   ├── main.ts                 # Entry point
 │       │   └── styles/
@@ -616,51 +641,34 @@ cps1-web/
 │       ├── index.html
 │       ├── public/
 │       │   ├── fonts/                  # Rajdhani woff2
-│       │   ├── media/                  # Pre-packaged screenshots + MP4
-│       │   └── manifest.json
+│       │   └── manifest.json           # PWA manifest (no media bundled)
 │       ├── vite.config.ts
 │       └── package.json
 │
-├── server/                            # Upload + remote server (RPi)
-│   ├── src/
-│   │   ├── index.ts                   # Hono server entry
-│   │   ├── upload-handler.ts          # Multipart upload + temp storage
-│   │   ├── ws-bridge.ts              # WebSocket: frontend ↔ phone
-│   │   └── static/
-│   │       └── phone.html            # Phone UI (upload + remote, self-contained)
-│   ├── package.json
-│   └── tsconfig.json
 │
 ├── packages/
-│   └── sprixe-image/                  # RPi SD card image builder
-│       ├── plymouth/
-│       │   ├── sprixe.plymouth        # Plymouth theme descriptor
-│       │   ├── sprixe.script          # Plymouth animation script
-│       │   └── logo.png               # Boot logo (matches HTML splash)
-│       ├── systemd/
-│       │   ├── sprixe-chromium.service # Chromium kiosk autostart
-│       │   ├── sprixe-server.service   # Hono upload server autostart
-│       │   └── sprixe-watchdog.service # Auto-restart on crash
-│       ├── config/
-│       │   ├── chromium-flags.conf    # --kiosk --no-first-run etc.
-│       │   ├── xorg.conf             # Minimal X11 (or cage for Wayland)
-│       │   ├── network/
-│       │   │   ├── wpa_supplicant.conf # WiFi join mode (V1)
-│       │   │   └── hostapd.conf       # WiFi AP mode (V2)
-│       │   └── boot/
-│       │       ├── config.txt         # RPi firmware config (GPU mem, HDMI)
-│       │       └── cmdline.txt        # Kernel params (quiet splash)
-│       ├── scripts/
-│       │   ├── build-image.sh         # Pi-gen based image builder
-│       │   ├── setup.sh               # First-boot provisioning script
-│       │   ├── install-deps.sh        # apt packages (chromium, xorg, node)
-│       │   └── optimize-boot.sh       # Disable unused services, boot time
-│       ├── rootfs/
-│       │   ├── etc/                   # Config files copied to image /etc/
-│       │   └── opt/sprixe/            # App deployment directory structure
-│       ├── Makefile                   # Build targets: image, flash, clean
-│       ├── README.md                  # Image build instructions
-│       └── package.json               # npm scripts: build, flash
+│   └── sprixe-image/                  # RPi SD card image builder (pi-gen)
+│       ├── stage-sprixe/              # Custom pi-gen stage
+│       │   ├── 00-install-deps/
+│       │   │   └── 00-run.sh          # apt install chromium-browser xorg unclutter
+│       │   ├── 01-kiosk-config/
+│       │   │   ├── files/
+│       │   │   │   ├── sprixe-kiosk.service    # Chromium → sprixe.app/play/
+│       │   │   │   ├── sprixe-watchdog.service # Auto-restart on crash
+│       │   │   │   ├── config.txt              # GPU mem=256, KMS, HDMI
+│       │   │   │   └── cmdline.txt             # quiet splash loglevel=3
+│       │   │   └── 00-run.sh          # Copy configs, enable services, autologin
+│       │   ├── 02-plymouth/
+│       │   │   ├── files/
+│       │   │   │   ├── sprixe.plymouth
+│       │   │   │   ├── sprixe.script
+│       │   │   │   └── logo.png       # Boot logo (matches HTML splash)
+│       │   │   └── 00-run.sh          # Install plymouth theme
+│       │   └── 03-optimize/
+│       │       └── 00-run.sh          # Disable bluetooth, avahi, apt-daily, etc.
+│       ├── config                     # pi-gen config (IMG_NAME, RELEASE, stages)
+│       ├── Makefile                   # make image, make clean
+│       └── README.md
 │
 ├── package.json                       # Root workspace config
 └── tsconfig.base.json                 # Shared TS config
@@ -814,7 +822,7 @@ interface MetadataRecord {
 interface SaveStateRecord {
   gameId: string;
   slot: number;           // 0-3
-  data: string;           // JSON serialized
+  data: ArrayBuffer;      // Binary snapshot (CPU + RAM + VRAM), NOT JSON string
   timestamp: number;
 }
 ```
@@ -839,12 +847,11 @@ interface ScreenController {
 ```json
 {
   "private": true,
-  "workspaces": ["packages/*", "server"],
+  "workspaces": ["packages/*"],
   "scripts": {
     "dev:edit": "npm -w @sprixe/edit run dev",
     "dev:frontend": "npm -w @sprixe/frontend run dev",
     "dev:site": "npm -w @sprixe/site run dev",
-    "dev:server": "npm -w server run dev",
     "build": "npm -ws run build",
     "test": "npm -ws run test"
   }
@@ -853,23 +860,136 @@ interface ScreenController {
 
 No build step for `@sprixe/engine` — Vite resolves TS imports directly. Each consumer bundles engine code.
 
-### 3.5 Service Worker / PWA
+### 3.5 Monorepo Package Configs
 
-Precache all static assets at install (HTML, CSS, JS, WASM, fonts, media). ROMs stay in IndexedDB (not SW cache). Use `vite-plugin-pwa` or manual Workbox.
+These exact configs are required for Vite + TypeScript to resolve `@sprixe/engine` imports without a build step. **Copy these verbatim** — incorrect `exports` or `paths` will cascade into hundreds of TS errors.
 
-### 3.6 Local Upload Server
+#### `packages/sprixe-engine/package.json`
+```json
+{
+  "name": "@sprixe/engine",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./*": "./src/*"
+  },
+  "types": "./src/index.ts"
+}
+```
 
-**Hono on Node.js**, port 8042. Single process serves:
-- `GET /` → Frontend static files (Chromium loads this)
-- `GET /phone` → Phone page (upload + remote)
-- `POST /api/upload` → Multipart ROM upload → temp dir
-- `GET /api/download/:filename` → Frontend fetches temp ROM
-- `GET /api/games` → Installed games list (for phone UI)
-- `WS /ws` → WebSocket bridge (frontend ↔ phone)
+Usage in consumers: `import { Emulator } from '@sprixe/engine/emulator'` resolves to `packages/sprixe-engine/src/emulator.ts`.
 
-COOP/COEP headers on all responses. CORS for phone page.
+#### `packages/sprixe-edit/package.json`
+```json
+{
+  "name": "@sprixe/edit",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@sprixe/engine": "*"
+  }
+}
+```
 
-### 3.7 Input System Architecture
+#### `packages/sprixe-frontend/package.json`
+```json
+{
+  "name": "@sprixe/frontend",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@sprixe/engine": "*",
+    "peerjs": "^1.5.4"
+  }
+}
+```
+
+#### `tsconfig.base.json` (root)
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "paths": {
+      "@sprixe/engine/*": ["./packages/sprixe-engine/src/*"]
+    }
+  }
+}
+```
+
+#### Per-package `tsconfig.json` (edit, frontend, site)
+```json
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": ["src"],
+  "references": [{ "path": "../sprixe-engine" }]
+}
+```
+
+#### Vite config (each consumer)
+```ts
+// vite.config.ts — add to resolve.alias
+import path from 'path';
+export default defineConfig({
+  resolve: {
+    alias: {
+      '@sprixe/engine': path.resolve(__dirname, '../sprixe-engine/src')
+    }
+  }
+});
+```
+
+**Validation checkpoint**: After setting up these configs, run `npx tsc --noEmit` from root. Zero errors = proceed.
+
+### 3.7 Service Worker / PWA (optional offline)
+
+**Online-first by default**. PWA optionnel pour les utilisateurs qui veulent du offline.
+
+- Precache: HTML, CSS, JS, WASM, fonts (static shell only — no media)
+- Media assets (screenshots, videos, marquees): cached in IndexedDB on first fetch from CDN
+- ROMs: already in IndexedDB
+- Strategy: Network-first for app shell, Cache-first for media assets
+- Use `vite-plugin-pwa` or manual Workbox
+
+### 3.8 ROM Transfer (WebRTC P2P)
+
+No local server needed. The kiosk and phone connect via WebRTC data channel for ROM transfer.
+
+**Signaling — V1: PeerJS Cloud** (zero server code):
+- Use PeerJS Cloud (free, hosted by PeerJS team) for signaling
+- Kiosk generates a random `roomId`, creates a `Peer(roomId)` — that's the signaling
+- Phone connects with `peer.connect(roomId)` — P2P data channel established
+- ROM data is 100% P2P, signaling only exchanges SDP (~1KB)
+- **Do NOT build a custom Vercel signaling server for V1** — PeerJS Cloud handles it
+- V2: migrate to self-hosted PeerJS server if scale/reliability requires it
+
+**Library**: PeerJS (`peerjs@^1.5.4`) — wraps WebRTC complexity in ~10 lines of code per side.
+
+**Phone remote control**: also via the same WebRTC data channel. Phone page served from `sprixe.app/send/{roomId}` (static, hosted on Vercel).
+
+**Large ROM transfer — flow control** (Neo-Geo ROMs can be 50-200MB):
+- Chunk size: 64KB per message (WebRTC data channel default buffer is 256KB)
+- **Backpressure**: check `dataChannel.bufferedAmount` before sending next chunk. If > 1MB, wait for `bufferedamountlow` event before resuming
+- Progress: emit `{"type": "progress", ...}` every 10 chunks (not every chunk — reduces overhead)
+- Timeout: if no chunk received for 10s, show "Transfer stalled" error on both sides
+- Retry: on data channel close mid-transfer, attempt one reconnect. If fails, show error with "Try again" button
+
+**Fallback**: if WebRTC fails (corporate firewall, no STUN/TURN), relay ROM data through PeerJS Cloud TURN relay. PeerJS handles this automatically via ICE candidates. If all fails, show clear error message.
+
+### 3.9 Input System Architecture
 
 ```
                     ┌──────────────────────┐
@@ -916,71 +1036,193 @@ Both GamepadNav and InputManager read from this mapping. GamepadNav translates t
 
 I-PAC detection: if no gamepad connected but keyboard events arrive during mapping → switch to keyboard mode. Same mapping structure but `{"type": "key", "code": "KeyA"}`.
 
+### 3.10 Media CDN Pipeline
+
+**CDN URL pattern**: `https://cdn.sprixe.app/media/{system}/{romName}/{asset}`
+
+```
+cdn.sprixe.app/media/
+  cps1/
+    sf2/
+      screenshot.png    # 384×224, native resolution
+      video.mp4         # 5-10s loop, H.264 baseline, 384×224, ~500KB-2MB
+      marquee.png       # Decorative art (optional)
+    ffight/
+      screenshot.png
+      video.mp4
+  neogeo/
+    mslug/
+      screenshot.png    # 320×224
+      video.mp4
+```
+
+**Manifest** — the frontend needs to know which assets exist per game:
+
+Option A (recommended): **No manifest file**. The frontend tries to fetch each asset type and handles 404 gracefully. Screenshot first, video after 1s hover. If 404 → show placeholder. This avoids maintaining a separate manifest.
+
+```ts
+// Pseudo-code for media loading
+async function loadMedia(system: string, romName: string): Promise<MediaAssets> {
+  const base = `https://cdn.sprixe.app/media/${system}/${romName}`;
+  const screenshot = await fetchOrNull(`${base}/screenshot.png`);
+  // Video loaded lazily after 1s on same game selection
+  return { screenshot, videoUrl: `${base}/video.mp4` };
+}
+```
+
+Option B: `manifest.json` at CDN root listing all available assets. Fetched once at app boot, cached. More efficient (one request vs many 404s) but requires updating the manifest when assets are added.
+
+**Asset generation pipeline** (run once, offline):
+1. Use ScreenScraper API or libretro-thumbnails to fetch existing screenshots
+2. Record MP4 gameplay clips: load ROM in Sprixe, capture 5-10s via `MediaRecorder` API or ffmpeg
+3. Upload to CDN (Vercel Blob, Cloudflare R2, or S3)
+4. Assets are NOT bundled in the app or the RPi image
+
+**Caching**: First fetch from CDN → store in IndexedDB (`metadata-db.ts`). Subsequent loads read from IndexedDB (offline-ready).
+
 ---
 
 ## 4. Kiosk / RPi Image (`@sprixe/image`)
 
-Le package `sprixe-image` produit une image SD flashable. C'est un livrable à part entière.
+Le package `sprixe-image` produit une image SD flashable. L'image est un **thin client** : Chromium en kiosk charge l'app depuis `https://sprixe.app/play/`. Aucun serveur local, aucune logique applicative embarquée. Les mises à jour sont instantanées (reload = dernière version).
 
-### 4.1 Base OS
-
-**Raspberry Pi OS Lite (64-bit, Bookworm)**. No desktop. Minimal X11 ou Cage (Wayland kiosk compositor).
-
-### 4.2 Image Build Pipeline
-
-Le build utilise **pi-gen** (l'outil officiel de la Raspberry Pi Foundation) avec un stage custom :
+### 4.1 Architecture online-first
 
 ```
-pi-gen/
-  stage0  — bootstrap (debootstrap)
-  stage1  — base system (apt, kernel)
-  stage2  — lite system (networking, users)
-  stage-sprixe  — CUSTOM: Sprixe Arcade setup
-    ├── 00-install-deps     # chromium, xorg/cage, nodejs 20 LTS
-    ├── 01-deploy-app       # copy built frontend + server to /opt/sprixe/
-    ├── 02-systemd-services # install .service files, enable at boot
-    ├── 03-plymouth-theme   # install boot splash
-    ├── 04-boot-config      # config.txt, cmdline.txt, quiet splash
-    ├── 05-user-setup       # create 'sprixe' user, autologin
-    ├── 06-optimize          # disable bluetooth, avahi, apt-daily, etc.
-    └── 07-firstboot        # first-boot script (expand fs, generate keys)
+RPi (image SD)                     Cloud (Vercel)
+──────────────                     ──────────────
+Linux minimal                      sprixe.app/play/  ← Frontend
+Chromium --kiosk --app=URL    →    sprixe.app/send/  ← Phone upload page
+(pas de serveur local)             CDN media assets
+                                   Signaling server (WebSocket, serverless)
 ```
 
-**Build command** :
-```bash
-cd packages/sprixe-image
-make image    # runs pi-gen, outputs sprixe-arcade-v1.0.0.img.xz
-make flash    # flash to SD card (uses dd or rpi-imager CLI)
-make clean    # remove build artifacts
+- **Mises à jour** : déployer sur Vercel → tous les kiosks ont la nouvelle version au reload
+- **PWA optionnel** : l'utilisateur peut installer la PWA pour du offline (service worker cache les assets)
+- **Pas de serveur local** : le QR code pointe vers `sprixe.app/send/{roomId}`, le transfer est P2P via WebRTC
+
+### 4.2 Base OS
+
+**Raspberry Pi OS Lite (64-bit, Bookworm)**. No desktop. Minimal X11 (ou Cage pour Wayland).
+
+### 4.3 Image Build — pi-gen + GitHub Actions CI
+
+L'image est buildée automatiquement en CI à chaque release. Zéro build local nécessaire.
+
+#### pi-gen stage custom (`stage-sprixe/`)
+
+```
+stage-sprixe/
+  00-install-deps/
+    00-run.sh        # apt install chromium-browser xserver-xorg xinit unclutter
+  01-kiosk-config/
+    files/
+      sprixe-kiosk.service     # Chromium → https://sprixe.app/play/
+      sprixe-watchdog.service  # Health check + auto-restart
+      sprixe-watchdog.timer    # Toutes les 30s
+      config.txt               # gpu_mem=256, KMS, HDMI force
+      cmdline.txt              # quiet splash loglevel=3
+    00-run.sh                  # Copie configs, enable services, autologin
+  02-plymouth/
+    files/
+      sprixe.plymouth          # Theme descriptor
+      sprixe.script            # Animation script
+      logo.png                 # Boot logo (identique au splash HTML)
+    00-run.sh                  # Install plymouth theme, set default
+  03-optimize/
+    00-run.sh                  # Disable bluetooth, avahi, apt-daily, ModemManager
 ```
 
-**CI** : le build image peut tourner dans GitHub Actions avec un runner ARM64 ou via QEMU cross-compilation.
-
-### 4.3 Contenu de l'image
+#### pi-gen config
 
 ```
-/opt/sprixe/
-├── frontend/
-│   └── dist/          # Built sprixe-frontend (HTML/CSS/JS/WASM/fonts/media)
-├── server/
-│   └── dist/          # Built Hono server (compiled TS → JS)
-│       └── phone.html # Phone upload + remote page
-└── version.txt        # Numéro de version pour les mises à jour
+IMG_NAME=sprixe-arcade
+RELEASE=bookworm
+TARGET_HOSTNAME=sprixe
+FIRST_USER_NAME=sprixe
+FIRST_USER_PASS=sprixe
+LOCALE_DEFAULT=en_US.UTF-8
+KEYBOARD_KEYMAP=us
+ENABLE_SSH=0
+STAGE_LIST="stage0 stage1 stage2 stage-sprixe"
 ```
 
-### 4.4 Chromium Kiosk
+#### GitHub Actions CI — build automatique à chaque release
 
-```bash
-# /etc/systemd/system/sprixe-chromium.service
+```yaml
+# .github/workflows/build-image.yml
+name: Build RPi Image
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build with pi-gen
+        uses: usimd/pi-gen-action@v1
+        with:
+          image-name: sprixe-arcade
+          release: bookworm
+          hostname: sprixe
+          username: sprixe
+          password: sprixe
+          enable-ssh: false
+          stage-list: stage0 stage1 stage2 ./packages/sprixe-image/stage-sprixe
+          verbose-output: true
+
+      - name: Compress image
+        run: xz -9 deploy/sprixe-arcade.img
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: deploy/sprixe-arcade.img.xz
+```
+
+**Output** : `sprixe-arcade.img.xz` (~500-700MB) attaché à la GitHub Release, téléchargeable depuis `sprixe.app/download`.
+
+#### Makefile local (développement/debug uniquement)
+
+```makefile
+image:
+	cd pi-gen && sudo ./build-docker.sh
+clean:
+	cd pi-gen && sudo ./build-docker.sh clean
+```
+
+### 4.4 Ce que l'image contient
+
+```
+Raspberry Pi OS Lite (Bookworm 64-bit)
+├── chromium-browser          # Navigateur kiosk
+├── xserver-xorg + xinit      # X11 minimal (pas de desktop)
+├── unclutter                  # Cache le curseur souris
+├── plymouth sprixe theme      # Boot splash (logo identique au HTML)
+└── systemd services:
+    ├── sprixe-kiosk.service   # Chromium → sprixe.app/play/
+    └── sprixe-watchdog.timer  # Health check toutes les 30s
+```
+
+**Ce qu'elle ne contient PAS** : Node.js, serveur, frontend bundlé, ROMs, media assets. C'est un **thin client pur**.
+
+### 4.5 Chromium Kiosk Service
+
+```ini
 [Unit]
-Description=Sprixe Arcade (Chromium Kiosk)
-After=graphical.target sprixe-server.service
-Wants=sprixe-server.service
+Description=Sprixe Arcade Kiosk
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=sprixe
 Environment=DISPLAY=:0
+ExecStartPre=/usr/bin/xinit -- :0 -nocursor &
+ExecStartPre=/bin/sleep 2
 ExecStartPre=/usr/bin/xset -dpms
 ExecStartPre=/usr/bin/xset s off
 ExecStart=/usr/bin/chromium-browser \
@@ -993,106 +1235,68 @@ ExecStart=/usr/bin/chromium-browser \
   --enable-gpu-rasterization --enable-zero-copy \
   --ignore-gpu-blocklist \
   --user-data-dir=/home/sprixe/.chromium \
-  http://localhost:8042
+  https://sprixe.app/play/
 Restart=always
 RestartSec=3
-
-[Install]
-WantedBy=graphical.target
-```
-
-### 4.5 Upload Server Service
-
-```bash
-# /etc/systemd/system/sprixe-server.service
-[Unit]
-Description=Sprixe Upload Server
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=sprixe
-WorkingDirectory=/opt/sprixe/server
-ExecStart=/usr/bin/node dist/index.js
-Restart=always
-RestartSec=5
-Environment=PORT=8042
-Environment=UPLOAD_DIR=/tmp/sprixe-uploads
-Environment=STATIC_DIR=/opt/sprixe/frontend/dist
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-### 4.6 Watchdog Service
+### 4.6 Boot Config
 
-```bash
-# /etc/systemd/system/sprixe-watchdog.service
-[Unit]
-Description=Sprixe Health Monitor
+```ini
+# /boot/firmware/config.txt
+gpu_mem=256
+hdmi_force_hotplug=1
+disable_overscan=1
+dtoverlay=vc4-kms-v3d
 
-[Service]
-Type=oneshot
-ExecStart=/opt/sprixe/scripts/health-check.sh
-# Vérifie que Chromium + server tournent, redémarre si crash
+# /boot/firmware/cmdline.txt
+... quiet splash loglevel=3 vt.global_cursor_default=0
 ```
-
-Timer associé qui exécute le health check toutes les 30 secondes.
 
 ### 4.7 Plymouth Boot Splash
 
-```ini
-# plymouth/sprixe.plymouth
-[Plymouth Theme]
-Name=Sprixe Arcade
-Description=Sprixe Arcade boot splash
-ModuleName=script
+Logo Sprixe centré, fond noir, glow pulse. Visuellement **identique au splash HTML** pour transition invisible (Plymouth → Chromium).
 
-[script]
-ImageDir=/usr/share/plymouth/themes/sprixe
-ScriptFile=/usr/share/plymouth/themes/sprixe/sprixe.script
-```
+### 4.8 Network
 
-Logo PNG centré, fond noir, glow pulse. Visuellement identique au splash HTML pour transition invisible.
+**V1** : Join existing WiFi. Configuré pendant le flash via Pi Imager (interface graphique, champ WiFi intégré). Aucun fichier à éditer manuellement.
 
-### 4.8 Boot Config
+**V2** : WiFi AP mode — le RPi crée son propre réseau "Sprixe-Arcade" (`hostapd` + `dnsmasq`). Pas besoin de routeur/internet pour le P2P local.
 
-```ini
-# config.txt (GPU, HDMI)
-gpu_mem=256           # 256MB GPU pour WebGL
-hdmi_force_hotplug=1  # Forcer HDMI même sans écran détecté
-disable_overscan=1    # Pas de bordures noires
-dtoverlay=vc4-kms-v3d # KMS driver (requis pour Chromium GPU accel)
+### 4.9 Mises à jour
 
-# cmdline.txt
-quiet splash loglevel=3 vt.global_cursor_default=0
-```
+**Frontend** : automatiques. Déployer sur Vercel = tous les kiosks ont la nouvelle version au prochain reload. Zéro intervention.
 
-### 4.9 Network
+**Image SD** : V1 manuelles (reflash avec nouvelle image). V2 OTA pour les mises à jour système (kernel, Chromium).
 
-**V1** : Join existing WiFi (configuré pendant le flash via Pi Imager ou `wpa_supplicant.conf` pré-rempli).
-
-**V2** : WiFi AP mode — le RPi crée son propre réseau "Sprixe-Arcade". Le phone se connecte directement. Utilise `hostapd` + `dnsmasq`. Pas besoin de routeur/internet.
-
-### 4.10 Mises à jour
-
-**V1** : manuelles — reflash la SD card avec une nouvelle image.
-
-**V2** : OTA (over-the-air) — le serveur vérifie `version.txt` contre un endpoint distant, télécharge le nouveau bundle frontend + server, redémarre les services. Pas de reflash nécessaire.
-
-### 4.11 Boot Time Target
+### 4.10 Boot Time Target
 
 Objectif : **< 12 secondes** (power → game browser visible).
 
 | Étape | Durée cible | Optimisation |
 |-------|-------------|-------------|
 | Kernel boot | ~3s | `quiet splash`, kernel minimal |
-| Plymouth | 3-5s | Masque le boot, glow animation |
-| X11 + Chromium launch | ~3s | Preloaded profile, no first-run |
-| App init (WASM load) | ~2s | Precached par service worker |
+| Plymouth splash | 3-5s | Masque le boot, glow animation |
+| X11 + Chromium | ~3s | Profil pré-chargé, no first-run |
+| App init (WASM) | ~2s | Service worker precache |
 
-Optimisations : désactiver bluetooth, avahi-daemon, apt-daily-upgrade, ModemManager. `systemd-analyze blame` pour identifier les services lents.
+### 4.11 Expérience utilisateur finale
+
+```
+1. Télécharger sprixe-arcade.img.xz depuis sprixe.app/download
+2. Ouvrir Raspberry Pi Imager
+3. Sélectionner l'image Sprixe, configurer WiFi (interface graphique)
+4. Flasher sur carte SD
+5. Insérer SD, brancher HDMI + manette + alimentation
+6. Boot → logo Sprixe → écran d'accueil avec QR code
+7. Scanner QR → envoyer ROMs depuis le téléphone
+8. Jouer
+
+Temps total : ~3 minutes. Zéro terminal. Zéro clavier. Zéro SSH.
+```
 
 ---
 
@@ -1101,14 +1305,43 @@ Optimisations : désactiver bluetooth, avahi-daemon, apt-daily-upgrade, ModemMan
 ### Phase 0: Monorepo Setup (1 week)
 **Goal**: Convert to monorepo without breaking anything.
 
-1. Init npm workspaces
-2. Create `packages/sprixe-engine/` — move shared emulator files
-3. Create `packages/sprixe-edit/` — move editor + UI
-4. Create `packages/sprixe-site/` — extract landing page
-5. Create `packages/sprixe-image/` — scaffold RPi image package (Makefile, scripts, configs)
-6. Update all imports to use `@sprixe/engine`
-7. Verify tests pass, dev server works, build works
-7. No new features — pure refactoring
+> **CRITICAL for agents**: This phase is the most error-prone. Move files in small atomic steps with test validation between each. NEVER move everything at once — a cascade of 200+ TS errors from broken imports is extremely costly to debug.
+
+**Step 0.1 — Workspace scaffolding** (no file moves yet):
+1. Create `packages/` directory structure (empty packages)
+2. Add root `package.json` with `"workspaces": ["packages/*"]`
+3. Create `tsconfig.base.json` at root (see §3.5 for exact content)
+4. Create each package's `package.json` and `tsconfig.json` (see §3.5)
+5. **Checkpoint**: `npm install` succeeds, no errors
+
+**Step 0.2 — Extract `@sprixe/engine`**:
+1. Move `src/cpu/`, `src/audio/`, `src/video/`, `src/memory/` → `packages/sprixe-engine/src/`
+2. Move shared files: `emulator.ts`, `neogeo-emulator.ts`, `game-catalog.ts`, `constants.ts`, `neogeo-constants.ts`, `types.ts`, `save-state.ts`, `dip-switches.ts`, `input/input.ts`
+3. Create `packages/sprixe-engine/src/index.ts` barrel export
+4. Update all import paths in moved files (intra-engine references)
+5. **Checkpoint**: `npx tsc --noEmit -p packages/sprixe-engine/tsconfig.json` — zero errors
+
+**Step 0.3 — Extract `@sprixe/edit`**:
+1. Move `src/editor/`, `src/debug/`, `src/ui/`, remaining `src/` files → `packages/sprixe-edit/src/`
+2. Update imports to use `@sprixe/engine/*` for shared modules
+3. Move `vite.config.ts`, `play/index.html`, `public/` → `packages/sprixe-edit/`
+4. Update Vite config with engine alias (see §3.5)
+5. **Checkpoint**: `npm run dev:edit` launches, game loads, tests pass (`npm test -w @sprixe/edit`)
+
+**Step 0.4 — Extract `@sprixe/site`**:
+1. Move `src/landing.ts`, `index.html`, `styles/landing.css` → `packages/sprixe-site/`
+2. **Checkpoint**: `npm run dev:site` serves landing page
+
+**Step 0.5 — Scaffold `@sprixe/image`**:
+1. Create `packages/sprixe-image/` with Makefile, stage-sprixe/ scripts, configs
+2. No runtime code — just infrastructure files
+3. **Checkpoint**: directory structure matches §3.1
+
+**Step 0.6 — Final validation**:
+1. `npm test` from root — all existing tests pass
+2. `npm run build` from root — all packages build
+3. `npm run dev:edit` — editor works identically to before
+4. No new features — pure refactoring
 
 **Deliverable**: `npm run dev:edit` and `npm run dev:site` launch existing apps, unchanged.
 
@@ -1143,28 +1376,40 @@ Optimisations : désactiver bluetooth, avahi-daemon, apt-daily-upgrade, ModemMan
 
 **Deliverable**: Load ROM manually, see in browser, play, pause, save, quit.
 
-### Phase 3: ROM Upload + Phone Remote (2 weeks)
-**Goal**: Upload from phone + remote control.
+### Phase 3: ROM Transfer (WebRTC) + Phone Remote (3 weeks)
+**Goal**: Transfer ROMs from phone via QR code + remote control.
 
-1. Build Hono upload server (multipart, WebSocket, static)
-2. Build phone page: Upload tab (drag-drop, progress, queue)
-3. Build phone page: Remote tab (pause, save, load, quit, volume)
-4. QR code display on frontend
-5. WebSocket bridge: frontend ↔ server ↔ phone
-6. Upload → identification → IndexedDB pipeline
-7. Real-time progress on both phone and TV
-8. Empty state / first boot experience
-9. Error handling (invalid ROM, unknown format, storage full)
+> **Estimation note**: Originally 2 weeks, extended to 3. WebRTC P2P with chunked file transfer, backpressure, reconnection, plus the phone UI (two tabs, responsive) is more complex than it looks. Plan accordingly.
 
-**Deliverable**: Scan QR, upload ROMs, see them appear, control the borne from phone.
+**Week 1 — P2P foundation + basic transfer**:
+1. Integrate PeerJS (`peerjs@^1.5.4`) — use PeerJS Cloud for signaling (no custom server)
+2. Implement `peer-host.ts` (kiosk: `new Peer(roomId)`, listen for connections)
+3. Implement `peer-send.ts` (phone: `peer.connect(roomId)`, chunked file send with backpressure — see §3.8)
+4. ROM transfer → identification (reuse `rom-loader.ts`) → IndexedDB storage
+5. **E2E test**: open two browser tabs, transfer a ROM from one to another. Must work before proceeding.
+
+**Week 2 — Phone UI + remote control**:
+6. Build phone page (`sprixe.app/send/{roomId}`): Upload tab (file picker, drag-drop, progress queue)
+7. Build phone page: Remote tab (pause, save, load, quit, volume)
+8. QR code display on kiosk (use `qrcode` npm package, canvas-based)
+9. Real-time state sync kiosk → phone (game playing, paused, browser)
+10. Empty state / first boot experience (QR prominent)
+
+**Week 3 — Polish + error handling**:
+11. Error handling: invalid ROM, unknown format, storage full, transfer timeout
+12. Reconnection: if data channel drops mid-transfer, attempt one reconnect
+13. Toast notifications on kiosk (receiving, complete, error)
+14. Phone UI responsive polish (tested on iOS Safari + Android Chrome)
+
+**Deliverable**: Scan QR, send ROMs P2P, see them appear, control the borne from phone.
 
 ### Phase 4: Polish + Settings (1 week)
 **Goal**: Feature-complete V1.
 
 1. Settings screen (display, audio, controls, network, storage, about)
 2. CRT filter, integer scaling, TATE auto-detect
-3. Pre-packaged media: screenshots + MP4 clips (ScreenScraper scrape)
-4. Video preview: screenshot → MP4 crossfade after 1s
+3. CDN media pipeline: upload screenshots + MP4 clips to CDN (ScreenScraper scrape)
+4. Video preview: lazy-fetch screenshot from CDN → MP4 crossfade after 1s
 5. Recently played / favorites persistence
 6. Alphabetical jump (letter wheel)
 7. Animation polish (transitions, parallax, glow effects)
@@ -1173,12 +1418,12 @@ Optimisations : désactiver bluetooth, avahi-daemon, apt-daily-upgrade, ModemMan
 **Deliverable**: Full arcade frontend, all features, visually polished.
 
 ### Phase 5: RPi Image — `@sprixe/image` (1 week)
-**Goal**: Flashable SD card via `make image`.
+**Goal**: Flashable SD card (thin client) via `make image`.
 
 1. Configure pi-gen avec stage-sprixe custom
-2. `install-deps.sh` : chromium, xorg/cage, nodejs 20 LTS
-3. `setup.sh` : user sprixe, autologin, deploy frontend+server à /opt/sprixe/
-4. Systemd services : sprixe-chromium, sprixe-server, sprixe-watchdog
+2. `install-deps.sh` : chromium, xorg/cage (NO nodejs, no server)
+3. `setup.sh` : user sprixe, autologin, WiFi config
+4. Systemd services : sprixe-chromium (→ `https://sprixe.app/play/`), sprixe-watchdog
 5. Plymouth boot splash theme (logo + glow, identique au splash HTML)
 6. Boot config : config.txt (gpu_mem=256, KMS), cmdline.txt (quiet splash)
 7. Network : wpa_supplicant pré-configuré (WiFi join, V1)
@@ -1187,7 +1432,7 @@ Optimisations : désactiver bluetooth, avahi-daemon, apt-daily-upgrade, ModemMan
 10. Test sur vrai RPi 5 : boot time, FPS, audio latency, gamepad
 11. Fix perf issues GPU (VideoCore VII quirks)
 
-**Deliverable**: `make image` produit `sprixe-arcade-v1.0.0.img.xz`. Flash → boot → arcade.
+**Deliverable**: `make image` produit `sprixe-arcade-v1.0.0.img.xz`. Flash → boot → Chromium ouvre sprixe.app → arcade.
 
 ---
 
@@ -1197,8 +1442,64 @@ Optimisations : désactiver bluetooth, avahi-daemon, apt-daily-upgrade, ModemMan
 |------|--------|------------|
 | RPi 5 Chromium perf insufficient for Neo-Geo | High | Profile early on real hardware (Phase 1). Accept 50-55fps. Optimize later. |
 | SharedArrayBuffer not available in kiosk | Critical | COOP/COEP headers + `--enable-features=SharedArrayBuffer` flag. Test early. |
+| COOP/COEP breaks WebRTC or cross-origin | High | `same-origin` COOP blocks popups and cross-origin navigation. Ensure: (1) phone page is on same origin (`sprixe.app/send/`), (2) PeerJS Cloud signaling uses WebSocket (not affected by COOP), (3) CDN media uses CORS headers (`Access-Control-Allow-Origin: *`). Test the full flow with COOP/COEP enabled in dev. |
 | IndexedDB quota (~20GB on 32GB SD) | Medium | Monitor with `navigator.storage.estimate()`. Warn at 80%. |
-| Monorepo extraction breaks tests | Medium | Phase 0 is pure refactoring, full test validation. |
+| Monorepo extraction breaks tests | Medium | Phase 0 uses atomic steps with test checkpoints between each move (see Phase 0 details). |
 | Gamepad compatibility (exotic encoders) | Medium | Universal input mapping at first boot handles any USB HID device. |
 | MP4 video playback perf on RPi | Medium | Short clips (5-10s), low res (384×224), H.264 baseline. Hardware decode. |
-| Phone WebSocket disconnects | Low | Auto-reconnect with exponential backoff. Phone page shows connection status. |
+| WebRTC P2P fails (firewall) | Medium | PeerJS handles STUN/TURN automatically. If all ICE candidates fail, show clear error with "ensure same WiFi network" message. |
+| Large ROM transfer stalls (50-200MB Neo-Geo) | Medium | Backpressure via `bufferedAmount` check (see §3.8). Timeout after 10s idle. Retry button on failure. |
+| Internet required for kiosk | Medium | PWA install caches app shell + WASM for offline. ROMs already in IndexedDB. |
+| CDN media latency | Low | First fetch from CDN, then cached in IndexedDB. Placeholder shown during load. |
+| PeerJS Cloud rate limits or downtime | Low | V1 acceptable risk. V2: self-host PeerJS server. Free tier allows ~50 concurrent connections. |
+
+---
+
+## 7. Agent Execution Guide
+
+> This section helps Claude Code (or any AI agent) execute this plan efficiently across multiple sessions.
+
+### 7.1 Session Continuity
+
+Each session should start by reading `PROGRESS.md` (at repo root) to know where the previous session left off. Update it at the end of each session.
+
+`PROGRESS.md` format:
+```markdown
+# Implementation Progress
+
+## Current Phase: 0 — Monorepo Setup
+## Current Step: 0.3 — Extract @sprixe/edit
+## Status: IN PROGRESS
+
+## Completed
+- [x] Phase 0, Step 0.1 — Workspace scaffolding (2026-04-17)
+- [x] Phase 0, Step 0.2 — Extract @sprixe/engine (2026-04-17)
+
+## Blocked / Notes
+- None
+
+## Next Action
+- Move src/editor/, src/debug/, src/ui/ to packages/sprixe-edit/src/
+```
+
+### 7.2 Rules for Agents
+
+1. **One sub-step at a time**: Never move to the next sub-step until the current checkpoint passes
+2. **Test after every move**: `npx tsc --noEmit` or `npm test` depending on the step
+3. **No speculative code**: Implement exactly what the plan says. If something seems wrong, ask the user
+4. **Phase 0 is sacred**: Zero new features. If you notice something to improve, note it in `PROGRESS.md` under "Notes", don't fix it now
+5. **Phase 5 is human-assisted**: Agent generates config files, but the user tests on real RPi hardware
+6. **Commit granularity**: One commit per completed sub-step (e.g., "refactor: extract @sprixe/engine to monorepo")
+7. **Branch per phase**: `feature/phase-0-monorepo`, `feature/phase-1-skeleton`, etc.
+
+### 7.3 Estimated Total Duration
+
+| Phase | Duration | Notes |
+|-------|----------|-------|
+| Phase 0: Monorepo Setup | 1 week | Highest risk — atomic steps critical |
+| Phase 1: Frontend Skeleton | 2 weeks | New code, lower risk |
+| Phase 2: Game Loading | 2 weeks | Integration with engine |
+| Phase 3: WebRTC + Phone | 3 weeks | Extended from 2 — P2P complexity |
+| Phase 4: Polish + Settings | 1 week | Assumes CDN assets already prepared |
+| Phase 5: RPi Image | 1 week | Human-assisted (hardware testing) |
+| **Total** | **10 weeks** | |
