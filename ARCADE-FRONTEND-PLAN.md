@@ -22,13 +22,15 @@
    - 3.2 [Shared Emulator Engine Extraction](#32-shared-emulator-engine-extraction)
    - 3.3 [New Modules](#33-new-modules)
    - 3.4 [Build Pipeline](#34-build-pipeline)
-   - 3.5 [IndexedDB ROM Storage](#35-indexeddb-rom-storage)
-   - 3.6 [Service Worker / PWA](#36-service-worker--pwa)
-   - 3.7 [ROM Transfer (WebRTC P2P)](#36-rom-transfer-webrtc-p2p)
-   - 3.8 [Input System Architecture](#38-input-system-architecture)
+   - 3.5 [Monorepo Package Configs](#35-monorepo-package-configs)
+   - 3.7 [Service Worker / PWA](#37-service-worker--pwa)
+   - 3.8 [ROM Transfer (WebRTC P2P)](#38-rom-transfer-webrtc-p2p)
+   - 3.9 [Input System Architecture](#39-input-system-architecture)
+   - 3.10 [Media CDN Pipeline](#310-media-cdn-pipeline)
 4. [Kiosk / RPi Image](#4-kiosk--rpi-image)
 5. [Implementation Phases](#5-implementation-phases)
 6. [Risks and Mitigations](#6-risks-and-mitigations)
+7. [Agent Execution Guide](#7-agent-execution-guide)
 
 ---
 
@@ -820,7 +822,7 @@ interface MetadataRecord {
 interface SaveStateRecord {
   gameId: string;
   slot: number;           // 0-3
-  data: string;           // JSON serialized
+  data: ArrayBuffer;      // Binary snapshot (CPU + RAM + VRAM), NOT JSON string
   timestamp: number;
 }
 ```
@@ -858,7 +860,101 @@ interface ScreenController {
 
 No build step for `@sprixe/engine` — Vite resolves TS imports directly. Each consumer bundles engine code.
 
-### 3.5 Service Worker / PWA (optional offline)
+### 3.5 Monorepo Package Configs
+
+These exact configs are required for Vite + TypeScript to resolve `@sprixe/engine` imports without a build step. **Copy these verbatim** — incorrect `exports` or `paths` will cascade into hundreds of TS errors.
+
+#### `packages/sprixe-engine/package.json`
+```json
+{
+  "name": "@sprixe/engine",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./*": "./src/*"
+  },
+  "types": "./src/index.ts"
+}
+```
+
+Usage in consumers: `import { Emulator } from '@sprixe/engine/emulator'` resolves to `packages/sprixe-engine/src/emulator.ts`.
+
+#### `packages/sprixe-edit/package.json`
+```json
+{
+  "name": "@sprixe/edit",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@sprixe/engine": "*"
+  }
+}
+```
+
+#### `packages/sprixe-frontend/package.json`
+```json
+{
+  "name": "@sprixe/frontend",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@sprixe/engine": "*",
+    "peerjs": "^1.5.4"
+  }
+}
+```
+
+#### `tsconfig.base.json` (root)
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "paths": {
+      "@sprixe/engine/*": ["./packages/sprixe-engine/src/*"]
+    }
+  }
+}
+```
+
+#### Per-package `tsconfig.json` (edit, frontend, site)
+```json
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": ["src"],
+  "references": [{ "path": "../sprixe-engine" }]
+}
+```
+
+#### Vite config (each consumer)
+```ts
+// vite.config.ts — add to resolve.alias
+import path from 'path';
+export default defineConfig({
+  resolve: {
+    alias: {
+      '@sprixe/engine': path.resolve(__dirname, '../sprixe-engine/src')
+    }
+  }
+});
+```
+
+**Validation checkpoint**: After setting up these configs, run `npx tsc --noEmit` from root. Zero errors = proceed.
+
+### 3.7 Service Worker / PWA (optional offline)
 
 **Online-first by default**. PWA optionnel pour les utilisateurs qui veulent du offline.
 
@@ -868,19 +964,32 @@ No build step for `@sprixe/engine` — Vite resolves TS imports directly. Each c
 - Strategy: Network-first for app shell, Cache-first for media assets
 - Use `vite-plugin-pwa` or manual Workbox
 
-### 3.6 ROM Transfer (WebRTC P2P)
+### 3.8 ROM Transfer (WebRTC P2P)
 
 No local server needed. The kiosk and phone connect via WebRTC data channel for ROM transfer.
 
-**Signaling**: Vercel serverless WebSocket (or PeerJS cloud) — exchanges SDP offers/answers only (~1KB). ROM data is 100% P2P.
+**Signaling — V1: PeerJS Cloud** (zero server code):
+- Use PeerJS Cloud (free, hosted by PeerJS team) for signaling
+- Kiosk generates a random `roomId`, creates a `Peer(roomId)` — that's the signaling
+- Phone connects with `peer.connect(roomId)` — P2P data channel established
+- ROM data is 100% P2P, signaling only exchanges SDP (~1KB)
+- **Do NOT build a custom Vercel signaling server for V1** — PeerJS Cloud handles it
+- V2: migrate to self-hosted PeerJS server if scale/reliability requires it
 
-**Library**: PeerJS (`peerjs`) — wraps WebRTC complexity in ~10 lines of code per side.
+**Library**: PeerJS (`peerjs@^1.5.4`) — wraps WebRTC complexity in ~10 lines of code per side.
 
 **Phone remote control**: also via the same WebRTC data channel. Phone page served from `sprixe.app/send/{roomId}` (static, hosted on Vercel).
 
-**Fallback**: if WebRTC fails (corporate firewall, no STUN/TURN), relay ROM data through the signaling server. Slower but always works.
+**Large ROM transfer — flow control** (Neo-Geo ROMs can be 50-200MB):
+- Chunk size: 64KB per message (WebRTC data channel default buffer is 256KB)
+- **Backpressure**: check `dataChannel.bufferedAmount` before sending next chunk. If > 1MB, wait for `bufferedamountlow` event before resuming
+- Progress: emit `{"type": "progress", ...}` every 10 chunks (not every chunk — reduces overhead)
+- Timeout: if no chunk received for 10s, show "Transfer stalled" error on both sides
+- Retry: on data channel close mid-transfer, attempt one reconnect. If fails, show error with "Try again" button
 
-### 3.7 Input System Architecture
+**Fallback**: if WebRTC fails (corporate firewall, no STUN/TURN), relay ROM data through PeerJS Cloud TURN relay. PeerJS handles this automatically via ICE candidates. If all fails, show clear error message.
+
+### 3.9 Input System Architecture
 
 ```
                     ┌──────────────────────┐
@@ -926,6 +1035,50 @@ Button mapping from first-boot config stored in localStorage:
 Both GamepadNav and InputManager read from this mapping. GamepadNav translates to NavActions, InputManager translates to CPS1/NeoGeo I/O port values.
 
 I-PAC detection: if no gamepad connected but keyboard events arrive during mapping → switch to keyboard mode. Same mapping structure but `{"type": "key", "code": "KeyA"}`.
+
+### 3.10 Media CDN Pipeline
+
+**CDN URL pattern**: `https://cdn.sprixe.app/media/{system}/{romName}/{asset}`
+
+```
+cdn.sprixe.app/media/
+  cps1/
+    sf2/
+      screenshot.png    # 384×224, native resolution
+      video.mp4         # 5-10s loop, H.264 baseline, 384×224, ~500KB-2MB
+      marquee.png       # Decorative art (optional)
+    ffight/
+      screenshot.png
+      video.mp4
+  neogeo/
+    mslug/
+      screenshot.png    # 320×224
+      video.mp4
+```
+
+**Manifest** — the frontend needs to know which assets exist per game:
+
+Option A (recommended): **No manifest file**. The frontend tries to fetch each asset type and handles 404 gracefully. Screenshot first, video after 1s hover. If 404 → show placeholder. This avoids maintaining a separate manifest.
+
+```ts
+// Pseudo-code for media loading
+async function loadMedia(system: string, romName: string): Promise<MediaAssets> {
+  const base = `https://cdn.sprixe.app/media/${system}/${romName}`;
+  const screenshot = await fetchOrNull(`${base}/screenshot.png`);
+  // Video loaded lazily after 1s on same game selection
+  return { screenshot, videoUrl: `${base}/video.mp4` };
+}
+```
+
+Option B: `manifest.json` at CDN root listing all available assets. Fetched once at app boot, cached. More efficient (one request vs many 404s) but requires updating the manifest when assets are added.
+
+**Asset generation pipeline** (run once, offline):
+1. Use ScreenScraper API or libretro-thumbnails to fetch existing screenshots
+2. Record MP4 gameplay clips: load ROM in Sprixe, capture 5-10s via `MediaRecorder` API or ffmpeg
+3. Upload to CDN (Vercel Blob, Cloudflare R2, or S3)
+4. Assets are NOT bundled in the app or the RPi image
+
+**Caching**: First fetch from CDN → store in IndexedDB (`metadata-db.ts`). Subsequent loads read from IndexedDB (offline-ready).
 
 ---
 
@@ -1152,14 +1305,43 @@ Temps total : ~3 minutes. Zéro terminal. Zéro clavier. Zéro SSH.
 ### Phase 0: Monorepo Setup (1 week)
 **Goal**: Convert to monorepo without breaking anything.
 
-1. Init npm workspaces
-2. Create `packages/sprixe-engine/` — move shared emulator files
-3. Create `packages/sprixe-edit/` — move editor + UI
-4. Create `packages/sprixe-site/` — extract landing page
-5. Create `packages/sprixe-image/` — scaffold RPi image package (Makefile, scripts, configs)
-6. Update all imports to use `@sprixe/engine`
-7. Verify tests pass, dev server works, build works
-7. No new features — pure refactoring
+> **CRITICAL for agents**: This phase is the most error-prone. Move files in small atomic steps with test validation between each. NEVER move everything at once — a cascade of 200+ TS errors from broken imports is extremely costly to debug.
+
+**Step 0.1 — Workspace scaffolding** (no file moves yet):
+1. Create `packages/` directory structure (empty packages)
+2. Add root `package.json` with `"workspaces": ["packages/*"]`
+3. Create `tsconfig.base.json` at root (see §3.5 for exact content)
+4. Create each package's `package.json` and `tsconfig.json` (see §3.5)
+5. **Checkpoint**: `npm install` succeeds, no errors
+
+**Step 0.2 — Extract `@sprixe/engine`**:
+1. Move `src/cpu/`, `src/audio/`, `src/video/`, `src/memory/` → `packages/sprixe-engine/src/`
+2. Move shared files: `emulator.ts`, `neogeo-emulator.ts`, `game-catalog.ts`, `constants.ts`, `neogeo-constants.ts`, `types.ts`, `save-state.ts`, `dip-switches.ts`, `input/input.ts`
+3. Create `packages/sprixe-engine/src/index.ts` barrel export
+4. Update all import paths in moved files (intra-engine references)
+5. **Checkpoint**: `npx tsc --noEmit -p packages/sprixe-engine/tsconfig.json` — zero errors
+
+**Step 0.3 — Extract `@sprixe/edit`**:
+1. Move `src/editor/`, `src/debug/`, `src/ui/`, remaining `src/` files → `packages/sprixe-edit/src/`
+2. Update imports to use `@sprixe/engine/*` for shared modules
+3. Move `vite.config.ts`, `play/index.html`, `public/` → `packages/sprixe-edit/`
+4. Update Vite config with engine alias (see §3.5)
+5. **Checkpoint**: `npm run dev:edit` launches, game loads, tests pass (`npm test -w @sprixe/edit`)
+
+**Step 0.4 — Extract `@sprixe/site`**:
+1. Move `src/landing.ts`, `index.html`, `styles/landing.css` → `packages/sprixe-site/`
+2. **Checkpoint**: `npm run dev:site` serves landing page
+
+**Step 0.5 — Scaffold `@sprixe/image`**:
+1. Create `packages/sprixe-image/` with Makefile, stage-sprixe/ scripts, configs
+2. No runtime code — just infrastructure files
+3. **Checkpoint**: directory structure matches §3.1
+
+**Step 0.6 — Final validation**:
+1. `npm test` from root — all existing tests pass
+2. `npm run build` from root — all packages build
+3. `npm run dev:edit` — editor works identically to before
+4. No new features — pure refactoring
 
 **Deliverable**: `npm run dev:edit` and `npm run dev:site` launch existing apps, unchanged.
 
@@ -1194,20 +1376,30 @@ Temps total : ~3 minutes. Zéro terminal. Zéro clavier. Zéro SSH.
 
 **Deliverable**: Load ROM manually, see in browser, play, pause, save, quit.
 
-### Phase 3: ROM Transfer (WebRTC) + Phone Remote (2 weeks)
+### Phase 3: ROM Transfer (WebRTC) + Phone Remote (3 weeks)
 **Goal**: Transfer ROMs from phone via QR code + remote control.
 
-1. Integrate PeerJS for WebRTC data channel
-2. Implement `peer-host.ts` (kiosk: create room, listen for connections)
-3. Implement `peer-send.ts` (phone: connect to room, send files)
-4. Build phone page: Upload tab (file picker, drag-drop, progress, queue)
-5. Build phone page: Remote tab (pause, save, load, quit, volume)
-6. QR code display on frontend (`sprixe.app/send/{roomId}`)
-7. Signaling via Vercel serverless WebSocket (or PeerJS cloud)
-8. ROM transfer → identification → IndexedDB pipeline
-9. Real-time progress on both phone and TV
-10. Empty state / first boot experience
-11. Error handling (invalid ROM, unknown format, storage full, WebRTC fallback)
+> **Estimation note**: Originally 2 weeks, extended to 3. WebRTC P2P with chunked file transfer, backpressure, reconnection, plus the phone UI (two tabs, responsive) is more complex than it looks. Plan accordingly.
+
+**Week 1 — P2P foundation + basic transfer**:
+1. Integrate PeerJS (`peerjs@^1.5.4`) — use PeerJS Cloud for signaling (no custom server)
+2. Implement `peer-host.ts` (kiosk: `new Peer(roomId)`, listen for connections)
+3. Implement `peer-send.ts` (phone: `peer.connect(roomId)`, chunked file send with backpressure — see §3.8)
+4. ROM transfer → identification (reuse `rom-loader.ts`) → IndexedDB storage
+5. **E2E test**: open two browser tabs, transfer a ROM from one to another. Must work before proceeding.
+
+**Week 2 — Phone UI + remote control**:
+6. Build phone page (`sprixe.app/send/{roomId}`): Upload tab (file picker, drag-drop, progress queue)
+7. Build phone page: Remote tab (pause, save, load, quit, volume)
+8. QR code display on kiosk (use `qrcode` npm package, canvas-based)
+9. Real-time state sync kiosk → phone (game playing, paused, browser)
+10. Empty state / first boot experience (QR prominent)
+
+**Week 3 — Polish + error handling**:
+11. Error handling: invalid ROM, unknown format, storage full, transfer timeout
+12. Reconnection: if data channel drops mid-transfer, attempt one reconnect
+13. Toast notifications on kiosk (receiving, complete, error)
+14. Phone UI responsive polish (tested on iOS Safari + Android Chrome)
 
 **Deliverable**: Scan QR, send ROMs P2P, see them appear, control the borne from phone.
 
@@ -1250,10 +1442,64 @@ Temps total : ~3 minutes. Zéro terminal. Zéro clavier. Zéro SSH.
 |------|--------|------------|
 | RPi 5 Chromium perf insufficient for Neo-Geo | High | Profile early on real hardware (Phase 1). Accept 50-55fps. Optimize later. |
 | SharedArrayBuffer not available in kiosk | Critical | COOP/COEP headers + `--enable-features=SharedArrayBuffer` flag. Test early. |
+| COOP/COEP breaks WebRTC or cross-origin | High | `same-origin` COOP blocks popups and cross-origin navigation. Ensure: (1) phone page is on same origin (`sprixe.app/send/`), (2) PeerJS Cloud signaling uses WebSocket (not affected by COOP), (3) CDN media uses CORS headers (`Access-Control-Allow-Origin: *`). Test the full flow with COOP/COEP enabled in dev. |
 | IndexedDB quota (~20GB on 32GB SD) | Medium | Monitor with `navigator.storage.estimate()`. Warn at 80%. |
-| Monorepo extraction breaks tests | Medium | Phase 0 is pure refactoring, full test validation. |
+| Monorepo extraction breaks tests | Medium | Phase 0 uses atomic steps with test checkpoints between each move (see Phase 0 details). |
 | Gamepad compatibility (exotic encoders) | Medium | Universal input mapping at first boot handles any USB HID device. |
 | MP4 video playback perf on RPi | Medium | Short clips (5-10s), low res (384×224), H.264 baseline. Hardware decode. |
-| WebRTC P2P fails (firewall) | Medium | Fallback: relay through signaling server. PeerJS handles STUN/TURN automatically. |
+| WebRTC P2P fails (firewall) | Medium | PeerJS handles STUN/TURN automatically. If all ICE candidates fail, show clear error with "ensure same WiFi network" message. |
+| Large ROM transfer stalls (50-200MB Neo-Geo) | Medium | Backpressure via `bufferedAmount` check (see §3.8). Timeout after 10s idle. Retry button on failure. |
 | Internet required for kiosk | Medium | PWA install caches app shell + WASM for offline. ROMs already in IndexedDB. |
 | CDN media latency | Low | First fetch from CDN, then cached in IndexedDB. Placeholder shown during load. |
+| PeerJS Cloud rate limits or downtime | Low | V1 acceptable risk. V2: self-host PeerJS server. Free tier allows ~50 concurrent connections. |
+
+---
+
+## 7. Agent Execution Guide
+
+> This section helps Claude Code (or any AI agent) execute this plan efficiently across multiple sessions.
+
+### 7.1 Session Continuity
+
+Each session should start by reading `PROGRESS.md` (at repo root) to know where the previous session left off. Update it at the end of each session.
+
+`PROGRESS.md` format:
+```markdown
+# Implementation Progress
+
+## Current Phase: 0 — Monorepo Setup
+## Current Step: 0.3 — Extract @sprixe/edit
+## Status: IN PROGRESS
+
+## Completed
+- [x] Phase 0, Step 0.1 — Workspace scaffolding (2026-04-17)
+- [x] Phase 0, Step 0.2 — Extract @sprixe/engine (2026-04-17)
+
+## Blocked / Notes
+- None
+
+## Next Action
+- Move src/editor/, src/debug/, src/ui/ to packages/sprixe-edit/src/
+```
+
+### 7.2 Rules for Agents
+
+1. **One sub-step at a time**: Never move to the next sub-step until the current checkpoint passes
+2. **Test after every move**: `npx tsc --noEmit` or `npm test` depending on the step
+3. **No speculative code**: Implement exactly what the plan says. If something seems wrong, ask the user
+4. **Phase 0 is sacred**: Zero new features. If you notice something to improve, note it in `PROGRESS.md` under "Notes", don't fix it now
+5. **Phase 5 is human-assisted**: Agent generates config files, but the user tests on real RPi hardware
+6. **Commit granularity**: One commit per completed sub-step (e.g., "refactor: extract @sprixe/engine to monorepo")
+7. **Branch per phase**: `feature/phase-0-monorepo`, `feature/phase-1-skeleton`, etc.
+
+### 7.3 Estimated Total Duration
+
+| Phase | Duration | Notes |
+|-------|----------|-------|
+| Phase 0: Monorepo Setup | 1 week | Highest risk — atomic steps critical |
+| Phase 1: Frontend Skeleton | 2 weeks | New code, lower risk |
+| Phase 2: Game Loading | 2 weeks | Integration with engine |
+| Phase 3: WebRTC + Phone | 3 weeks | Extended from 2 — P2P complexity |
+| Phase 4: Polish + Settings | 1 week | Assumes CDN assets already prepared |
+| Phase 5: RPi Image | 1 week | Human-assisted (hardware testing) |
+| **Total** | **10 weeks** | |
