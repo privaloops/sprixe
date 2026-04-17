@@ -1,7 +1,28 @@
-// @sprixe/frontend — arcade UI entry point.
-// Phase 1 scaffold — real screens land in the following sub-steps.
+/**
+ * @sprixe/frontend — arcade UI entry point.
+ *
+ * Phase 1: mounts the browser screen with the MOCK_GAMES dataset and
+ * connects it to GamepadNav. Later phases will swap MOCK_GAMES for the
+ * real catalogue and layer the pause overlay / settings on top.
+ */
+
+import "./styles/base.css";
+
+import { MOCK_GAMES } from "./data/mock-games";
+import { GamepadNav } from "./input/gamepad-nav";
+import { BrowserScreen } from "./screens/browser/browser-screen";
 
 const app = document.getElementById("app");
-if (app) {
-  app.textContent = "Sprixe Arcade Frontend — Phase 1 skeleton";
-}
+if (!app) throw new Error("#app container missing");
+
+const browser = new BrowserScreen(app, { initialGames: MOCK_GAMES });
+
+const gamepad = new GamepadNav();
+gamepad.onAction((action) => {
+  browser.handleNavAction(action);
+});
+gamepad.start();
+
+// Signal that the app finished booting — used by the splash screen
+// (Phase 1.8) and by p1-boot-splash.spec.ts.
+window.dispatchEvent(new CustomEvent("app-ready"));

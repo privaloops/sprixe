@@ -13,6 +13,7 @@ import type { Page } from "@playwright/test";
 export async function installGamepadMock(page: Page): Promise<void> {
   await page.addInitScript(() => {
     let pad: Gamepad | null = null;
+    let activeTimer: number | null = null;
 
     const snapshot = (idx: number): Gamepad => {
       const buttons = [] as GamepadButton[];
@@ -31,14 +32,32 @@ export async function installGamepadMock(page: Page): Promise<void> {
       } as Gamepad;
     };
 
+    const clearActive = () => {
+      if (activeTimer !== null) {
+        clearTimeout(activeTimer);
+        activeTimer = null;
+      }
+    };
+
     (window as unknown as { __pressButton: (idx: number, ms?: number) => void }).__pressButton = (idx, ms = 50) => {
+      clearActive();
       pad = snapshot(idx);
-      setTimeout(() => { pad = null; }, ms);
+      activeTimer = window.setTimeout(() => {
+        pad = null;
+        activeTimer = null;
+      }, ms);
     };
 
     (window as unknown as { __holdButton: (idx: number, ms: number) => Promise<void> }).__holdButton = (idx, ms) => {
+      clearActive();
       pad = snapshot(idx);
-      return new Promise<void>((r) => setTimeout(() => { pad = null; r(); }, ms));
+      return new Promise<void>((r) => {
+        activeTimer = window.setTimeout(() => {
+          pad = null;
+          activeTimer = null;
+          r();
+        }, ms);
+      });
     };
 
     Object.defineProperty(navigator, "getGamepads", {
