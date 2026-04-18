@@ -18,6 +18,8 @@ import { PlayingScreen } from "./screens/playing/playing-screen";
 import { PauseOverlay } from "./screens/pause/pause-overlay";
 import { PhonePage } from "./screens/phone/phone-page";
 import { EmptyState } from "./screens/empty/empty-state";
+import { SettingsScreen } from "./screens/settings/settings-screen";
+import { SettingsStore } from "./screens/settings/settings-store";
 import { PeerHost } from "./p2p/peer-host";
 import { RomPipeline } from "./p2p/rom-pipeline";
 import { RomDB, type RomRecord } from "./storage/rom-db";
@@ -73,7 +75,7 @@ function pickRoomId(): string {
   return id;
 }
 
-function startBrowser(games: GameEntry[], db: RomDB, host: PeerHost): void {
+function startBrowser(games: GameEntry[], db: RomDB, host: PeerHost, settings: SettingsStore): void {
   const browser = new BrowserScreen(app!, { initialGames: games });
   const hints = new HintsBar(app!);
   hints.setContext("browser");
@@ -81,6 +83,7 @@ function startBrowser(games: GameEntry[], db: RomDB, host: PeerHost): void {
   const router = new InputRouter("menu");
   let playing: PlayingScreen | null = null;
   let overlay: PauseOverlay | null = null;
+  let settingsScreen: SettingsScreen | null = null;
 
   function exitToMenu(): void {
     overlay?.close();
@@ -118,8 +121,24 @@ function startBrowser(games: GameEntry[], db: RomDB, host: PeerHost): void {
   });
 
   router.onNavAction((action) => {
+    if (settingsScreen) {
+      if (settingsScreen.handleNavAction(action)) return;
+      return;
+    }
     if (overlay?.isOpen()) {
       overlay.handleNavAction(action);
+      return;
+    }
+    if (action === "settings") {
+      browser.root.hidden = true;
+      settingsScreen = new SettingsScreen(app!, {
+        settings,
+        version: "dev",
+        onClose: () => {
+          settingsScreen = null;
+          browser.root.hidden = false;
+        },
+      });
       return;
     }
     browser.handleNavAction(action);
@@ -150,6 +169,7 @@ async function bootKiosk(): Promise<void> {
   }
 
   const db = new RomDB();
+  const settings = new SettingsStore();
   const host = new PeerHost({ roomId: pickRoomId() });
   host.start().catch((e) => console.warn("[arcade] PeerHost start failed:", e));
 
@@ -166,7 +186,7 @@ async function bootKiosk(): Promise<void> {
         const refreshed = (await db.list()).map(romRecordToGameEntry);
         if (refreshed.length > 0) {
           empty.unmount();
-          startBrowser(refreshed, db, host);
+          startBrowser(refreshed, db, host, settings);
         }
       } catch (e) {
         console.error("[arcade] empty-state ROM handling failed:", e);
@@ -175,7 +195,7 @@ async function bootKiosk(): Promise<void> {
     return;
   }
 
-  startBrowser(games, db, host);
+  startBrowser(games, db, host, settings);
 }
 
 function bootPhone(roomId: string): void {
