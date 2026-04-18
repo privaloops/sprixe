@@ -17,23 +17,37 @@ import { MappingScreen } from "./screens/mapping/mapping-screen";
 import { PlayingScreen } from "./screens/playing/playing-screen";
 import { PauseOverlay } from "./screens/pause/pause-overlay";
 import { PhonePage } from "./screens/phone/phone-page";
+import { EmptyState } from "./screens/empty/empty-state";
 import { PeerHost } from "./p2p/peer-host";
 import { RomPipeline } from "./p2p/rom-pipeline";
-import { RomDB } from "./storage/rom-db";
+import { RomDB, type RomRecord } from "./storage/rom-db";
 
 const app = document.getElementById("app");
 if (!app) throw new Error("#app container missing");
 
 const SEND_PATH_RE = /^\/send\/([^/]+)/;
+const USE_MOCK_KEY = "sprixe.useMockCatalogue";
 
-async function loadCatalogue(db: RomDB): Promise<GameEntry[]> {
+async function loadCatalogue(db: RomDB): Promise<{ games: GameEntry[]; source: "idb" | "mock" | "empty" }> {
+  let records: RomRecord[] = [];
   try {
-    const records = await db.list();
-    if (records.length > 0) return records.map(romRecordToGameEntry);
+    records = await db.list();
   } catch (e) {
-    console.warn("[arcade] RomDB unavailable, falling back to mock catalogue:", e);
+    console.warn("[arcade] RomDB unavailable:", e);
   }
-  return [...MOCK_GAMES];
+  if (records.length > 0) {
+    return { games: records.map(romRecordToGameEntry), source: "idb" };
+  }
+  // Dev / test escape hatch: only fall back to MOCK_GAMES when a local
+  // flag is set. Production first boot hits the empty state instead.
+  const wantMock = (() => {
+    try { return localStorage.getItem(USE_MOCK_KEY) === "true"; }
+    catch { return false; }
+  })();
+  if (wantMock) {
+    return { games: [...MOCK_GAMES], source: "mock" };
+  }
+  return { games: [], source: "empty" };
 }
 
 function showMappingFlow(): Promise<void> {
@@ -136,9 +150,30 @@ async function bootKiosk(): Promise<void> {
   }
 
   const db = new RomDB();
-  const games = await loadCatalogue(db);
   const host = new PeerHost({ roomId: pickRoomId() });
   host.start().catch((e) => console.warn("[arcade] PeerHost start failed:", e));
+
+  const { games, source } = await loadCatalogue(db);
+
+  if (source === "empty") {
+    const empty = new EmptyState(app!);
+    await empty.setRoomId(host.roomId);
+    // When a ROM lands, swap the empty state for the real browser.
+    const pipeline = new RomPipeline({ db });
+    host.onFile(async (file) => {
+      try {
+        await pipeline.process(file);
+        const refreshed = (await db.list()).map(romRecordToGameEntry);
+        if (refreshed.length > 0) {
+          empty.unmount();
+          startBrowser(refreshed, db, host);
+        }
+      } catch (e) {
+        console.error("[arcade] empty-state ROM handling failed:", e);
+      }
+    });
+    return;
+  }
 
   startBrowser(games, db, host);
 }

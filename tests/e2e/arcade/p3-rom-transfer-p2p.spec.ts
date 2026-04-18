@@ -154,6 +154,12 @@ async function seedDefaultMappingOnContext(context: import("@playwright/test").B
       })
     );
     localStorage.setItem("sprixe.roomId", "sprixe-e2e-test-123");
+    // Phase 3.10: tell main.ts to use MOCK_GAMES as the empty-store
+    // fallback so the browser mounts at boot (otherwise we'd land on
+    // the empty-state screen).
+    if (localStorage.getItem("sprixe.useMockCatalogue") === null) {
+      localStorage.setItem("sprixe.useMockCatalogue", "true");
+    }
   });
 }
 
