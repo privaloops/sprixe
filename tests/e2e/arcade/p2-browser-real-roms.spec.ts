@@ -12,7 +12,7 @@ async function resetAndSeedRomDB(
 ): Promise<void> {
   await page.evaluate((rows) => {
     return new Promise<void>((resolve, reject) => {
-      const req = indexedDB.open("sprixe-arcade", 1);
+      const req = indexedDB.open("sprixe-arcade");
       req.onupgradeneeded = () => {
         const db = req.result;
         if (!db.objectStoreNames.contains("roms")) {

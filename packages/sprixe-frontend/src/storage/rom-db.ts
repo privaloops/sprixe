@@ -42,7 +42,13 @@ export type RomRecordInput =
     });
 
 const DB_NAME = "sprixe-arcade";
-const DB_VERSION = 1;
+// Bumped to 3 in Phase 4b.2b so every storage class in the frontend
+// opens the same 'sprixe-arcade' database at a coherent version —
+// SaveStateDB adds 'savestates' at v2, MediaCache adds 'media' at v3.
+// Whichever module hits IndexedDB first runs the full upgrade path
+// (see runUpgrade below), so downstream opens never trigger a
+// second upgrade.
+const DB_VERSION = 3;
 const STORE_ROMS = "roms";
 
 export class RomDB {
@@ -57,10 +63,21 @@ export class RomDB {
       const req = indexedDB.open(this.dbName, DB_VERSION);
       req.onupgradeneeded = () => {
         const db = req.result;
+        // Shared schema creation — any module that opens the DB first
+        // lands all three stores so a later module's open() at v3 is
+        // a no-op upgrade. See src/state/save-state-db.ts +
+        // src/media/media-cache.ts for their own store contracts.
         if (!db.objectStoreNames.contains(STORE_ROMS)) {
           const store = db.createObjectStore(STORE_ROMS, { keyPath: "id" });
           store.createIndex("lastPlayedAt", "lastPlayedAt");
           store.createIndex("system", "system");
+        }
+        if (!db.objectStoreNames.contains("savestates")) {
+          const store = db.createObjectStore("savestates", { keyPath: "key" });
+          store.createIndex("gameId", "gameId");
+        }
+        if (!db.objectStoreNames.contains("media")) {
+          db.createObjectStore("media", { keyPath: "key" });
         }
       };
       req.onsuccess = () => resolve(req.result);

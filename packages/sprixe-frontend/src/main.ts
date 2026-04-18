@@ -26,6 +26,8 @@ import { classifyTransferError } from "./p2p/error-handling";
 import { PeerHost } from "./p2p/peer-host";
 import { RomPipeline } from "./p2p/rom-pipeline";
 import { RomDB, type RomRecord } from "./storage/rom-db";
+import { PreviewLoader } from "./media/preview-loader";
+import { MediaCache } from "./media/media-cache";
 
 const app = document.getElementById("app");
 if (!app) throw new Error("#app container missing");
@@ -85,7 +87,11 @@ function startBrowser(
   settings: SettingsStore,
   toast: Toast
 ): void {
-  const browser = new BrowserScreen(app!, { initialGames: games });
+  const loader = new PreviewLoader({
+    cache: new MediaCache(),
+    cdnBase: "https://cdn.sprixe.app/media",
+  });
+  const browser = new BrowserScreen(app!, { initialGames: games, previewLoader: loader });
   const hints = new HintsBar(app!);
   hints.setContext("browser");
 

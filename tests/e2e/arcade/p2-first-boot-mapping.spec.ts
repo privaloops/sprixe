@@ -5,7 +5,7 @@ async function resetAllState(page: import("@playwright/test").Page): Promise<voi
   await page.evaluate(() => {
     localStorage.clear();
     return new Promise<void>((resolve) => {
-      const req = indexedDB.open("sprixe-arcade", 1);
+      const req = indexedDB.open("sprixe-arcade");
       req.onsuccess = () => {
         const db = req.result;
         if (db.objectStoreNames.contains("roms")) {

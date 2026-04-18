@@ -217,7 +217,7 @@ test.describe("Phase 3 — P2P ROM transfer (two contexts + BroadcastChannel)", 
       // Open at version 1 — RomDB's own version — so we don't trigger
       // an upgrade that would be blocked by the live main.ts connection.
       return new Promise<void>((r) => {
-        const req = indexedDB.open("sprixe-arcade", 1);
+        const req = indexedDB.open("sprixe-arcade");
         req.onsuccess = () => {
           const db = req.result;
           if (db.objectStoreNames.contains("roms")) {
