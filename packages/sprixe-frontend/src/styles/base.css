@@ -910,3 +910,33 @@ html, body {
   flex: 1;
   accent-color: var(--af-accent);
 }
+
+/* --- Phone tab switcher --- */
+
+.af-phone-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.af-phone-tab {
+  flex: 1;
+  padding: 10px 14px;
+  background: var(--af-bg-card);
+  color: var(--af-text-secondary);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: var(--af-font-display);
+  min-height: 44px;
+}
+
+.af-phone-tab.active {
+  background: var(--af-accent-glow);
+  color: var(--af-text-primary);
+  box-shadow: inset 0 0 0 1px var(--af-accent);
+}
+
+.af-phone-pane[hidden] {
+  display: none;
+}
