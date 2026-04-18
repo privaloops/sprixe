@@ -40,6 +40,13 @@ image: $(PIGEN)
 	@rm -f $(PIGEN)/$(STAGE_NAME)
 	@ln -s $(CURDIR)/stage-sprixe $(PIGEN)/$(STAGE_NAME)
 	@cp $(CURDIR)/config $(PIGEN)/config
+	# Docker Desktop on macOS does not ship the binfmt_misc handlers
+	# that pi-gen's debootstrap needs to chroot into the arm64 rootfs.
+	# Register them once per boot; the install is idempotent.
+	docker run --privileged --rm tonistiigi/binfmt --install all >/dev/null
+	# Clean up any zombie pigen_work container from a previous failed
+	# run — pi-gen refuses to start otherwise.
+	@docker rm -v pigen_work 2>/dev/null || true
 	# pi-gen's build-docker.sh mounts the repo into a Debian container
 	# and runs the full pipeline. Needs root to loop-mount the rootfs.
 	cd $(PIGEN) && sudo ./build-docker.sh
@@ -55,6 +62,7 @@ flash:
 	@./scripts/flash.sh "$(IMG_GLOB)" "$(DEVICE)"
 
 clean:
+	@docker rm -v pigen_work 2>/dev/null || true
 	@if [ -d "$(PIGEN)" ]; then \
 	  cd $(PIGEN) && sudo ./build-docker.sh clean || true; \
 	  sudo rm -rf $(PIGEN)/work $(DEPLOY_DIR); \
