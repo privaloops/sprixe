@@ -674,3 +674,50 @@ html, body {
   color: var(--af-text-secondary);
   margin: 4px 0;
 }
+
+/* --- Toast stack --- */
+
+.af-toast-stack {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 400;
+}
+
+.af-toast {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--af-bg-card);
+  color: var(--af-text-primary);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+  max-width: 360px;
+  border-left: 3px solid var(--af-text-muted);
+}
+
+.af-toast--success {
+  border-left-color: var(--af-accent);
+}
+
+.af-toast--error {
+  border-left-color: var(--af-accent-warm);
+}
+
+.af-toast-message {
+  flex: 1;
+  font-size: 0.95rem;
+}
+
+.af-toast-close {
+  background: transparent;
+  color: var(--af-text-muted);
+  border: none;
+  cursor: pointer;
+  min-width: 32px;
+  min-height: 32px;
+}
