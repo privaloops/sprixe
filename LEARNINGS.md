@@ -1,5 +1,50 @@
 # Learnings
 
+## Session April 18 — Phase 5 (RPi kiosk image)
+
+### pi-gen on Apple Silicon is a dead end for fast iteration
+
+**Context:** Initial Phase 5 plan built a custom RPi OS image with pi-gen so we could ship a single `.img.xz`. Three tries, three different failures on the same MacBook (Apple Silicon + Docker Desktop):
+
+1. `setarch: failed to set personality to linux32: Invalid argument` — pi-gen's `master` branch defaults to armhf 32-bit; the linux32 personality isn't available under Docker Desktop's emulation. Fix: `PIGEN_BRANCH=arm64`.
+2. `WARNING: armhf: not supported on this machine/kernel — emulated: ok` then `apt-get update` failing in stage0 with `NO_PUBKEY` for every Bookworm Debian signing key. Cause: the base Debian container pi-gen boots ships an older `debian-archive-keyring` that doesn't carry the current Bookworm keys, and the chroot can't fetch them because… signature check. Fix attempted: `tonistiigi/binfmt --install all` for binfmt handlers, then a `sed` patch on stage0 to add `Acquire::AllowInsecureRepositories=true` to the first `apt-get update`. Got further but still painful.
+3. Even after the above, the build is 30–45 min per run, dies on transient mirror flakiness, leaves a `pigen_work` container that has to be pruned manually.
+
+**Decision:** drop pi-gen for the maintainer-side workflow entirely. Use Raspberry Pi Imager (no build) + a `first-boot.sh` provisioner that runs once on the live Pi. The image build moves to a CI workflow on a Linux x86_64 runner (where pi-gen has none of these issues) and only ever runs in CI — local dev never touches it.
+
+**Key insight:** the right test for "is this build pipeline OK" is "can the maintainer iterate on it on their own laptop in under 5 minutes". pi-gen on Apple Silicon fails that test by an order of magnitude.
+
+### Xorg's modesetting driver on RPi 5 + Bookworm is broken; use cage
+
+**Context:** First-boot script provisioned chromium under Xorg via the classic `autologin → .bash_profile → startx → .xinitrc` chain. Boot worked, Chromium launched in `--kiosk`, but rendered at roughly half the panel width — the rest of the 1920×1080 screen was black.
+
+**Investigation on the live Pi:**
+- `xrandr` reported both HDMI outputs as `disconnected` even though `/sys/class/drm/*-HDMI*/status` said `connected` and the kernel was happily emitting 1920×1080 modes.
+- `vcgencmd get_config int | grep -i hdmi` showed our `hdmi_group=1 hdmi_mode=16 disable_overscan=1` from `config.txt` were being **silently ignored** by the firmware on RPi 5 (the legacy KMS variables don't apply to bcm2712).
+- Kernel `video=HDMI-A-1:1920x1080@60` in `cmdline.txt`, `xrandr --fb 1920x1080`, `--force-device-scale-factor=1`, `--window-size=1920,1080` — none of them moved the rendering.
+
+**Root cause:** Xorg's `modesetting` driver doesn't talk to the bcm2712 KMS pipeline correctly. It picks a fallback framebuffer geometry that doesn't match the panel's native, and Chromium follows whatever Xorg gives it.
+
+**Fix:** swap Xorg for **cage** (~500-line Wayland kiosk compositor). Chromium with `--ozone-platform=wayland` talks Wayland directly, cage hands it the panel exactly as KMS exposes it, and full-screen at native resolution Just Works on the first try.
+
+**Key insight:** when the diagnostic from a tool is "the thing the kernel sees as connected, I see as disconnected", you've crossed the boundary where you should stop fixing the tool and replace it. On RPi 5 + Bookworm/Trixie, that boundary is reached the moment Xorg starts.
+
+### Raspberry Pi Imager has no "Run custom script on first boot" field
+
+**Context:** The Phase 5 user story I wrote assumed the user would paste `first-boot.sh` into a "Run custom script on first boot" field in Raspberry Pi Imager and the SD would be ready to go. The field doesn't exist. The Imager handles hostname / user / WiFi / SSH via its own `firstrun.sh`, but doesn't expose a hook for arbitrary scripts.
+
+**Decision:** the maintainer workflow becomes a 3-line follow-up after flashing — `scp first-boot.sh sprixe@sprixe.local:~/` then `ssh sprixe@sprixe.local && sudo bash ~/first-boot.sh`. For end users, the same `first-boot.sh` ends up baked into a CI-built `.img.xz` so they only ever click Imager once.
+
+**Key insight:** I asserted a feature into existence to fit a story I'd already drafted. Always cross-check feature claims against the actual UI before writing onboarding docs — and especially before promising "five steps in a GUI" as a contrast point.
+
+### avahi-daemon is load-bearing for `*.local` mDNS — never auto-disable it on a kiosk
+
+**Context:** First-boot.sh disabled a list of services to shrink boot time on the appliance. avahi-daemon was on that list ("looks irrelevant for a kiosk"). Result: after the first reboot, `ssh sprixe@sprixe.local` started returning host-not-found, the maintainer had to dig the IP out of `arp -a` to recover.
+
+**Fix:** keep avahi enabled. The 1–2 services we're saving doesn't matter against the catastrophic UX cost of "you can't SSH in to debug your appliance any more".
+
+**Key insight:** "trim services" lists in kiosk tutorials are written for hardware that's been flashed-and-forgotten. A maintainer's appliance is also a development target until it isn't — keep the SSH-side tooling (mDNS, getty, etc.) until you really have someone to ship to.
+
 ## Session April 15
 
 ### Neo-Geo sprite X position — MAME comparison reveals three bugs

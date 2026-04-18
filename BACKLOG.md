@@ -573,6 +573,15 @@ Type GB Studio mais pour CPS1. Éditeur visuel pour créer des jeux CPS1 jouable
 - [ ] **PWA** — manifest.json existe, manque le service worker pour offline/installable
 - [x] **CI** — GitHub Actions (.github/workflows/ci.yml) : npm ci → test → build sur push/PR main
 
+## RPi kiosk image (Phase 5 follow-ups)
+
+- [ ] **Hide the mouse cursor on the kiosk route** — Cage doesn't ship a `--hide-cursor` option and `unclutter` is Xorg-only. Easiest fix is a `body { cursor: none }` rule in the frontend on `/play/` (or any route the kiosk lands on). Zero kiosk-side change.
+- [ ] **Deploy the arcade frontend to `arcade.sprixe.dev`** — Vercel project, COOP/COEP headers, point `start-kiosk.sh`'s URL at it. Until then the Pi loads the landing page or a Mac dev server (LAN IP).
+- [ ] **CI workflow that builds the distribution `.img.xz`** — pi-gen on a Linux x86_64 GitHub Actions runner (where it runs cleanly), with `first-boot.sh` baked into the rootfs at build time. Publishes the artifact to GitHub Releases. End users get a single Imager click.
+- [ ] **WiFi captive portal at first boot** — for plug-and-play setup without SSH. Pi starts its own AP `Sprixe-Setup-XXXX`, a captive page asks for SSID/PSK, writes them, joins, reboots. Standard IoT pattern (Sonos/Chromecast/Hue style). ~3 days of dev.
+- [ ] **Plymouth boot splash** — re-introduce when we have the boot-time logo asset (`logo.png`).
+- [ ] **Hardware regression suite on a real RPi 5** — boot time, idle CPU, audio latency, gamepad input, temperature under sustained kiosk load. Re-run on every minor RPi OS release.
+
 ## Aseprite Export
 
 - [ ] **Multi-palette per-frame Aseprite export** (Low priority) — Export sprite/scroll captures with multiple palette variations in a single .aseprite file. Each frame can have its own palette (Aseprite supports per-frame palette chunks). This allows capturing all visual states of a character (normal, selected/flashing, faded) in one file. Requires changes to `aseprite-writer.ts` (per-frame palette chunks), `aseprite-reader.ts` (read per-frame palettes on import), and the capture system (accumulate palette variations over time). Lower priority since users can already capture at the right moment to get the desired palette.

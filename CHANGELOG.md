@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+- **Phase 4b polish (frontend)** — `__APP_VERSION__` injected from `package.json` via Vite `define`; `SaveStateController` wires F5/F8 + Pause overlay items to `SaveStateDB` slot 0 with toast feedback; SettingsScreen gains Controls / Network / Storage tabs (current mapping + reset, room id + signal + regenerate, `navigator.storage.estimate()` + per-ROM delete); E2E `p4-video-preview` covers the CDN screenshot swap and the 404 video fallback.
+- **Phase 5 — RPi kiosk image (`@sprixe/image`)** — replaces the earlier pi-gen scaffold with a Raspberry Pi Imager + first-boot.sh workflow. The script provisions Chromium under cage (Wayland kiosk compositor), autologin sprixe on tty1, `.bash_profile` exec start-kiosk.sh for auto-restart on Chromium crash. `test-first-boot.sh` smoke-tests the script in a Debian arm64 container with mocked apt/systemctl/reboot.
+- **Phase 5 — E2E kiosk simulation** — new Playwright project `kiosk` reproduces the on-device Chromium flags (`--kiosk --noerrdialogs --disable-translate --enable-features=SharedArrayBuffer --autoplay-policy=no-user-gesture-required`, viewport 1920×1080); `p5-kiosk-simulation.spec.ts` asserts `crossOriginIsolated`, `SharedArrayBuffer`, the boot → play → quit flow, a clean console (whitelisted PeerHost / RomDB / `/media/*/video.mp4` 404), and that the URL stays on baseURL.
+
 ### Fixed
 - **Neo-Geo sprite X position** — Sprites disappeared when scrolling backward. Three issues: signed conversion threshold was wrong (0x1E0 vs MAME's 0x1F0), sticky chain X lacked 9-bit mask (`& 0x1FF`), and off-screen skip range didn't match MAME (`0x140..0x1F0`).
 - **Neo-Geo worker Z80 ROM switch** — Reset Z80 when switching from BIOS to game ROM so the game sound driver starts cleanly from address 0x0000.
