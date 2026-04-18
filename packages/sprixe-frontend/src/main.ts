@@ -29,6 +29,8 @@ import { RomDB, type RomRecord } from "./storage/rom-db";
 import { PreviewLoader } from "./media/preview-loader";
 import { MediaCache } from "./media/media-cache";
 
+declare const __APP_VERSION__: string;
+
 const app = document.getElementById("app");
 if (!app) throw new Error("#app container missing");
 
@@ -174,7 +176,7 @@ function startBrowser(
       browser.root.hidden = true;
       settingsScreen = new SettingsScreen(app!, {
         settings,
-        version: "dev",
+        version: __APP_VERSION__,
         onClose: () => {
           settingsScreen = null;
           browser.root.hidden = false;
