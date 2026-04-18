@@ -4,6 +4,8 @@
 install -m 644 files/sprixe-kiosk.service       "${ROOTFS_DIR}/etc/systemd/system/sprixe-kiosk.service"
 install -m 644 files/sprixe-watchdog.service    "${ROOTFS_DIR}/etc/systemd/system/sprixe-watchdog.service"
 install -m 644 files/sprixe-watchdog.timer      "${ROOTFS_DIR}/etc/systemd/system/sprixe-watchdog.timer"
+install -d -m 755                               "${ROOTFS_DIR}/usr/local/bin"
+install -m 755 files/sprixe-watchdog.sh         "${ROOTFS_DIR}/usr/local/bin/sprixe-watchdog.sh"
 install -m 644 files/config.txt                 "${ROOTFS_DIR}/boot/firmware/config.txt"
 install -m 644 files/cmdline.txt                "${ROOTFS_DIR}/boot/firmware/cmdline.txt"
 
