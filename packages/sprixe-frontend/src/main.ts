@@ -1,11 +1,3 @@
-/**
- * @sprixe/frontend — arcade UI entry point.
- *
- * Phase 1: mounts the browser screen with the MOCK_GAMES dataset and
- * connects it to GamepadNav. Later phases will swap MOCK_GAMES for the
- * real catalogue and layer the pause overlay / settings on top.
- */
-
 import "@fontsource/rajdhani/500.css";
 import "@fontsource/rajdhani/600.css";
 import "@fontsource/inter/400.css";
@@ -17,8 +9,10 @@ import { MOCK_GAMES } from "./data/mock-games";
 import { romRecordToGameEntry } from "./data/rom-source";
 import type { GameEntry } from "./data/games";
 import { GamepadNav } from "./input/gamepad-nav";
+import { loadMapping, MAPPING_ROLES } from "./input/mapping-store";
 import { BrowserScreen } from "./screens/browser/browser-screen";
 import { HintsBar } from "./ui/hints-bar";
+import { MappingScreen } from "./screens/mapping/mapping-screen";
 import { RomDB } from "./storage/rom-db";
 
 const app = document.getElementById("app");
@@ -32,22 +26,46 @@ async function loadCatalogue(): Promise<GameEntry[]> {
   } catch (e) {
     console.warn("[arcade] RomDB unavailable, falling back to mock catalogue:", e);
   }
-  // Empty DB → Phase 3 will wire the first-boot empty state (QR upload).
-  // Until then, fall back to the mock catalogue so dev mode stays usable.
   return [...MOCK_GAMES];
 }
 
-const games = await loadCatalogue();
-const browser = new BrowserScreen(app, { initialGames: games });
-const hints = new HintsBar(app);
-hints.setContext("browser");
+function showMappingFlow(): Promise<void> {
+  return new Promise((resolve) => {
+    const screen = new MappingScreen(app!, {
+      roles: MAPPING_ROLES,
+      onComplete: () => {
+        screen.unmount();
+        resolve();
+      },
+    });
+  });
+}
 
-const gamepad = new GamepadNav();
-gamepad.onAction((action) => {
-  browser.handleNavAction(action);
+function startBrowser(games: GameEntry[]): void {
+  const browser = new BrowserScreen(app!, { initialGames: games });
+  const hints = new HintsBar(app!);
+  hints.setContext("browser");
+
+  const gamepad = new GamepadNav();
+  gamepad.onAction((action) => {
+    browser.handleNavAction(action);
+  });
+  gamepad.start();
+}
+
+async function boot(): Promise<void> {
+  // Dismiss the splash as early as possible so the mapping screen
+  // (first boot) or browser (returning user) is visible immediately.
+  window.dispatchEvent(new CustomEvent("app-ready"));
+
+  if (!loadMapping()) {
+    await showMappingFlow();
+  }
+
+  const games = await loadCatalogue();
+  startBrowser(games);
+}
+
+boot().catch((e) => {
+  console.error("[arcade] boot failed:", e);
 });
-gamepad.start();
-
-// Signal that the app finished booting — used by the splash screen
-// (Phase 1.8) and by p1-boot-splash.spec.ts.
-window.dispatchEvent(new CustomEvent("app-ready"));

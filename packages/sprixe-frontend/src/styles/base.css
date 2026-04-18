@@ -236,3 +236,62 @@ html, body {
 .af-hint-label {
   color: var(--af-text-secondary);
 }
+
+/* --- Mapping screen --- */
+
+.af-mapping-screen {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 48px;
+  min-height: 100vh;
+  background: var(--af-bg-primary);
+}
+
+.af-mapping-title {
+  font-family: var(--af-font-display);
+  font-size: clamp(1.6rem, 3vw, 2.4rem);
+  letter-spacing: 0.15em;
+  color: var(--af-accent);
+  margin: 0;
+}
+
+.af-mapping-subtitle {
+  font-size: var(--af-size-metadata);
+  color: var(--af-text-secondary);
+  margin: 0;
+}
+
+.af-mapping-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-family: var(--af-font-display);
+  font-size: var(--af-size-section);
+}
+
+.af-mapping-prompt {
+  padding: 10px 16px;
+  border-radius: 6px;
+  background: var(--af-bg-card);
+  color: var(--af-text-secondary);
+}
+
+.af-mapping-prompt[data-state="active"] {
+  background: var(--af-accent-glow);
+  color: var(--af-text-primary);
+  box-shadow: 0 0 0 1px var(--af-accent-glow), 0 0 32px var(--af-accent-glow);
+}
+
+.af-mapping-prompt[data-state="done"] {
+  color: var(--af-text-primary);
+  border-left: 3px solid var(--af-accent);
+}
+
+.af-mapping-warning {
+  color: var(--af-accent-warm);
+  font-size: var(--af-size-metadata);
+}
