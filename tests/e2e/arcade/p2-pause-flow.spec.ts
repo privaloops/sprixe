@@ -22,7 +22,7 @@ async function seedMappingAndLaunch(page: import("@playwright/test").Page): Prom
     );
     // Clear the ROM store so the MOCK_GAMES fallback is used.
     return new Promise<void>((resolve) => {
-      const req = indexedDB.open("sprixe-arcade", 1);
+      const req = indexedDB.open("sprixe-arcade");
       req.onsuccess = () => {
         const db = req.result;
         if (db.objectStoreNames.contains("roms")) {

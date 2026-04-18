@@ -18,9 +18,16 @@ import { PlayingScreen } from "./screens/playing/playing-screen";
 import { PauseOverlay } from "./screens/pause/pause-overlay";
 import { PhonePage } from "./screens/phone/phone-page";
 import { EmptyState } from "./screens/empty/empty-state";
+import { SettingsScreen } from "./screens/settings/settings-screen";
+import { SettingsStore } from "./screens/settings/settings-store";
+import { LetterWheel } from "./ui/letter-wheel";
+import { Toast } from "./ui/toast";
+import { classifyTransferError } from "./p2p/error-handling";
 import { PeerHost } from "./p2p/peer-host";
 import { RomPipeline } from "./p2p/rom-pipeline";
 import { RomDB, type RomRecord } from "./storage/rom-db";
+import { PreviewLoader } from "./media/preview-loader";
+import { MediaCache } from "./media/media-cache";
 
 const app = document.getElementById("app");
 if (!app) throw new Error("#app container missing");
@@ -73,17 +80,45 @@ function pickRoomId(): string {
   return id;
 }
 
-function startBrowser(games: GameEntry[], db: RomDB, host: PeerHost): void {
-  const browser = new BrowserScreen(app!, { initialGames: games });
+function startBrowser(
+  games: GameEntry[],
+  db: RomDB,
+  host: PeerHost,
+  settings: SettingsStore,
+  toast: Toast
+): void {
+  // Dev uses the kiosk's own origin so screenshots under public/media/
+  // are reachable at /media/{system}/{id}/screenshot.png. Production
+  // deploys override this at build time (Phase 5 release workflow).
+  const cdnBase = typeof window !== "undefined"
+    ? `${window.location.origin}/media`
+    : "https://cdn.sprixe.app/media";
+  const loader = new PreviewLoader({
+    cache: new MediaCache(),
+    cdnBase,
+  });
+  const browser = new BrowserScreen(app!, { initialGames: games, previewLoader: loader });
   const hints = new HintsBar(app!);
   hints.setContext("browser");
 
   const router = new InputRouter("menu");
   let playing: PlayingScreen | null = null;
   let overlay: PauseOverlay | null = null;
+  let settingsScreen: SettingsScreen | null = null;
+
+  const letterWheel = new LetterWheel(app!, {
+    onJump: (index) => {
+      browser.getList().setSelectedIndex(index);
+    },
+  });
+  letterWheel.setGames(games);
+  browser.getList().onChange(() => {
+    letterWheel.setGames(browser.getList().getItems());
+  });
 
   function exitToMenu(): void {
     overlay?.close();
+    overlay?.dispose();
     overlay?.root.remove();
     overlay = null;
     playing?.stop();
@@ -100,6 +135,7 @@ function startBrowser(games: GameEntry[], db: RomDB, host: PeerHost): void {
     playing.start();
     overlay = new PauseOverlay(app!, {
       emulator: playing.getEmulator(),
+      settings,
       onResume: () => router.setMode("emu"),
       onQuit: () => exitToMenu(),
     });
@@ -118,8 +154,32 @@ function startBrowser(games: GameEntry[], db: RomDB, host: PeerHost): void {
   });
 
   router.onNavAction((action) => {
+    if (settingsScreen) {
+      if (settingsScreen.handleNavAction(action)) return;
+      return;
+    }
     if (overlay?.isOpen()) {
       overlay.handleNavAction(action);
+      return;
+    }
+    if (letterWheel.isOpen()) {
+      if (letterWheel.handleNavAction(action)) return;
+      return;
+    }
+    if (action === "favorite") {
+      letterWheel.open();
+      return;
+    }
+    if (action === "settings") {
+      browser.root.hidden = true;
+      settingsScreen = new SettingsScreen(app!, {
+        settings,
+        version: "dev",
+        onClose: () => {
+          settingsScreen = null;
+          browser.root.hidden = false;
+        },
+      });
       return;
     }
     browser.handleNavAction(action);
@@ -130,14 +190,30 @@ function startBrowser(games: GameEntry[], db: RomDB, host: PeerHost): void {
   gamepad.start();
 
   const pipeline = new RomPipeline({ db });
-  host.onFile(async (file) => {
+  host.onFile(async (file, conn) => {
     try {
       const { record } = await pipeline.process(file);
       const refreshed = (await db.list()).map(romRecordToGameEntry);
       browser.setGames(refreshed);
-      console.info("[arcade] ROM received + stored:", record.id);
+      toast.show("success", `Added ${record.id}`);
+      try {
+        (conn as unknown as { send: (m: unknown) => void }).send({
+          type: "complete",
+          name: file.name,
+          game: record.id,
+          system: record.system,
+        });
+      } catch { /* phone closed? ignore */ }
     } catch (e) {
-      console.error("[arcade] ROM processing failed:", e);
+      const classified = classifyTransferError(e);
+      toast.show(classified.level, classified.message);
+      try {
+        (conn as unknown as { send: (m: unknown) => void }).send({
+          type: "error",
+          name: file.name,
+          error: classified.message,
+        });
+      } catch { /* phone closed? ignore */ }
     }
   });
 }
@@ -150,6 +226,8 @@ async function bootKiosk(): Promise<void> {
   }
 
   const db = new RomDB();
+  const settings = new SettingsStore();
+  const toast = new Toast(app!);
   const host = new PeerHost({ roomId: pickRoomId() });
   host.start().catch((e) => console.warn("[arcade] PeerHost start failed:", e));
 
@@ -160,22 +238,34 @@ async function bootKiosk(): Promise<void> {
     await empty.setRoomId(host.roomId);
     // When a ROM lands, swap the empty state for the real browser.
     const pipeline = new RomPipeline({ db });
-    host.onFile(async (file) => {
+    host.onFile(async (file, conn) => {
       try {
-        await pipeline.process(file);
+        const { record } = await pipeline.process(file);
         const refreshed = (await db.list()).map(romRecordToGameEntry);
         if (refreshed.length > 0) {
+          toast.show("success", `Added ${record.id}`);
+          try {
+            (conn as unknown as { send: (m: unknown) => void }).send({
+              type: "complete", name: file.name, game: record.id, system: record.system,
+            });
+          } catch { /* ignore */ }
           empty.unmount();
-          startBrowser(refreshed, db, host);
+          startBrowser(refreshed, db, host, settings, toast);
         }
       } catch (e) {
-        console.error("[arcade] empty-state ROM handling failed:", e);
+        const classified = classifyTransferError(e);
+        toast.show(classified.level, classified.message);
+        try {
+          (conn as unknown as { send: (m: unknown) => void }).send({
+            type: "error", name: file.name, error: classified.message,
+          });
+        } catch { /* ignore */ }
       }
     });
     return;
   }
 
-  startBrowser(games, db, host);
+  startBrowser(games, db, host, settings, toast);
 }
 
 function bootPhone(roomId: string): void {

@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import { resolve } from "path";
+import { existsSync } from "node:fs";
 import os from "node:os";
 
 /** Pick the first non-internal IPv4 address on the host. Null when no LAN
@@ -54,6 +55,33 @@ export default defineConfig(({ command }) => ({
         server.middlewares.use((_req, res, next) => {
           res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
           res.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
+          next();
+        });
+      },
+    },
+    {
+      // PreviewLoader HEAD-probes /media/{system}/{id}/video.mp4 to
+      // decide whether to mount a <video>. Vite's default SPA fallback
+      // would serve index.html on a miss and the probe would see 200 +
+      // HTML, so we return a real 404 for any /media/* path that
+      // doesn't resolve to a file on disk.
+      name: "media-not-found-is-404",
+      configureServer(server) {
+        const publicDir = resolve(__dirname, "public");
+        server.middlewares.use((req, res, next) => {
+          const url = req.url?.split("?")[0];
+          if (!url || !url.startsWith("/media/")) return next();
+          const filePath = resolve(publicDir, url.slice(1));
+          if (!filePath.startsWith(publicDir)) {
+            res.statusCode = 403;
+            res.end();
+            return;
+          }
+          if (!existsSync(filePath)) {
+            res.statusCode = 404;
+            res.end();
+            return;
+          }
           next();
         });
       },

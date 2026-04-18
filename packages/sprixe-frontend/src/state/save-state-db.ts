@@ -15,7 +15,7 @@
 
 const DB_NAME = "sprixe-arcade";
 const STORE_STATES = "savestates";
-const DB_VERSION = 2; // bumped from 1 to add the savestates store
+const DB_VERSION = 4; // Phase 4b.2c: bumped to heal v3 DBs that landed without the 'media' store
 
 /** Number of slots available per game (§2.6). */
 export const SLOT_COUNT = 4;
@@ -48,6 +48,9 @@ export class SaveStateDB {
       const req = indexedDB.open(this.dbName, DB_VERSION);
       req.onupgradeneeded = () => {
         const db = req.result;
+        // Shared schema creation — mirrors rom-db.ts and media-cache.ts
+        // so whichever module opens the DB first lands all three stores
+        // at v3. A later open() at the same version is then a no-op.
         if (!db.objectStoreNames.contains("roms")) {
           const roms = db.createObjectStore("roms", { keyPath: "id" });
           roms.createIndex("lastPlayedAt", "lastPlayedAt");
@@ -56,6 +59,9 @@ export class SaveStateDB {
         if (!db.objectStoreNames.contains(STORE_STATES)) {
           const states = db.createObjectStore(STORE_STATES, { keyPath: "key" });
           states.createIndex("gameId", "gameId");
+        }
+        if (!db.objectStoreNames.contains("media")) {
+          db.createObjectStore("media", { keyPath: "key" });
         }
       };
       req.onsuccess = () => resolve(req.result);

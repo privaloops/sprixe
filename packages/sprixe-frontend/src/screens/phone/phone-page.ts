@@ -1,18 +1,17 @@
 /**
  * PhonePage — mounted at /send/{roomId} (§2.9).
  *
- * Phase 3.6 switches the scaffold to a real UploadTab with a FIFO
- * upload worker: PeerSend connects once on mount, then every queued
- * entry is streamed in order. Per-entry progress flows through
- * UploadTab.updateEntry() → DOM row refresh. Errors mark the entry
- * as 'error' without blocking the worker on subsequent files.
- *
- * Phase 3.7 will add a tab switcher and a RemoteTab sibling; until
- * then the page shows only the upload view.
+ * Phase 4b.5 adds the Upload / Remote tab switcher on top of the
+ * existing upload worker. The Remote tab pipes RemoteTab.onCommand
+ * down the live PeerSend DataConnection, and listens for the host's
+ * 'state' messages (sent via StateSync) so the RemoteTab's enabled
+ * matrix reflects what the kiosk is doing.
  */
 
 import { PeerSend, TransferError } from "../../p2p/peer-send";
 import { UploadTab, type QueueEntry } from "../../phone/upload-tab";
+import { RemoteTab, type KioskState, type Command } from "../../phone/remote-tab";
+import type { KioskToPhoneMessage } from "../../p2p/protocol";
 
 export interface PhonePageOptions {
   roomId: string;
@@ -24,16 +23,26 @@ export interface TransferClient {
   connect(): Promise<void>;
   sendFile(name: string, data: ArrayBuffer, options?: { onProgress?: (sent: number, total: number) => void }): Promise<void>;
   close(): void;
+  /** Phase 4b.5 — optional live connection exposure so RemoteTab can ride along. */
+  getConnection?(): unknown;
 }
+
+type Tab = "upload" | "remote";
 
 export class PhonePage {
   readonly root: HTMLDivElement;
 
   private readonly uploadTab: UploadTab;
+  private readonly remoteTab: RemoteTab;
+  private readonly uploadPane: HTMLDivElement;
+  private readonly remotePane: HTMLDivElement;
+  private readonly uploadTabBtn: HTMLButtonElement;
+  private readonly remoteTabBtn: HTMLButtonElement;
   private readonly statusEl: HTMLDivElement;
   private readonly send: TransferClient;
   private readonly processing = new Set<string>();
   private connectPromise: Promise<void> | null = null;
+  private activeTab: Tab = "upload";
 
   constructor(container: HTMLElement, options: PhonePageOptions) {
     this.root = document.createElement("div");
@@ -51,32 +60,88 @@ export class PhonePage {
     sub.textContent = `Room: ${options.roomId}`;
     this.root.appendChild(sub);
 
+    // Tab switcher
+    const tabBar = document.createElement("div");
+    tabBar.className = "af-phone-tabs";
+    this.uploadTabBtn = this.makeTabBtn("Upload", "upload");
+    this.remoteTabBtn = this.makeTabBtn("Remote", "remote");
+    tabBar.appendChild(this.uploadTabBtn);
+    tabBar.appendChild(this.remoteTabBtn);
+    this.root.appendChild(tabBar);
+
     this.statusEl = document.createElement("div");
     this.statusEl.className = "af-phone-status";
     this.statusEl.setAttribute("data-testid", "phone-status");
     this.statusEl.textContent = "Idle";
     this.root.appendChild(this.statusEl);
 
+    this.uploadPane = document.createElement("div");
+    this.uploadPane.className = "af-phone-pane";
+    this.uploadPane.setAttribute("data-testid", "phone-pane-upload");
+    this.root.appendChild(this.uploadPane);
+
+    this.remotePane = document.createElement("div");
+    this.remotePane.className = "af-phone-pane";
+    this.remotePane.setAttribute("data-testid", "phone-pane-remote");
+    this.root.appendChild(this.remotePane);
+
     this.send = options.sendFactory
       ? options.sendFactory()
       : new PeerSend({ roomId: options.roomId });
 
-    this.uploadTab = new UploadTab(this.root, {
+    this.uploadTab = new UploadTab(this.uploadPane, {
       onAdd: (entries) => this.queueAll(entries),
     });
 
+    this.remoteTab = new RemoteTab(this.remotePane, {
+      onCommand: (cmd) => this.forwardCommand(cmd),
+    });
+
     container.appendChild(this.root);
+    this.setActiveTab("upload");
   }
 
   getUploadTab(): UploadTab {
     return this.uploadTab;
   }
 
+  getRemoteTab(): RemoteTab {
+    return this.remoteTab;
+  }
+
+  getActiveTab(): Tab {
+    return this.activeTab;
+  }
+
+  setActiveTab(tab: Tab): void {
+    this.activeTab = tab;
+    this.uploadPane.hidden = tab !== "upload";
+    this.remotePane.hidden = tab !== "remote";
+    this.uploadTabBtn.classList.toggle("active", tab === "upload");
+    this.uploadTabBtn.setAttribute("aria-selected", tab === "upload" ? "true" : "false");
+    this.remoteTabBtn.classList.toggle("active", tab === "remote");
+    this.remoteTabBtn.setAttribute("aria-selected", tab === "remote" ? "true" : "false");
+  }
+
+  private makeTabBtn(label: string, tab: Tab): HTMLButtonElement {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "af-phone-tab";
+    btn.setAttribute("role", "tab");
+    btn.setAttribute("data-testid", `phone-tab-${tab}`);
+    btn.textContent = label;
+    btn.addEventListener("click", () => this.setActiveTab(tab));
+    return btn;
+  }
+
   private async ensureConnected(): Promise<void> {
     if (!this.connectPromise) {
       this.setStatus("Connecting…");
       this.connectPromise = this.send.connect().then(
-        () => { this.setStatus("Ready"); },
+        () => {
+          this.setStatus("Ready");
+          this.subscribeKioskMessages();
+        },
         (err) => {
           this.setStatus(`Connect failed: ${describeError(err)}`);
           throw err;
@@ -84,6 +149,38 @@ export class PhonePage {
       );
     }
     return this.connectPromise;
+  }
+
+  private subscribeKioskMessages(): void {
+    const conn = this.send.getConnection?.() as
+      | { on?: (event: "data", cb: (data: unknown) => void) => void }
+      | null
+      | undefined;
+    if (!conn || typeof conn.on !== "function") return;
+    conn.on("data", (data: unknown) => {
+      const msg = data as KioskToPhoneMessage;
+      if (!msg || typeof msg !== "object") return;
+      if (msg.type === "state") {
+        const payload = msg.payload as { screen?: KioskState } | undefined;
+        if (payload?.screen) this.remoteTab.setKioskState(payload.screen);
+      } else if (msg.type === "volume") {
+        this.remoteTab.setVolume(msg.level);
+      } else if (msg.type === "save-slots") {
+        this.remoteTab.setSaveSlots(msg.slots);
+      }
+    });
+  }
+
+  private forwardCommand(cmd: Command): void {
+    // Best-effort: if not yet connected, the command is dropped.
+    // Phase 4b.5b can queue them if we end up needing it.
+    void this.ensureConnected().then(() => {
+      const conn = this.send.getConnection?.() as { send: (data: unknown) => void } | null | undefined;
+      if (!conn) return;
+      try {
+        conn.send(cmd);
+      } catch { /* connection just died — let the user retry */ }
+    }).catch(() => { /* connect already failed — status bar shows why */ });
   }
 
   private async queueAll(entries: readonly QueueEntry[]): Promise<void> {
@@ -94,8 +191,7 @@ export class PhonePage {
         await this.ensureConnected();
         await this.uploadOne(entry);
       } catch {
-        // Per-entry errors are already surfaced on the entry itself;
-        // keep draining the queue so one bad file doesn't stall the rest.
+        // Per-entry errors surface on the entry itself; keep draining.
       } finally {
         this.processing.delete(entry.id);
       }

@@ -37,7 +37,7 @@ test.describe("Phase 3 — empty state", () => {
     // Make sure the ROM store is clear on this origin.
     await page.evaluate(() => {
       return new Promise<void>((r) => {
-        const req = indexedDB.open("sprixe-arcade", 1);
+        const req = indexedDB.open("sprixe-arcade");
         req.onsuccess = () => {
           const db = req.result;
           if (db.objectStoreNames.contains("roms")) {

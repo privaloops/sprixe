@@ -14,12 +14,15 @@
 
 import type { GameEntry } from "../../data/games";
 import type { NavAction } from "../../input/gamepad-nav";
+import type { PreviewLoader } from "../../media/preview-loader";
 import { GameList } from "./game-list";
 import { VideoPreview } from "./video-preview";
 import { FilterBar } from "./filter-bar";
 
 export interface BrowserScreenOptions {
   initialGames?: readonly GameEntry[];
+  /** Phase 4b.2 — when provided, VideoPreview lazy-fetches CDN assets. */
+  previewLoader?: PreviewLoader;
 }
 
 export class BrowserScreen {
@@ -55,7 +58,9 @@ export class BrowserScreen {
     body.appendChild(previewPane);
 
     this.list = new GameList(listPane);
-    this.preview = new VideoPreview(previewPane);
+    this.preview = options.previewLoader
+      ? new VideoPreview(previewPane, { loader: options.previewLoader })
+      : new VideoPreview(previewPane);
 
     // Wiring
     this.list.onChange((game) => this.preview.setGame(game));

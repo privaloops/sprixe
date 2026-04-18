@@ -721,3 +721,222 @@ html, body {
   min-width: 44px;
   min-height: 44px;
 }
+
+/* --- Settings screen (§2.8) --- */
+
+.af-settings-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  flex-direction: column;
+  background: var(--af-bg-primary);
+}
+
+.af-settings-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 20px 32px;
+  border-bottom: 1px solid var(--af-bg-card);
+}
+
+.af-settings-back {
+  background: transparent;
+  border: 1px solid var(--af-bg-card);
+  color: var(--af-text-primary);
+  padding: 8px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: var(--af-font-display);
+  min-height: 44px;
+}
+
+.af-settings-title {
+  font-family: var(--af-font-display);
+  font-size: clamp(1.4rem, 2vw, 1.8rem);
+  letter-spacing: 0.25em;
+  color: var(--af-accent);
+  margin: 0;
+}
+
+.af-settings-body {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  min-height: 0;
+}
+
+.af-settings-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 20px;
+  border-right: 1px solid var(--af-bg-card);
+}
+
+.af-settings-tab {
+  background: transparent;
+  color: var(--af-text-secondary);
+  border: none;
+  padding: 12px 14px;
+  border-radius: 6px;
+  text-align: left;
+  font-family: var(--af-font-display);
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.af-settings-tab.active {
+  background: var(--af-bg-card);
+  color: var(--af-text-primary);
+  box-shadow: inset 3px 0 0 var(--af-accent);
+}
+
+.af-settings-content {
+  padding: 28px 40px;
+  overflow-y: auto;
+}
+
+.af-settings-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 0;
+  border-bottom: 1px dashed var(--af-bg-card);
+}
+
+.af-settings-label {
+  flex: 1;
+  color: var(--af-text-secondary);
+  font-family: var(--af-font-display);
+}
+
+.af-settings-value {
+  color: var(--af-text-primary);
+  font-family: var(--af-font-body);
+}
+
+.af-settings-toggle,
+.af-settings-slider {
+  accent-color: var(--af-accent);
+}
+
+.af-settings-select {
+  background: var(--af-bg-card);
+  color: var(--af-text-primary);
+  border: 1px solid var(--af-bg-card);
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-family: var(--af-font-display);
+}
+
+.af-settings-readout {
+  min-width: 40px;
+  text-align: right;
+  color: var(--af-text-primary);
+  font-family: var(--af-font-display);
+}
+
+.af-settings-about {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* --- Letter wheel --- */
+
+.af-letter-wheel {
+  position: fixed;
+  inset: 0;
+  z-index: 250;
+  background: var(--af-bg-overlay);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.af-letter-wheel[hidden] {
+  display: none;
+}
+
+.af-letter-wheel-list {
+  list-style: none;
+  padding: 16px 24px;
+  margin: 0;
+  background: var(--af-bg-card);
+  border-radius: 12px;
+  box-shadow: 0 0 40px var(--af-accent-glow);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.af-letter-wheel-item {
+  font-family: var(--af-font-display);
+  font-size: 1.6rem;
+  padding: 8px 24px;
+  color: var(--af-text-secondary);
+  border-radius: 6px;
+  text-align: center;
+  letter-spacing: 0.15em;
+}
+
+.af-letter-wheel-item.selected {
+  background: var(--af-bg-card-hover);
+  color: var(--af-text-primary);
+  box-shadow: inset 0 0 0 1px var(--af-accent);
+}
+
+/* --- Pause volume slider --- */
+
+.af-pause-volume {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--af-bg-card);
+}
+
+.af-pause-volume-label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-family: var(--af-font-display);
+  color: var(--af-text-secondary);
+}
+
+.af-pause-volume-slider {
+  flex: 1;
+  accent-color: var(--af-accent);
+}
+
+/* --- Phone tab switcher --- */
+
+.af-phone-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.af-phone-tab {
+  flex: 1;
+  padding: 10px 14px;
+  background: var(--af-bg-card);
+  color: var(--af-text-secondary);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: var(--af-font-display);
+  min-height: 44px;
+}
+
+.af-phone-tab.active {
+  background: var(--af-accent-glow);
+  color: var(--af-text-primary);
+  box-shadow: inset 0 0 0 1px var(--af-accent);
+}
+
+.af-phone-pane[hidden] {
+  display: none;
+}
