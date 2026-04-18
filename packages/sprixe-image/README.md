@@ -11,9 +11,21 @@ custom `stage-sprixe/` stage in this directory.
 Local build (requires Docker + sudo):
 
 ```bash
-make image    # produces sprixe-arcade.img.xz via pi-gen
-make clean
+make help              # list all targets + variables
+make image             # clone pi-gen (on first run) + build .img.xz via Docker
+make verify-structure  # inspect the rootfs of the latest build
+make boot-test         # smoke-boot the image in QEMU (RPi 4 approx)
+make flash DEVICE=/dev/diskN   # write to an SD card
+make clean             # remove pi-gen work + deploy dirs
+make distclean         # clean + remove the pi-gen checkout
 ```
+
+`make image` takes ~30–45 minutes on the first run (Debian bootstrap +
+package install in Docker). `make verify-structure` runs in a few
+seconds via libguestfs. `make boot-test` is a best-effort QEMU smoke
+test — it uses `-M raspi4b` because upstream QEMU does not yet model
+the RPi 5's bcm2712; GPU / VideoCore VII specifics must still be
+validated on real hardware before a release tag.
 
 CI builds happen automatically on GitHub Release — see
 `.github/workflows/build-image.yml` (Phase 5).
