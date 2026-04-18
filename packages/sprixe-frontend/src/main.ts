@@ -10,9 +10,12 @@ import { romRecordToGameEntry } from "./data/rom-source";
 import type { GameEntry } from "./data/games";
 import { GamepadNav } from "./input/gamepad-nav";
 import { loadMapping, MAPPING_ROLES } from "./input/mapping-store";
+import { InputRouter } from "./input/input-router";
 import { BrowserScreen } from "./screens/browser/browser-screen";
 import { HintsBar } from "./ui/hints-bar";
 import { MappingScreen } from "./screens/mapping/mapping-screen";
+import { PlayingScreen } from "./screens/playing/playing-screen";
+import { PauseOverlay } from "./screens/pause/pause-overlay";
 import { RomDB } from "./storage/rom-db";
 
 const app = document.getElementById("app");
@@ -46,16 +49,59 @@ function startBrowser(games: GameEntry[]): void {
   const hints = new HintsBar(app!);
   hints.setContext("browser");
 
-  const gamepad = new GamepadNav();
-  gamepad.onAction((action) => {
+  const router = new InputRouter("menu");
+  let playing: PlayingScreen | null = null;
+  let overlay: PauseOverlay | null = null;
+
+  function exitToMenu(): void {
+    overlay?.close();
+    overlay = null;
+    playing?.stop();
+    playing = null;
+    browser.root.hidden = false;
+    hints.setContext("browser");
+    router.setMode("menu");
+  }
+
+  browser.getList().onSelect((game) => {
+    browser.root.hidden = true;
+    hints.setContext("paused");
+    playing = new PlayingScreen(app!, { game });
+    playing.start();
+    overlay = new PauseOverlay(app!, {
+      emulator: playing.getEmulator(),
+      onResume: () => router.setMode("emu"),
+      onQuit: () => exitToMenu(),
+    });
+    router.setMode("emu");
+  });
+
+  router.onCoinHold(() => {
+    if (!playing || !overlay) return;
+    if (overlay.isOpen()) {
+      overlay.close();
+      router.setMode("emu");
+    } else {
+      overlay.open();
+      // Overlay needs NavActions — temporarily switch back to menu mode.
+      router.setMode("menu");
+    }
+  });
+
+  router.onNavAction((action) => {
+    if (overlay?.isOpen()) {
+      overlay.handleNavAction(action);
+      return;
+    }
     browser.handleNavAction(action);
   });
+
+  const gamepad = new GamepadNav();
+  gamepad.onAction((action) => router.feedAction(action));
   gamepad.start();
 }
 
 async function boot(): Promise<void> {
-  // Dismiss the splash as early as possible so the mapping screen
-  // (first boot) or browser (returning user) is visible immediately.
   window.dispatchEvent(new CustomEvent("app-ready"));
 
   if (!loadMapping()) {
