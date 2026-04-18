@@ -92,9 +92,11 @@ needs_root_rights=yes
 WRAPPER
 
 # ── Trim services irrelevant to a kiosk appliance ───────────────────
+# Note: avahi-daemon is intentionally kept enabled — it publishes the
+# 'sprixe.local' mDNS hostname that the maintainer uses for SSH.
 for svc in \
     bluetooth.service hciuart.service \
-    avahi-daemon.service ModemManager.service \
+    ModemManager.service \
     apt-daily.service apt-daily.timer apt-daily-upgrade.timer
 do
     systemctl disable --now "$svc" 2>/dev/null || true
