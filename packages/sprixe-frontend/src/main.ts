@@ -20,6 +20,7 @@ import { PhonePage } from "./screens/phone/phone-page";
 import { EmptyState } from "./screens/empty/empty-state";
 import { SettingsScreen } from "./screens/settings/settings-screen";
 import { SettingsStore } from "./screens/settings/settings-store";
+import { LetterWheel } from "./ui/letter-wheel";
 import { PeerHost } from "./p2p/peer-host";
 import { RomPipeline } from "./p2p/rom-pipeline";
 import { RomDB, type RomRecord } from "./storage/rom-db";
@@ -85,6 +86,16 @@ function startBrowser(games: GameEntry[], db: RomDB, host: PeerHost, settings: S
   let overlay: PauseOverlay | null = null;
   let settingsScreen: SettingsScreen | null = null;
 
+  const letterWheel = new LetterWheel(app!, {
+    onJump: (index) => {
+      browser.getList().setSelectedIndex(index);
+    },
+  });
+  letterWheel.setGames(games);
+  browser.getList().onChange(() => {
+    letterWheel.setGames(browser.getList().getItems());
+  });
+
   function exitToMenu(): void {
     overlay?.close();
     overlay?.root.remove();
@@ -127,6 +138,14 @@ function startBrowser(games: GameEntry[], db: RomDB, host: PeerHost, settings: S
     }
     if (overlay?.isOpen()) {
       overlay.handleNavAction(action);
+      return;
+    }
+    if (letterWheel.isOpen()) {
+      if (letterWheel.handleNavAction(action)) return;
+      return;
+    }
+    if (action === "favorite") {
+      letterWheel.open();
       return;
     }
     if (action === "settings") {

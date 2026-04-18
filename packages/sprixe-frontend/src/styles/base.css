@@ -843,3 +843,49 @@ html, body {
   flex-direction: column;
   gap: 12px;
 }
+
+/* --- Letter wheel --- */
+
+.af-letter-wheel {
+  position: fixed;
+  inset: 0;
+  z-index: 250;
+  background: var(--af-bg-overlay);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.af-letter-wheel[hidden] {
+  display: none;
+}
+
+.af-letter-wheel-list {
+  list-style: none;
+  padding: 16px 24px;
+  margin: 0;
+  background: var(--af-bg-card);
+  border-radius: 12px;
+  box-shadow: 0 0 40px var(--af-accent-glow);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.af-letter-wheel-item {
+  font-family: var(--af-font-display);
+  font-size: 1.6rem;
+  padding: 8px 24px;
+  color: var(--af-text-secondary);
+  border-radius: 6px;
+  text-align: center;
+  letter-spacing: 0.15em;
+}
+
+.af-letter-wheel-item.selected {
+  background: var(--af-bg-card-hover);
+  color: var(--af-text-primary);
+  box-shadow: inset 0 0 0 1px var(--af-accent);
+}
