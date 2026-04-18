@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { installGamepadMock } from "./_helpers/gamepad";
+import { installGamepadMockOnly, installGamepadMock } from "./_helpers/gamepad";
 
 async function resetAllState(page: import("@playwright/test").Page): Promise<void> {
   await page.evaluate(() => {
@@ -39,7 +39,9 @@ async function pressButton(page: import("@playwright/test").Page, idx: number): 
 
 test.describe("Phase 2 — first-boot input mapping", () => {
   test("empty state shows mapping screen, sequencing 6 buttons advances to browser", async ({ page }) => {
-    await installGamepadMock(page);
+    // Use the gamepad-only helper so no default mapping is seeded —
+    // this test inspects the raw "never configured" boot path.
+    await installGamepadMockOnly(page);
     await page.goto("/");
     await resetAllState(page);
     await page.reload();
