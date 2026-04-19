@@ -1,95 +1,128 @@
 /**
- * PreviewLoader — lazy-fetch + cache screenshots and MP4 clips for
- * the video preview panel (§3.10).
+ * PreviewLoader — exposes the cascade of asset URLs for a game card.
  *
- * Strategy per §3.10 Option A: no manifest. Try to fetch each asset
- * and treat 404 as "this game doesn't have one". Successfully-fetched
- * blobs land in MediaCache keyed by `media:${gameId}:${kind}` so
- * subsequent selections hit cache.
+ * The network layer is deliberately thin: we no longer `fetch()` +
+ * Blob for remote assets because third-party servers like ArcadeDB
+ * don't serve CORS headers, which the browser enforces for fetch but
+ * NOT for `<img src>` / `<video src>`. Consumers set the returned
+ * URLs directly on DOM elements and cascade via `onerror`.
  *
- * Video URLs are returned as strings so the consumer can set them on
- * a <video src="..."> directly — browsers stream videos more
- * efficiently than blob: URLs.
+ * Cache strategy:
+ *   - External URLs: browser HTTP cache does the job.
+ *   - Generated marquee: kept in MediaCache (IDB) as a data URL since
+ *     re-painting the same canvas on every hover is wasteful.
+ *
+ * Cascade per asset kind:
+ *   screenshot: operator CDN → ArcadeDB `ingames` → null
+ *   marquee:    operator CDN → ArcadeDB `marquees` → generated (local)
+ *   video:      operator CDN → ArcadeDB `videos`   → no video
+ *
+ * `cdnBase` lets an operator override both ArcadeDB and the generator
+ * by self-hosting /media/{system}/{id}/{screenshot|marquee|video}.
  */
 
 import type { System } from "../data/games";
 import type { MediaCache } from "./media-cache";
+import { arcadeDbUrl, arcadeDbVideoSdUrl } from "./fetchers/arcadedb";
+import { generateMarquee } from "./fetchers/generated-marquee";
 
-export type AssetKind = "screenshot" | "video";
+export type AssetKind = "screenshot" | "video" | "marquee";
 
 export interface PreviewLoaderOptions {
   cache: MediaCache;
-  /** CDN base URL without trailing slash, e.g. https://cdn.sprixe.app/media. */
-  cdnBase: string;
-  /** Override fetch for tests. */
-  fetchImpl?: typeof fetch;
+  /**
+   * Optional operator CDN base URL (no trailing slash). When set, its
+   * `/{system}/{id}/{screenshot|marquee|video}` asset takes priority
+   * over ArcadeDB. Leave undefined / empty in dev so we don't spam
+   * the console with 404s for assets nobody ever published.
+   */
+  cdnBase?: string;
+  /** Override the marquee canvas generator (unit tests). */
+  marqueeGenImpl?: (title: string) => Promise<Blob | null>;
 }
 
 export class PreviewLoader {
   private readonly cache: MediaCache;
   private readonly cdnBase: string;
-  private readonly fetchImpl: typeof fetch;
+  private readonly marqueeGenImpl: (title: string) => Promise<Blob | null>;
 
   constructor(options: PreviewLoaderOptions) {
     this.cache = options.cache;
-    this.cdnBase = options.cdnBase.replace(/\/$/, "");
-    this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
+    this.cdnBase = (options.cdnBase ?? "").replace(/\/$/, "");
+    this.marqueeGenImpl = options.marqueeGenImpl ?? generateMarquee;
   }
 
+  // ── URL builders ────────────────────────────────────────────────
+
+  /** Empty string when no operator CDN is configured. */
   screenshotUrl(gameId: string, system: System): string {
-    return `${this.cdnBase}/${system}/${gameId}/screenshot.png`;
+    return this.cdnBase ? `${this.cdnBase}/${system}/${gameId}/screenshot.png` : "";
+  }
+
+  marqueeUrl(gameId: string, system: System): string {
+    return this.cdnBase ? `${this.cdnBase}/${system}/${gameId}/marquee.png` : "";
   }
 
   videoUrl(gameId: string, system: System): string {
-    return `${this.cdnBase}/${system}/${gameId}/video.mp4`;
+    return this.cdnBase ? `${this.cdnBase}/${system}/${gameId}/video.mp4` : "";
   }
 
   cacheKey(gameId: string, kind: AssetKind): string {
     return `media:${gameId}:${kind}`;
   }
 
-  /**
-   * Fetch the screenshot for a game, returning a Blob or null when
-   * the CDN responds 404. Cached on success.
-   */
-  async loadScreenshot(gameId: string, system: System): Promise<Blob | null> {
-    const key = this.cacheKey(gameId, "screenshot");
-    const cached = await this.cache.get(key);
-    if (cached) return cached;
+  // ── Cascades ────────────────────────────────────────────────────
 
-    const url = this.screenshotUrl(gameId, system);
-    let response: Response;
-    try {
-      response = await this.fetchImpl(url);
-    } catch {
-      return null;
-    }
-    if (!response.ok) return null;
-    const blob = await response.blob();
-    try { await this.cache.put(key, blob); } catch { /* cache write best-effort */ }
-    return blob;
+  /** Ordered URLs the consumer should try (onerror → next). Operator CDN skipped when unset. */
+  screenshotCandidates(gameId: string, system: System): string[] {
+    return this.withCdn(this.screenshotUrl(gameId, system), arcadeDbUrl("ingames", gameId));
+  }
+
+  marqueeCandidates(gameId: string, system: System): string[] {
+    return this.withCdn(this.marqueeUrl(gameId, system), arcadeDbUrl("marquees", gameId));
   }
 
   /**
-   * HEAD-probe the video URL so the consumer knows whether to mount
-   * a <video> at all. Cheaper than a GET + cancels the download on
-   * a miss.
+   * Video cascade: operator CDN → ArcadeDB HD shortplay →
+   * ArcadeDB SD shortplay → nothing. ArcadeDB bundles its MP4s
+   * through `download_file.php`, so we hit that endpoint rather
+   * than the plain `/media/.../videos/*.mp4` path (which 404s).
    */
-  async hasVideo(gameId: string, system: System): Promise<boolean> {
-    try {
-      const response = await this.fetchImpl(this.videoUrl(gameId, system), { method: "HEAD" });
-      return response.ok;
-    } catch {
-      return false;
-    }
+  videoCandidates(gameId: string, system: System): string[] {
+    const cdn = this.videoUrl(gameId, system);
+    const hd = arcadeDbUrl("videos", gameId);
+    const sd = arcadeDbVideoSdUrl(gameId);
+    return cdn ? [cdn, hd, sd] : [hd, sd];
+  }
+
+  private withCdn(cdnUrl: string, arcadeDbUrl: string): string[] {
+    return cdnUrl ? [cdnUrl, arcadeDbUrl] : [arcadeDbUrl];
+  }
+
+  /**
+   * Last-ditch marquee — paint the title on a canvas, cache the
+   * resulting data URL in IDB so the expensive draw only happens
+   * once per title-per-session. Returns null when neither the
+   * generator nor the canvas API is available (jsdom).
+   */
+  async generateMarqueeUrl(gameId: string, gameTitle: string): Promise<string | null> {
+    const key = this.cacheKey(gameId, "marquee");
+    const cached = await this.cache.get(key);
+    if (cached) return URL.createObjectURL(cached);
+
+    const blob = await this.marqueeGenImpl(gameTitle);
+    if (!blob) return null;
+    try { await this.cache.put(key, blob); } catch { /* best-effort */ }
+    return URL.createObjectURL(blob);
   }
 }
 
+export const DEFAULT_CROSSFADE_DELAY_MS = 1000;
+
 /**
  * Schedule the video-preview crossfade: after `delayMs` of continuous
- * hover on the same game, fire the callback so the consumer can set
- * the <video> src + start playback. Returns a cancel handle that the
- * consumer invokes on selection change / unmount.
+ * hover on the same game, fire the callback. Returns a cancel handle
+ * that the consumer invokes on selection change / unmount.
  */
 export function scheduleVideoFade(
   delayMs: number,
@@ -102,5 +135,3 @@ export function scheduleVideoFade(
   const id = timer.setTimeout(cb, delayMs);
   return () => timer.clearTimeout(id);
 }
-
-export const DEFAULT_CROSSFADE_DELAY_MS = 1000;

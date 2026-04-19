@@ -10,13 +10,6 @@ function makeBlob(contents: string): Blob {
   return new Blob([contents], { type: "image/png" });
 }
 
-function makeResponse(ok: boolean, blob?: Blob): Response {
-  return {
-    ok,
-    blob: async () => blob ?? new Blob([]),
-  } as unknown as Response;
-}
-
 let cacheCounter = 0;
 function freshCache(): MediaCache {
   cacheCounter += 1;
@@ -29,17 +22,30 @@ describe("PreviewLoader", () => {
   describe("URL builders", () => {
     it("screenshotUrl joins system + id + screenshot.png", () => {
       const loader = new PreviewLoader({ cache: freshCache(), cdnBase: CDN });
-      expect(loader.screenshotUrl("sf2", "cps1")).toBe("https://cdn.sprixe.app/media/cps1/sf2/screenshot.png");
+      expect(loader.screenshotUrl("sf2", "cps1")).toBe(
+        "https://cdn.sprixe.app/media/cps1/sf2/screenshot.png",
+      );
     });
 
     it("videoUrl joins system + id + video.mp4", () => {
       const loader = new PreviewLoader({ cache: freshCache(), cdnBase: CDN });
-      expect(loader.videoUrl("mslug", "neogeo")).toBe("https://cdn.sprixe.app/media/neogeo/mslug/video.mp4");
+      expect(loader.videoUrl("mslug", "neogeo")).toBe(
+        "https://cdn.sprixe.app/media/neogeo/mslug/video.mp4",
+      );
+    });
+
+    it("marqueeUrl joins system + id + marquee.png", () => {
+      const loader = new PreviewLoader({ cache: freshCache(), cdnBase: CDN });
+      expect(loader.marqueeUrl("sf2", "cps1")).toBe(
+        "https://cdn.sprixe.app/media/cps1/sf2/marquee.png",
+      );
     });
 
     it("trailing slash on cdnBase is stripped", () => {
       const loader = new PreviewLoader({ cache: freshCache(), cdnBase: CDN + "/" });
-      expect(loader.screenshotUrl("sf2", "cps1")).toBe("https://cdn.sprixe.app/media/cps1/sf2/screenshot.png");
+      expect(loader.screenshotUrl("sf2", "cps1")).toBe(
+        "https://cdn.sprixe.app/media/cps1/sf2/screenshot.png",
+      );
     });
 
     it("cacheKey follows media:{gameId}:{kind}", () => {
@@ -49,75 +55,68 @@ describe("PreviewLoader", () => {
     });
   });
 
-  describe("loadScreenshot — cache miss + fetch", () => {
-    it("fetches from CDN, caches the blob, returns it", async () => {
-      const blob = makeBlob("screenshot bytes");
-      const fetchImpl = vi.fn(async () => makeResponse(true, blob)) as unknown as typeof fetch;
+  describe("cascades", () => {
+    it("screenshotCandidates lists operator CDN first, then ArcadeDB", () => {
+      const loader = new PreviewLoader({ cache: freshCache(), cdnBase: CDN });
+      const urls = loader.screenshotCandidates("sf2", "cps1");
+      expect(urls).toEqual([
+        "https://cdn.sprixe.app/media/cps1/sf2/screenshot.png",
+        "https://adb.arcadeitalia.net/media/mame.current/ingames/sf2.png",
+      ]);
+    });
+
+    it("marqueeCandidates lists operator CDN first, then ArcadeDB", () => {
+      const loader = new PreviewLoader({ cache: freshCache(), cdnBase: CDN });
+      const urls = loader.marqueeCandidates("mslug", "neogeo");
+      expect(urls).toEqual([
+        "https://cdn.sprixe.app/media/neogeo/mslug/marquee.png",
+        "https://adb.arcadeitalia.net/media/mame.current/marquees/mslug.png",
+      ]);
+    });
+
+    it("videoCandidates lists operator CDN, ArcadeDB HD, ArcadeDB SD", () => {
+      const loader = new PreviewLoader({ cache: freshCache(), cdnBase: CDN });
+      const urls = loader.videoCandidates("kof97", "neogeo");
+      expect(urls).toHaveLength(3);
+      expect(urls[0]).toBe("https://cdn.sprixe.app/media/neogeo/kof97/video.mp4");
+      expect(urls[1]).toContain("download_file.php");
+      expect(urls[1]).toContain("entity=shortplay_hd");
+      expect(urls[2]).toContain("download_file.php");
+      expect(urls[2]).toContain("entity=shortplay");
+      expect(urls[2]).not.toContain("shortplay_hd");
+    });
+
+    it("videoCandidates drops the operator slot when no cdnBase is set", () => {
+      const loader = new PreviewLoader({ cache: freshCache() });
+      const urls = loader.videoCandidates("kof97", "neogeo");
+      expect(urls).toHaveLength(2);
+      expect(urls[0]).toContain("entity=shortplay_hd");
+      expect(urls[1]).toContain("entity=shortplay");
+    });
+  });
+
+  describe("generateMarqueeUrl", () => {
+    it("delegates to the generator and persists the blob to cache", async () => {
+      const blob = makeBlob("generated");
+      const marqueeGenImpl = vi.fn(async () => blob);
       const cache = freshCache();
-      const loader = new PreviewLoader({ cache, cdnBase: CDN, fetchImpl });
+      const loader = new PreviewLoader({ cache, cdnBase: CDN, marqueeGenImpl });
 
-      const result = await loader.loadScreenshot("sf2", "cps1");
-      expect(result).toBe(blob);
+      const url = await loader.generateMarqueeUrl("sf2", "Street Fighter II");
+      expect(url).not.toBeNull();
+      expect(marqueeGenImpl).toHaveBeenCalledWith("Street Fighter II");
 
-      // Was persisted.
-      const cached = await cache.get("media:sf2:screenshot");
+      // Confirm the blob was persisted — skip the cache-hit URL check
+      // because fake-indexeddb unwraps Blobs into plain Objects that
+      // URL.createObjectURL rejects.
+      const cached = await cache.get("media:sf2:marquee");
       expect(cached).not.toBeNull();
     });
 
-    it("returns null on 404", async () => {
-      const fetchImpl = vi.fn(async () => makeResponse(false)) as unknown as typeof fetch;
-      const loader = new PreviewLoader({ cache: freshCache(), cdnBase: CDN, fetchImpl });
-      expect(await loader.loadScreenshot("xyz", "cps1")).toBeNull();
-    });
-
-    it("network error → null (no throw)", async () => {
-      const fetchImpl = vi.fn(async () => { throw new TypeError("offline"); }) as unknown as typeof fetch;
-      const loader = new PreviewLoader({ cache: freshCache(), cdnBase: CDN, fetchImpl });
-      expect(await loader.loadScreenshot("xyz", "cps1")).toBeNull();
-    });
-  });
-
-  describe("loadScreenshot — cache hit", () => {
-    it("returns the cached blob without fetching", async () => {
-      const cache = freshCache();
-      const blob = makeBlob("cached bytes");
-      await cache.put("media:sf2:screenshot", blob);
-
-      const fetchImpl = vi.fn(async () => { throw new Error("should not fetch"); }) as unknown as typeof fetch;
-      const loader = new PreviewLoader({ cache, cdnBase: CDN, fetchImpl });
-
-      const result = await loader.loadScreenshot("sf2", "cps1");
-      expect(result).not.toBeNull();
-      expect(fetchImpl).not.toHaveBeenCalled();
-    });
-  });
-
-  describe("hasVideo", () => {
-    it("HEAD 200 → true", async () => {
-      const fetchMock = vi.fn(async (_url: unknown, init?: unknown) => {
-        void _url; void init;
-        return makeResponse(true);
-      });
-      const loader = new PreviewLoader({
-        cache: freshCache(),
-        cdnBase: CDN,
-        fetchImpl: fetchMock as unknown as typeof fetch,
-      });
-      expect(await loader.hasVideo("sf2", "cps1")).toBe(true);
-      const call = fetchMock.mock.calls[0] as unknown as [unknown, { method: string }];
-      expect(call[1].method).toBe("HEAD");
-    });
-
-    it("HEAD 404 → false", async () => {
-      const fetchImpl = vi.fn(async () => makeResponse(false)) as unknown as typeof fetch;
-      const loader = new PreviewLoader({ cache: freshCache(), cdnBase: CDN, fetchImpl });
-      expect(await loader.hasVideo("xyz", "cps1")).toBe(false);
-    });
-
-    it("network error → false", async () => {
-      const fetchImpl = vi.fn(async () => { throw new Error("offline"); }) as unknown as typeof fetch;
-      const loader = new PreviewLoader({ cache: freshCache(), cdnBase: CDN, fetchImpl });
-      expect(await loader.hasVideo("xyz", "cps1")).toBe(false);
+    it("returns null when the generator itself yields null", async () => {
+      const marqueeGenImpl = vi.fn(async () => null);
+      const loader = new PreviewLoader({ cache: freshCache(), cdnBase: CDN, marqueeGenImpl });
+      expect(await loader.generateMarqueeUrl("sf2", "Street Fighter II")).toBeNull();
     });
   });
 });
@@ -129,8 +128,7 @@ describe("scheduleVideoFade", () => {
     const pending = new Map<number, () => void>();
     let idGen = 0;
     timers = {
-      setTimeout: (cb, ms) => {
-        void ms;
+      setTimeout: (cb) => {
         const id = ++idGen;
         pending.set(id, cb);
         return id;
@@ -149,11 +147,12 @@ describe("scheduleVideoFade", () => {
       setTimeout: timers.setTimeout as unknown as typeof setTimeout,
       clearTimeout: timers.clearTimeout as unknown as typeof clearTimeout,
     });
+    expect(cb).not.toHaveBeenCalled();
     timers.fire(1);
-    expect(cb).toHaveBeenCalledTimes(1);
+    expect(cb).toHaveBeenCalledOnce();
   });
 
-  it("the returned cancel handle prevents the fire", () => {
+  it("returns a cancel that prevents firing", () => {
     const cb = vi.fn();
     const cancel = scheduleVideoFade(1000, cb, {
       setTimeout: timers.setTimeout as unknown as typeof setTimeout,
@@ -164,7 +163,7 @@ describe("scheduleVideoFade", () => {
     expect(cb).not.toHaveBeenCalled();
   });
 
-  it("DEFAULT_CROSSFADE_DELAY_MS = 1000", () => {
+  it("default delay constant is 1000 ms", () => {
     expect(DEFAULT_CROSSFADE_DELAY_MS).toBe(1000);
   });
 });

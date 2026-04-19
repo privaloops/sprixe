@@ -95,15 +95,16 @@ function startBrowser(
   settings: SettingsStore,
   toast: Toast
 ): void {
-  // Dev uses the kiosk's own origin so screenshots under public/media/
-  // are reachable at /media/{system}/{id}/screenshot.png. Production
-  // deploys override this at build time (Phase 5 release workflow).
-  const cdnBase = typeof window !== "undefined"
-    ? `${window.location.origin}/media`
-    : "https://cdn.sprixe.app/media";
+  // Operators can self-host a CDN that overrides ArcadeDB by setting
+  // __CDN_BASE__ at build time (Phase 5 release workflow). In dev we
+  // leave it undefined so the preview loader skips straight to
+  // ArcadeDB instead of spamming localhost/media/... 404s.
+  const cdnBase = typeof (globalThis as unknown as { __CDN_BASE__?: string }).__CDN_BASE__ === "string"
+    ? (globalThis as unknown as { __CDN_BASE__?: string }).__CDN_BASE__
+    : undefined;
   const loader = new PreviewLoader({
     cache: new MediaCache(),
-    cdnBase,
+    ...(cdnBase ? { cdnBase } : {}),
   });
   const browser = new BrowserScreen(app!, { initialGames: games, previewLoader: loader });
   const hints = new HintsBar(app!);
@@ -469,8 +470,32 @@ function startBrowser(
   });
 }
 
+/**
+ * Marks the first DOM gesture (pointer/key/touch) on the page. Video
+ * previews set `muted = true` by default to satisfy the autoplay
+ * policy, then listen for this flag + retroactively unmute the clip
+ * currently playing so the user gets sound as soon as they interact
+ * with the page.
+ */
+function installMediaGestureUnlock(): void {
+  const handler = (): void => {
+    (window as typeof window & { __sprixeMediaGestureFired?: boolean }).__sprixeMediaGestureFired = true;
+    for (const video of Array.from(document.querySelectorAll<HTMLVideoElement>(".af-video-preview-video"))) {
+      video.muted = false;
+    }
+    window.removeEventListener("pointerdown", handler);
+    window.removeEventListener("keydown", handler);
+    window.removeEventListener("touchstart", handler);
+  };
+  const opts: AddEventListenerOptions = { once: false, passive: true };
+  window.addEventListener("pointerdown", handler, opts);
+  window.addEventListener("keydown", handler, opts);
+  window.addEventListener("touchstart", handler, opts);
+}
+
 async function bootKiosk(): Promise<void> {
   window.dispatchEvent(new CustomEvent("app-ready"));
+  installMediaGestureUnlock();
 
   if (!loadMapping()) {
     await showMappingFlow();
