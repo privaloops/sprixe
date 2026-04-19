@@ -26,6 +26,16 @@ import type { MediaCache } from "./media-cache";
 import { arcadeDbUrl, arcadeDbVideoSdUrl } from "./fetchers/arcadedb";
 import { generateMarquee } from "./fetchers/generated-marquee";
 
+const ARCADEDB_ORIGIN = "https://adb.arcadeitalia.net";
+const ARCADEDB_PROXY_PATH = "/arcadedb";
+
+function toProxiedUrl(url: string): string {
+  if (url.startsWith(ARCADEDB_ORIGIN)) {
+    return ARCADEDB_PROXY_PATH + url.slice(ARCADEDB_ORIGIN.length);
+  }
+  return url;
+}
+
 export type AssetKind = "screenshot" | "video" | "marquee";
 
 export interface PreviewLoaderOptions {
@@ -69,6 +79,52 @@ export class PreviewLoader {
 
   cacheKey(gameId: string, kind: AssetKind): string {
     return `media:${gameId}:${kind}`;
+  }
+
+  /**
+   * Fetch the first reachable URL from `candidates`, cache the bytes in
+   * IndexedDB, and return a blob: URL. On repeat calls the cached blob
+   * is returned without hitting the network — critical when ArcadeDB
+   * goes dark. URLs pointing at adb.arcadeitalia.net are rewritten
+   * through the same-origin `/arcadedb` proxy so fetch can read the
+   * body (cross-origin fetch without CORS would fail opaque).
+   *
+   * Returns null when every candidate failed and nothing was cached.
+   */
+  async getCachedOrFetchImage(cacheKey: string, candidates: string[]): Promise<string | null> {
+    const cached = await this.cache.get(cacheKey).catch(() => null);
+    if (cached && cached.size > 0) return URL.createObjectURL(cached);
+    const blob = await this.fetchIntoCache(cacheKey, candidates);
+    return blob ? URL.createObjectURL(blob) : null;
+  }
+
+  /**
+   * Same cascade as `getCachedOrFetchImage`, but doesn't mint an object
+   * URL — intended for the background scraper that only cares about
+   * populating the cache. Returns `true` when the key is (now) cached.
+   */
+  async primeImageCache(cacheKey: string, candidates: string[]): Promise<boolean> {
+    const cached = await this.cache.get(cacheKey).catch(() => null);
+    if (cached && cached.size > 0) return true;
+    const blob = await this.fetchIntoCache(cacheKey, candidates);
+    return blob !== null;
+  }
+
+  private async fetchIntoCache(cacheKey: string, candidates: string[]): Promise<Blob | null> {
+    for (const url of candidates) {
+      const target = toProxiedUrl(url);
+      try {
+        const resp = await fetch(target);
+        if (!resp.ok) continue;
+        const blob = await resp.blob();
+        if (blob.size === 0) continue;
+        try { await this.cache.put(cacheKey, blob); } catch { /* quota */ }
+        return blob;
+      } catch {
+        continue;
+      }
+    }
+    return null;
   }
 
   // ── Cascades ────────────────────────────────────────────────────
