@@ -835,6 +835,10 @@ html, body {
   background: var(--af-bg-card);
   border-radius: 12px;
   box-shadow: 0 0 32px var(--af-accent-glow);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
 }
 
 .af-settings-qr {
@@ -843,7 +847,40 @@ html, body {
   background: var(--af-bg-card);
   border-radius: 12px;
   align-self: center;
-  display: inline-block;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.af-qr-url {
+  font-family: var(--af-font-display);
+  font-size: 0.85rem;
+  letter-spacing: 0.04em;
+  color: var(--af-accent);
+  text-decoration: none;
+  word-break: break-all;
+  max-width: 100%;
+  text-align: center;
+}
+
+/* Section titles inside a Settings tab (ROMs: "Add a ROM…" / "Usage"). */
+.af-settings-section-title {
+  margin: 20px 0 8px;
+  font-family: var(--af-font-display);
+  font-size: 1.05rem;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--af-text-primary);
+}
+
+.af-settings-section-title:first-child {
+  margin-top: 0;
+}
+
+.af-qr-url:hover,
+.af-qr-url:focus {
+  text-decoration: underline;
 }
 
 .af-settings-hint {

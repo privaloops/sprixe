@@ -26,7 +26,7 @@ import {
   type PlayerAssignment,
 } from "../../input/player-assignments";
 
-type TabId = "display" | "audio" | "controls" | "network" | "storage" | "about" | "back";
+type TabId = "display" | "audio" | "controls" | "wifi" | "roms" | "about" | "back";
 
 interface TabDef {
   id: TabId;
@@ -127,8 +127,8 @@ export class SettingsScreen {
       { id: "display",  label: "Display",  render: (r) => this.renderDisplay(r) },
       { id: "audio",    label: "Audio",    render: (r) => this.renderAudio(r) },
       { id: "controls", label: "Controls", render: (r) => this.renderControls(r) },
-      { id: "network",  label: "Network",  render: (r) => this.renderNetwork(r) },
-      { id: "storage",  label: "Storage",  render: (r) => this.renderStorage(r) },
+      { id: "wifi",     label: "Wifi",     render: (r) => this.renderWifi(r) },
+      { id: "roms",     label: "ROMs",     render: (r) => this.renderRoms(r) },
       { id: "about",    label: "About",    render: (r) => this.renderAbout(r) },
       // Discoverable exit — gamepad users get a visible "Back" entry
       // they can land on with left/right and press confirm. Click from
@@ -559,83 +559,89 @@ export class SettingsScreen {
     col.appendChild(section);
   }
 
-  // ── Network tab ────────────────────────────────────────────────
-  private renderNetwork(root: HTMLElement): void {
+  // ── Wifi tab ───────────────────────────────────────────────────
+  private renderWifi(root: HTMLElement): void {
     const wrap = document.createElement("div");
     wrap.className = "af-settings-network";
-    wrap.setAttribute("data-testid", "settings-network");
-    if (!this.network) {
-      wrap.appendChild(this.makePlaceholder("Network binding not configured."));
-      root.appendChild(wrap);
-      return;
-    }
-    const rows: Array<[string, string]> = [
-      ["Room ID", this.network.getRoomId()],
-      ["Signal", this.network.isOpen() ? "Open (waiting)" : "Closed"],
-    ];
-    for (const [label, value] of rows) {
-      const row = document.createElement("div");
-      row.className = "af-settings-row";
-      const l = document.createElement("span");
-      l.className = "af-settings-label";
-      l.textContent = label;
-      const v = document.createElement("span");
-      v.className = "af-settings-value";
-      v.textContent = value;
-      row.appendChild(l);
-      row.appendChild(v);
-      wrap.appendChild(row);
-    }
-
-    // QR that matches the one shown on the empty state, so the user
-    // can reopen their phone page after the catalogue is populated.
-    const qrWrap = document.createElement("div");
-    qrWrap.className = "af-settings-qr";
-    qrWrap.setAttribute("data-testid", "settings-network-qr");
-    const qr = new QrCode(qrWrap, { size: 200, baseUrl: resolvePhoneBaseUrl() });
-    qr.setRoomId(this.network.getRoomId()).catch(() => {
-      // qrcode uses canvas 2D, which jsdom does not implement — tests
-      // mount SettingsScreen without hitting the network tab's render
-      // path, so swallow the rejection instead of surfacing it.
-    });
-    wrap.appendChild(qrWrap);
-
-    const hint = document.createElement("p");
-    hint.className = "af-settings-hint";
-    hint.textContent = "Scan with your phone to upload ROMs or open the remote.";
-    wrap.appendChild(hint);
-
-    const regen = document.createElement("button");
-    regen.type = "button";
-    regen.className = "af-settings-btn af-settings-btn--danger";
-    regen.setAttribute("data-testid", "settings-network-regenerate");
-    regen.textContent = "Regenerate Room ID";
-    regen.addEventListener("click", () => this.network!.onRegenerate());
-    wrap.appendChild(regen);
-
+    wrap.setAttribute("data-testid", "settings-wifi");
+    wrap.appendChild(this.makePlaceholder("Wifi setup — coming soon."));
     root.appendChild(wrap);
   }
 
-  // ── Storage tab ────────────────────────────────────────────────
-  private renderStorage(root: HTMLElement): void {
+  // ── ROMs tab ───────────────────────────────────────────────────
+  private renderRoms(root: HTMLElement): void {
     const wrap = document.createElement("div");
     wrap.className = "af-settings-storage";
-    wrap.setAttribute("data-testid", "settings-storage");
+    wrap.setAttribute("data-testid", "settings-roms");
+
+    // Phone-upload section: Room ID + signal status + QR + regenerate.
+    // Moved from the old Network tab because it's really "how to push a
+    // new ROM from the phone", which belongs next to the ROM list.
+    if (this.network) {
+      const addHeading = document.createElement("h3");
+      addHeading.className = "af-settings-section-title";
+      addHeading.textContent = "Add a ROM with your phone or your computer";
+      wrap.appendChild(addHeading);
+
+      const rows: Array<[string, string]> = [
+        ["Room ID", this.network.getRoomId()],
+        ["Signal", this.network.isOpen() ? "Open (waiting)" : "Closed"],
+      ];
+      for (const [label, value] of rows) {
+        const row = document.createElement("div");
+        row.className = "af-settings-row";
+        const l = document.createElement("span");
+        l.className = "af-settings-label";
+        l.textContent = label;
+        const v = document.createElement("span");
+        v.className = "af-settings-value";
+        v.textContent = value;
+        row.appendChild(l);
+        row.appendChild(v);
+        wrap.appendChild(row);
+      }
+
+      const qrWrap = document.createElement("div");
+      qrWrap.className = "af-settings-qr";
+      qrWrap.setAttribute("data-testid", "settings-roms-qr");
+      const qr = new QrCode(qrWrap, { size: 200, baseUrl: resolvePhoneBaseUrl() });
+      qr.setRoomId(this.network.getRoomId()).catch(() => { /* jsdom: no canvas */ });
+      wrap.appendChild(qrWrap);
+
+      const hint = document.createElement("p");
+      hint.className = "af-settings-hint";
+      hint.textContent = "Scan with your phone to upload ROMs or open the remote.";
+      wrap.appendChild(hint);
+
+      const regen = document.createElement("button");
+      regen.type = "button";
+      regen.className = "af-settings-btn af-settings-btn--danger";
+      regen.setAttribute("data-testid", "settings-roms-regenerate");
+      regen.textContent = "Regenerate Room ID";
+      regen.addEventListener("click", () => this.network!.onRegenerate());
+      wrap.appendChild(regen);
+    }
+
     if (!this.storage) {
       wrap.appendChild(this.makePlaceholder("Storage binding not configured."));
       root.appendChild(wrap);
       return;
     }
 
+    const usageHeading = document.createElement("h3");
+    usageHeading.className = "af-settings-section-title";
+    usageHeading.textContent = "ROMs usage";
+    wrap.appendChild(usageHeading);
+
     const quotaRow = document.createElement("div");
     quotaRow.className = "af-settings-row";
-    quotaRow.setAttribute("data-testid", "settings-storage-quota");
+    quotaRow.setAttribute("data-testid", "settings-roms-quota");
     quotaRow.textContent = "Usage: computing…";
     wrap.appendChild(quotaRow);
 
     const listWrap = document.createElement("div");
     listWrap.className = "af-settings-rom-list";
-    listWrap.setAttribute("data-testid", "settings-storage-list");
+    listWrap.setAttribute("data-testid", "settings-roms-list");
     listWrap.textContent = "Loading ROMs…";
     wrap.appendChild(listWrap);
 

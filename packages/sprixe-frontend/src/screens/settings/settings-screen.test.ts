@@ -43,7 +43,7 @@ describe("SettingsScreen", () => {
     });
 
     it("bumper-right / bumper-left cycle through tabs (including the Back entry)", () => {
-      const order = ["display", "audio", "controls", "network", "storage", "about", "back"];
+      const order = ["display", "audio", "controls", "wifi", "roms", "about", "back"];
       for (let i = 1; i < order.length; i++) {
         screen.handleNavAction("bumper-right");
         expect(screen.getActiveTab()).toBe(order[i]);
@@ -157,7 +157,7 @@ describe("SettingsScreen", () => {
     });
   });
 
-  describe("network tab", () => {
+  describe("roms tab", () => {
     it("shows room id + open state and wires Regenerate", () => {
       const onRegenerate = vi.fn<() => void>();
       const screen2 = new SettingsScreen(container, {
@@ -169,17 +169,15 @@ describe("SettingsScreen", () => {
           onRegenerate: onRegenerate as unknown as () => void,
         },
       });
-      screen2.setActiveTab("network");
-      const pane = container.querySelector<HTMLElement>('[data-testid="settings-network"]')!;
+      screen2.setActiveTab("roms");
+      const pane = container.querySelector<HTMLElement>('[data-testid="settings-roms"]')!;
       expect(pane.textContent).toContain("sprixe-abcd");
       expect(pane.textContent).toContain("Open");
-      container.querySelector<HTMLButtonElement>('[data-testid="settings-network-regenerate"]')!.click();
+      container.querySelector<HTMLButtonElement>('[data-testid="settings-roms-regenerate"]')!.click();
       expect(onRegenerate).toHaveBeenCalledTimes(1);
       screen2.unmount();
     });
-  });
 
-  describe("storage tab", () => {
     it("renders ROM list and wires per-row delete", async () => {
       const deleteRom = vi.fn(async () => {});
       const screen2 = new SettingsScreen(container, {
@@ -193,12 +191,12 @@ describe("SettingsScreen", () => {
           estimate: async () => ({ usage: 10 * 1024 * 1024, quota: 1024 * 1024 * 1024 }),
         },
       });
-      screen2.setActiveTab("storage");
+      screen2.setActiveTab("roms");
       // Async render — wait two microtasks.
       await Promise.resolve();
       await Promise.resolve();
       await new Promise((r) => setTimeout(r, 0));
-      const quota = container.querySelector<HTMLElement>('[data-testid="settings-storage-quota"]')!;
+      const quota = container.querySelector<HTMLElement>('[data-testid="settings-roms-quota"]')!;
       expect(quota.textContent).toContain("10.0 MB");
       const delBtn = container.querySelector<HTMLButtonElement>('[data-testid="settings-storage-delete-sf2"]')!;
       delBtn.click();
@@ -207,9 +205,9 @@ describe("SettingsScreen", () => {
       screen2.unmount();
     });
 
-    it("falls back to placeholder when binding missing", () => {
-      screen.setActiveTab("storage");
-      const pane = container.querySelector<HTMLElement>('[data-testid="settings-storage"]')!;
+    it("falls back to placeholder when storage binding missing", () => {
+      screen.setActiveTab("roms");
+      const pane = container.querySelector<HTMLElement>('[data-testid="settings-roms"]')!;
       expect(pane.textContent).toContain("not configured");
     });
   });
