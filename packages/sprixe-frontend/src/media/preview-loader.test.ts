@@ -32,9 +32,11 @@ describe("PreviewLoader", () => {
       expect(loader.screenshotUrl("sf2", "cps1")).toBe("https://cdn.sprixe.app/media/cps1/sf2/screenshot.png");
     });
 
-    it("videoUrl joins system + id + video.mp4", () => {
+    it("videoUrl points at ArcadeDB /videos by default", () => {
       const loader = new PreviewLoader({ cache: freshCache(), cdnBase: CDN });
-      expect(loader.videoUrl("mslug", "neogeo")).toBe("https://cdn.sprixe.app/media/neogeo/mslug/video.mp4");
+      expect(loader.videoUrl("mslug", "neogeo")).toBe(
+        "https://adb.arcadeitalia.net/media/mame.current/videos/mslug.mp4",
+      );
     });
 
     it("trailing slash on cdnBase is stripped", () => {
@@ -93,30 +95,30 @@ describe("PreviewLoader", () => {
   });
 
   describe("loadScreenshot — cascade", () => {
-    it("falls back to libretro when the CDN returns 404", async () => {
-      const libretroBlob = makeBlob("libretro snap");
+    it("falls back to ArcadeDB when the CDN returns 404", async () => {
+      const adbBlob = makeBlob("arcadedb snap");
       const fetchImpl = vi.fn(async () => makeResponse(false)) as unknown as typeof fetch;
-      const libretroImpl = vi.fn(async () => libretroBlob);
+      const arcadeDbImpl = vi.fn(async () => adbBlob);
       const loader = new PreviewLoader({
         cache: freshCache(),
         cdnBase: CDN,
         fetchImpl,
-        libretroImpl,
+        arcadeDbImpl,
       });
 
       const result = await loader.loadScreenshot("sf2", "cps1");
-      expect(result).toBe(libretroBlob);
-      expect(libretroImpl).toHaveBeenCalledWith("snap", "sf2");
+      expect(result).toBe(adbBlob);
+      expect(arcadeDbImpl).toHaveBeenCalledWith("ingames", "sf2");
     });
 
-    it("returns null only when both CDN + libretro are empty", async () => {
+    it("returns null only when both CDN + ArcadeDB are empty", async () => {
       const fetchImpl = vi.fn(async () => makeResponse(false)) as unknown as typeof fetch;
-      const libretroImpl = vi.fn(async () => null);
+      const arcadeDbImpl = vi.fn(async () => null);
       const loader = new PreviewLoader({
         cache: freshCache(),
         cdnBase: CDN,
         fetchImpl,
-        libretroImpl,
+        arcadeDbImpl,
       });
       expect(await loader.loadScreenshot("xyz", "cps1")).toBeNull();
     });
@@ -126,51 +128,51 @@ describe("PreviewLoader", () => {
     it("returns CDN marquee when present", async () => {
       const cdnBlob = makeBlob("cdn marquee");
       const fetchImpl = vi.fn(async () => makeResponse(true, cdnBlob)) as unknown as typeof fetch;
-      const libretroImpl = vi.fn(async () => null);
+      const arcadeDbImpl = vi.fn(async () => null);
       const marqueeGenImpl = vi.fn(async () => makeBlob("generated"));
       const loader = new PreviewLoader({
         cache: freshCache(),
         cdnBase: CDN,
         fetchImpl,
-        libretroImpl,
+        arcadeDbImpl,
         marqueeGenImpl,
       });
 
       const result = await loader.loadMarquee("sf2", "cps1", "Street Fighter II");
       expect(result).toBe(cdnBlob);
-      expect(libretroImpl).not.toHaveBeenCalled();
+      expect(arcadeDbImpl).not.toHaveBeenCalled();
       expect(marqueeGenImpl).not.toHaveBeenCalled();
     });
 
-    it("falls back to libretro title when CDN 404s", async () => {
-      const libretroBlob = makeBlob("libretro title");
+    it("falls back to ArcadeDB marquee when CDN 404s", async () => {
+      const adbBlob = makeBlob("arcadedb marquee");
       const fetchImpl = vi.fn(async () => makeResponse(false)) as unknown as typeof fetch;
-      const libretroImpl = vi.fn(async () => libretroBlob);
+      const arcadeDbImpl = vi.fn(async () => adbBlob);
       const marqueeGenImpl = vi.fn(async () => makeBlob("generated"));
       const loader = new PreviewLoader({
         cache: freshCache(),
         cdnBase: CDN,
         fetchImpl,
-        libretroImpl,
+        arcadeDbImpl,
         marqueeGenImpl,
       });
 
       const result = await loader.loadMarquee("sf2", "cps1", "Street Fighter II");
-      expect(result).toBe(libretroBlob);
-      expect(libretroImpl).toHaveBeenCalledWith("title", "sf2");
+      expect(result).toBe(adbBlob);
+      expect(arcadeDbImpl).toHaveBeenCalledWith("marquees", "sf2");
       expect(marqueeGenImpl).not.toHaveBeenCalled();
     });
 
     it("uses the generator when both remote sources miss", async () => {
       const generated = makeBlob("generated marquee");
       const fetchImpl = vi.fn(async () => makeResponse(false)) as unknown as typeof fetch;
-      const libretroImpl = vi.fn(async () => null);
+      const arcadeDbImpl = vi.fn(async () => null);
       const marqueeGenImpl = vi.fn(async () => generated);
       const loader = new PreviewLoader({
         cache: freshCache(),
         cdnBase: CDN,
         fetchImpl,
-        libretroImpl,
+        arcadeDbImpl,
         marqueeGenImpl,
       });
 
@@ -183,24 +185,24 @@ describe("PreviewLoader", () => {
       const cache = freshCache();
       await cache.put("media:sf2:marquee", makeBlob("cached"));
       const fetchImpl = vi.fn(async () => { throw new Error("no fetch"); }) as unknown as typeof fetch;
-      const libretroImpl = vi.fn(async () => null);
+      const arcadeDbImpl = vi.fn(async () => null);
       const loader = new PreviewLoader({
         cache,
         cdnBase: CDN,
         fetchImpl,
-        libretroImpl,
+        arcadeDbImpl,
       });
 
       const result = await loader.loadMarquee("sf2", "cps1", "Street Fighter II");
       expect(result).not.toBeNull();
-      expect(libretroImpl).not.toHaveBeenCalled();
+      expect(arcadeDbImpl).not.toHaveBeenCalled();
     });
   });
 
   describe("hasVideo", () => {
-    it("HEAD 200 → true", async () => {
+    it("HEAD 200 → true, targeted at ArcadeDB videos", async () => {
       const fetchMock = vi.fn(async (_url: unknown, init?: unknown) => {
-        void _url; void init;
+        void init;
         return makeResponse(true);
       });
       const loader = new PreviewLoader({
@@ -209,8 +211,9 @@ describe("PreviewLoader", () => {
         fetchImpl: fetchMock as unknown as typeof fetch,
       });
       expect(await loader.hasVideo("sf2", "cps1")).toBe(true);
-      const call = fetchMock.mock.calls[0] as unknown as [unknown, { method: string }];
+      const call = fetchMock.mock.calls[0] as unknown as [string, { method: string }];
       expect(call[1].method).toBe("HEAD");
+      expect(call[0]).toContain("adb.arcadeitalia.net/media/mame.current/videos/sf2.mp4");
     });
 
     it("HEAD 404 → false", async () => {

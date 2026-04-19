@@ -14,7 +14,7 @@
 
 import type { System } from "../data/games";
 import type { MediaCache } from "./media-cache";
-import { fetchLibretroAsset } from "./fetchers/libretro";
+import { fetchArcadeDbAsset, arcadeDbUrl, type ArcadeDbKind } from "./fetchers/arcadedb";
 import { generateMarquee } from "./fetchers/generated-marquee";
 
 export type AssetKind = "screenshot" | "video" | "marquee";
@@ -25,19 +25,19 @@ export interface PreviewLoaderOptions {
    * CDN base URL without trailing slash, e.g. https://cdn.sprixe.app/media.
    * Used as the first (preferred) source when non-empty — it lets
    * operators self-host curated assets that override the community
-   * libretro-thumbnails set. In dev we leave it pointing at the local
-   * /media/ path which 404s everywhere; that's fine, the cascade
-   * silently falls through.
+   * set. In dev we leave it pointing at the local /media/ path which
+   * 404s everywhere; that's fine, the cascade silently falls through.
    */
   cdnBase: string;
   /** Override fetch for tests. */
   fetchImpl?: typeof fetch;
   /**
-   * Override libretro fetcher — mainly for unit tests that don't want
-   * to hit GitHub Raw. Receives the kind ("snap" | "title") and the
-   * game id, returns a Blob or null.
+   * Override the ArcadeDB fetcher — mainly for unit tests that don't
+   * want to hit the live server. Receives the ArcadeDB kind
+   * (ingames / marquees / videos) and the game id, returns a Blob or
+   * null.
    */
-  libretroImpl?: (kind: "snap" | "title", gameId: string) => Promise<Blob | null>;
+  arcadeDbImpl?: (kind: ArcadeDbKind, gameId: string) => Promise<Blob | null>;
   /** Override the fallback marquee generator. */
   marqueeGenImpl?: (title: string) => Promise<Blob | null>;
 }
@@ -46,15 +46,15 @@ export class PreviewLoader {
   private readonly cache: MediaCache;
   private readonly cdnBase: string;
   private readonly fetchImpl: typeof fetch;
-  private readonly libretroImpl: (kind: "snap" | "title", gameId: string) => Promise<Blob | null>;
+  private readonly arcadeDbImpl: (kind: ArcadeDbKind, gameId: string) => Promise<Blob | null>;
   private readonly marqueeGenImpl: (title: string) => Promise<Blob | null>;
 
   constructor(options: PreviewLoaderOptions) {
     this.cache = options.cache;
     this.cdnBase = options.cdnBase.replace(/\/$/, "");
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
-    this.libretroImpl = options.libretroImpl
-      ?? ((kind, id) => fetchLibretroAsset(kind, id, this.fetchImpl));
+    this.arcadeDbImpl = options.arcadeDbImpl
+      ?? ((kind, id) => fetchArcadeDbAsset(kind, id, this.fetchImpl));
     this.marqueeGenImpl = options.marqueeGenImpl ?? generateMarquee;
   }
 
@@ -62,8 +62,17 @@ export class PreviewLoader {
     return `${this.cdnBase}/${system}/${gameId}/screenshot.png`;
   }
 
-  videoUrl(gameId: string, system: System): string {
-    return `${this.cdnBase}/${system}/${gameId}/video.mp4`;
+  /**
+   * URL to stream the gameplay video from. Prefers the operator's CDN
+   * when it serves one, falls back to ArcadeDB — which is the pattern
+   * Recalbox / Batocera use by default. The caller (VideoPreview)
+   * mounts a `<video src>` directly so the browser streams it rather
+   * than buffering through a blob URL.
+   */
+  videoUrl(gameId: string, _system: System): string {
+    // VideoPreview picks a URL via hasVideo() today; it doesn't call
+    // this helper. Kept for API parity + tests.
+    return arcadeDbUrl("videos", gameId);
   }
 
   marqueeUrl(gameId: string, system: System): string {
@@ -75,35 +84,31 @@ export class PreviewLoader {
   }
 
   /**
-   * Screenshot cascade: self-hosted CDN → libretro-thumbnails →
-   * null (consumer shows the built-in SVG placeholder). Returns the
-   * first source that succeeds; caches the blob so repeated hovers
-   * never re-fetch.
+   * Screenshot cascade: operator CDN → ArcadeDB `ingames` → null
+   * (consumer shows the built-in SVG placeholder). Returns the first
+   * source that succeeds; caches the blob so repeated hovers never
+   * re-fetch.
    */
   async loadScreenshot(gameId: string, system: System): Promise<Blob | null> {
     const key = this.cacheKey(gameId, "screenshot");
     const cached = await this.cache.get(key);
     if (cached) return cached;
 
-    // 1. Self-hosted CDN (operator-curated, override priority).
+    // 1. Operator-curated CDN (override priority).
     const cdn = await this.tryFetch(this.screenshotUrl(gameId, system));
     if (cdn) return this.putCache(key, cdn);
 
-    // 2. libretro-thumbnails community set (CC0, GitHub Raw).
-    const libretro = await this.libretroImpl("snap", gameId);
-    if (libretro) return this.putCache(key, libretro);
+    // 2. ArcadeDB — Motoschifo's CC0 dataset, also Recalbox's default.
+    const arcadedb = await this.arcadeDbImpl("ingames", gameId);
+    if (arcadedb) return this.putCache(key, arcadedb);
 
     return null;
   }
 
   /**
-   * Marquee cascade: self-hosted CDN → libretro title screen →
-   * canvas-generated fallback. The final stage always yields a blob
-   * (the game title painted on an arcade gradient), so the browser
-   * panel never shows an empty band.
-   *
-   * `gameTitle` is only used by the generated fallback; pass something
-   * human-readable (e.g. GameEntry.title).
+   * Marquee cascade: operator CDN → ArcadeDB `marquees` → canvas
+   * generated fallback. The final stage always yields a blob so the
+   * browser panel never shows an empty band.
    */
   async loadMarquee(gameId: string, system: System, gameTitle: string): Promise<Blob | null> {
     const key = this.cacheKey(gameId, "marquee");
@@ -113,8 +118,8 @@ export class PreviewLoader {
     const cdn = await this.tryFetch(this.marqueeUrl(gameId, system));
     if (cdn) return this.putCache(key, cdn);
 
-    const libretroTitle = await this.libretroImpl("title", gameId);
-    if (libretroTitle) return this.putCache(key, libretroTitle);
+    const arcadedb = await this.arcadeDbImpl("marquees", gameId);
+    if (arcadedb) return this.putCache(key, arcadedb);
 
     const generated = await this.marqueeGenImpl(gameTitle);
     if (generated) return this.putCache(key, generated);
@@ -122,15 +127,14 @@ export class PreviewLoader {
   }
 
   /**
-   * HEAD-probe the video URL so the consumer knows whether to mount
-   * a <video> at all. Cheaper than a GET + cancels the download on
-   * a miss. No libretro fallback — libretro-thumbnails is images
-   * only; videos stay on the operator's CDN (or Phase 4b.11 with an
-   * optional ScreenScraper key).
+   * HEAD-probe ArcadeDB for a gameplay video; returns true when the
+   * consumer should mount a `<video src={videoUrl()}>` and let the
+   * browser stream directly. Future operator CDN overrides take
+   * priority when configured.
    */
-  async hasVideo(gameId: string, system: System): Promise<boolean> {
+  async hasVideo(gameId: string, _system: System): Promise<boolean> {
     try {
-      const response = await this.fetchImpl(this.videoUrl(gameId, system), { method: "HEAD" });
+      const response = await this.fetchImpl(arcadeDbUrl("videos", gameId), { method: "HEAD" });
       return response.ok;
     } catch {
       return false;

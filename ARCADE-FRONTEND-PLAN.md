@@ -1845,25 +1845,26 @@ Le *deliverable* énoncé par chaque phase doit être couvert par **au moins un 
 
 **Deliverable**: Full arcade frontend, all features, visually polished.
 
-### Phase 4b.9: Runtime media cascade (libretro-thumbnails + generated marquee) — **landed 2026-04**
+### Phase 4b.9: Runtime media cascade (ArcadeDB + generated marquee) — **landed 2026-04**
 
-> **Contexte** : l'audit Phase 4 a confirmé que §4.3 (CDN upload script offline) n'a jamais été écrit et que la preview panel vivait sur un CDN `/media/` self-hosted qui 404 partout. Le preview-loader avait donc son infrastructure testée mais zéro asset à consommer.
+> **Contexte** : l'audit Phase 4 a confirmé que §4.3 (CDN upload script offline) n'a jamais été écrit et que la preview panel vivait sur un CDN `/media/` self-hosted qui 404 partout. Un premier essai via `libretro-thumbnails/MAME` a montré que le repo utilise les **noms longs MAME** ("Street Fighter II - The World Warrior (World 910522).png") et non les romset short-names, incompatible avec nos RomDB ids.
 
 **Livré** :
 
-- `media/fetchers/libretro.ts` — fetch direct sur `raw.githubusercontent.com/libretro-thumbnails/MAME/master/Named_Snaps|Named_Titles/{id}.png`. CC0, pas d'auth, CORS OK. Le `{id}` est le romset MAME ; nos RomDB ids s'alignent déjà.
-- `media/fetchers/generated-marquee.ts` — canvas 2D qui peint le titre du jeu sur un gradient arcade (cyan accent + scanlines subtiles). Dernier étage de la cascade : garantit qu'un marquee s'affiche même quand les deux sources distantes 404.
+- `media/fetchers/arcadedb.ts` — fetch direct sur `adb.arcadeitalia.net/media/mame.current/{ingames|marquees|videos}/{id}.png|.mp4`. C'est la source que Recalbox / Batocera pointent par défaut — HTTPS, CORS-open, CC0, pas de clef, **et** fournit screenshots + marquees + videos courts d'un coup. `{id}` est le romset MAME short-name → match 1:1 nos RomDB ids (sf2, ffight, mslug, kof97…).
+- `media/fetchers/generated-marquee.ts` — canvas 2D qui peint le titre du jeu sur un gradient arcade (cyan accent + scanlines subtiles). Dernier étage de la cascade : garantit qu'un marquee s'affiche même quand ArcadeDB 404.
 - `PreviewLoader` refactoré en cascade explicite :
-  - `loadScreenshot` : CDN custom → libretro `Named_Snaps` → null (placeholder SVG existant)
-  - `loadMarquee` : CDN custom → libretro `Named_Titles` → canvas généré
-  - `hasVideo` inchangé (CDN only ; vraie vidéo en Phase 4b.11)
-- Browser preview panel : bandeau marquee PNG au-dessus du screen (ratio ~15 %, bordure cyan, shadow glow accent), suivi du screenshot existant en dessous.
+  - `loadScreenshot` : CDN custom → ArcadeDB `ingames` → null (placeholder SVG existant)
+  - `loadMarquee` : CDN custom → ArcadeDB `marquees` → canvas généré
+  - `hasVideo` : HEAD sur ArcadeDB `videos/{id}.mp4`
+  - `videoUrl` pointe désormais sur ArcadeDB ; le consommateur (`VideoPreview`) monte `<video src>` direct.
+- Browser preview panel : bandeau marquee PNG au-dessus du screen (ratio ~15 %, bordure cyan, shadow glow accent), suivi du screenshot / video existant en dessous.
 - `MediaCache` IDB : clés `media:{gameId}:{screenshot|video|marquee}`. Pas de TTL, clear manuel à prévoir en Phase 4b.10.
-- Tests : `preview-loader.test.ts` étendu (cascade CDN/libretro/generator, cache hit), nouveaux `libretro.test.ts` + `generated-marquee.test.ts`.
+- Tests : `preview-loader.test.ts` étendu (cascade CDN/ArcadeDB/generator, cache hit, hasVideo cible ArcadeDB), `arcadedb.test.ts` + `generated-marquee.test.ts`.
 
 **Suites** :
 - Phase 4b.10 : bouton « Clear media cache » dans Settings → Storage.
-- Phase 4b.11 (ex-4.3) : vraie video MP4. Sans clef, les DBs publiques stables n'existent pas ; deux pistes acceptables : (a) ScreenScraper API avec clef gratuite stockée en Settings → Network, (b) CDN opérateur self-hosted.
+- Phase 4b.11 : fallback video via ScreenScraper key quand le romset n'existe pas sur ArcadeDB (et CDN custom pour opérateurs).
 
 ### Phase 4b.8: Phone upload robustness (post-2026-04 audit, à planifier)
 
