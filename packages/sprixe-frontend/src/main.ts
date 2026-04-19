@@ -9,6 +9,8 @@ import { MOCK_GAMES } from "./data/mock-games";
 import { romRecordToGameEntry } from "./data/rom-source";
 import type { GameEntry } from "./data/games";
 import { GamepadNav } from "./input/gamepad-nav";
+import { KeyboardNav } from "./input/keyboard-nav";
+import { computeKeyboardNavBindings } from "./input/nav-bindings";
 import { loadMapping, clearMapping, MAPPING_ROLES, mappingToGamepadNavBindings } from "./input/mapping-store";
 import { InputRouter } from "./input/input-router";
 import { BrowserScreen } from "./screens/browser/browser-screen";
@@ -468,6 +470,14 @@ function startBrowser(
   gamepad = new GamepadNav({ bindings: mappingToGamepadNavBindings(loadMapping()) });
   gamepad.onAction((action) => router.feedAction(action));
   gamepad.start();
+
+  // Keyboard-driven menu nav. Both players' key bindings (custom +
+  // engine defaults when the player picked keyboard) are projected
+  // onto the same NavAction surface — whoever reaches the kiosk first
+  // can drive it with their own keys.
+  const keyboardNav = new KeyboardNav(computeKeyboardNavBindings(loadMapping()));
+  keyboardNav.onAction((action) => router.feedAction(action));
+  keyboardNav.start();
 
   const pipeline = new RomPipeline({ db });
   host.onFile(async (file, conn) => {
