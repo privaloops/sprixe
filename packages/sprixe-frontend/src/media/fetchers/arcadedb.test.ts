@@ -14,13 +14,16 @@ describe("arcadeDbUrl", () => {
     );
   });
 
-  it("builds videos URL with mp4 extension", () => {
-    expect(arcadeDbUrl("videos", "kof97")).toBe(
-      "https://adb.arcadeitalia.net/media/mame.current/videos/kof97.mp4",
-    );
+  it("builds HD video URL via ArcadeDB's download_file.php endpoint", () => {
+    const url = arcadeDbUrl("videos", "kof97");
+    expect(url.startsWith("https://adb.arcadeitalia.net/download_file.php?")).toBe(true);
+    expect(url).toContain("tipo=mame_current");
+    expect(url).toContain("codice=kof97");
+    expect(url).toContain("entity=shortplay_hd");
+    expect(url).toContain("filler=kof97.mp4");
   });
 
-  it("percent-encodes exotic romset ids", () => {
+  it("percent-encodes exotic romset ids on image URLs", () => {
     expect(arcadeDbUrl("ingames", "pacman:plus")).toContain("pacman%3Aplus.png");
   });
 });

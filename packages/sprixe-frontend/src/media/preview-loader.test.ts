@@ -74,13 +74,24 @@ describe("PreviewLoader", () => {
       ]);
     });
 
-    it("videoCandidates lists operator CDN first, then ArcadeDB", () => {
+    it("videoCandidates lists operator CDN, ArcadeDB HD, ArcadeDB SD", () => {
       const loader = new PreviewLoader({ cache: freshCache(), cdnBase: CDN });
       const urls = loader.videoCandidates("kof97", "neogeo");
-      expect(urls).toEqual([
-        "https://cdn.sprixe.app/media/neogeo/kof97/video.mp4",
-        "https://adb.arcadeitalia.net/media/mame.current/videos/kof97.mp4",
-      ]);
+      expect(urls).toHaveLength(3);
+      expect(urls[0]).toBe("https://cdn.sprixe.app/media/neogeo/kof97/video.mp4");
+      expect(urls[1]).toContain("download_file.php");
+      expect(urls[1]).toContain("entity=shortplay_hd");
+      expect(urls[2]).toContain("download_file.php");
+      expect(urls[2]).toContain("entity=shortplay");
+      expect(urls[2]).not.toContain("shortplay_hd");
+    });
+
+    it("videoCandidates drops the operator slot when no cdnBase is set", () => {
+      const loader = new PreviewLoader({ cache: freshCache() });
+      const urls = loader.videoCandidates("kof97", "neogeo");
+      expect(urls).toHaveLength(2);
+      expect(urls[0]).toContain("entity=shortplay_hd");
+      expect(urls[1]).toContain("entity=shortplay");
     });
   });
 

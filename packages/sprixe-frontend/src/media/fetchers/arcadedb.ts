@@ -14,18 +14,44 @@
  * layer of the preview-loader cascade.
  */
 
-const BASE = "https://adb.arcadeitalia.net/media/mame.current";
+const IMG_BASE = "https://adb.arcadeitalia.net/media/mame.current";
+const DOWNLOAD_BASE = "https://adb.arcadeitalia.net/download_file.php";
 
 export type ArcadeDbKind = "ingames" | "marquees" | "videos";
 
-const EXT: Record<ArcadeDbKind, string> = {
-  ingames: "png",
-  marquees: "png",
-  videos: "mp4",
-};
-
+/**
+ * Screenshots + marquees sit under `/media/mame.current/{kind}/{id}.png`.
+ * Videos use a different endpoint (`download_file.php`) because
+ * ArcadeDB bundles the MP4 through a PHP handler — the direct
+ * `/media/.../videos/*.mp4` path 404s.
+ */
 export function arcadeDbUrl(kind: ArcadeDbKind, gameId: string): string {
-  return `${BASE}/${kind}/${encodeURIComponent(gameId)}.${EXT[kind]}`;
+  const id = encodeURIComponent(gameId);
+  if (kind === "videos") {
+    // Prefer the HD short clip; falls back to the standard one via
+    // the <video> onerror cascade in the caller.
+    const params = new URLSearchParams({
+      tipo: "mame_current",
+      codice: gameId,
+      entity: "shortplay_hd",
+      oper: "download",
+      filler: `${gameId}.mp4`,
+    });
+    return `${DOWNLOAD_BASE}?${params.toString()}`;
+  }
+  return `${IMG_BASE}/${kind}/${id}.png`;
+}
+
+/** Secondary video URL — standard-quality shortplay, used when HD 404s. */
+export function arcadeDbVideoSdUrl(gameId: string): string {
+  const params = new URLSearchParams({
+    tipo: "mame_current",
+    codice: gameId,
+    entity: "shortplay",
+    oper: "download",
+    filler: `${gameId}.mp4`,
+  });
+  return `${DOWNLOAD_BASE}?${params.toString()}`;
 }
 
 /**

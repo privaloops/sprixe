@@ -182,7 +182,10 @@ export class VideoPreview {
     video.className = "af-video-preview-video";
     video.setAttribute("data-testid", "video-preview-video");
     video.setAttribute("playsinline", "true");
-    video.muted = true;
+    // Autoplay policy: muted is always allowed. Once the user has
+    // interacted with the page (tracked globally by ensureMediaGesture
+    // below), we flip muted off so preview clips speak up.
+    video.muted = !(window as typeof window & { __sprixeMediaGestureFired?: boolean }).__sprixeMediaGestureFired;
     video.loop = true;
 
     let idx = 0;
@@ -190,13 +193,16 @@ export class VideoPreview {
       if (game.id !== this.currentId) { video.remove(); return; }
       if (idx >= candidates.length) { video.remove(); return; }
       video.src = candidates[idx++]!;
-      // The browser raises an error on 404 via the media element.
     };
     video.addEventListener("error", () => tryNext());
     video.addEventListener("loadeddata", () => {
       if (game.id !== this.currentId) return;
       this.currentVideoEl = video;
-      void video.play().catch(() => { /* autoplay blocked — leave visible */ });
+      void video.play().catch(() => {
+        // Autoplay blocked — re-arm muted and retry.
+        video.muted = true;
+        void video.play().catch(() => { /* still blocked — leave visible */ });
+      });
     });
 
     this.media.appendChild(video);

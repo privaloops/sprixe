@@ -23,7 +23,7 @@
 
 import type { System } from "../data/games";
 import type { MediaCache } from "./media-cache";
-import { arcadeDbUrl } from "./fetchers/arcadedb";
+import { arcadeDbUrl, arcadeDbVideoSdUrl } from "./fetchers/arcadedb";
 import { generateMarquee } from "./fetchers/generated-marquee";
 
 export type AssetKind = "screenshot" | "video" | "marquee";
@@ -82,8 +82,17 @@ export class PreviewLoader {
     return this.withCdn(this.marqueeUrl(gameId, system), arcadeDbUrl("marquees", gameId));
   }
 
+  /**
+   * Video cascade: operator CDN → ArcadeDB HD shortplay →
+   * ArcadeDB SD shortplay → nothing. ArcadeDB bundles its MP4s
+   * through `download_file.php`, so we hit that endpoint rather
+   * than the plain `/media/.../videos/*.mp4` path (which 404s).
+   */
   videoCandidates(gameId: string, system: System): string[] {
-    return this.withCdn(this.videoUrl(gameId, system), arcadeDbUrl("videos", gameId));
+    const cdn = this.videoUrl(gameId, system);
+    const hd = arcadeDbUrl("videos", gameId);
+    const sd = arcadeDbVideoSdUrl(gameId);
+    return cdn ? [cdn, hd, sd] : [hd, sd];
   }
 
   private withCdn(cdnUrl: string, arcadeDbUrl: string): string[] {
