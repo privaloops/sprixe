@@ -1845,6 +1845,26 @@ Le *deliverable* énoncé par chaque phase doit être couvert par **au moins un 
 
 **Deliverable**: Full arcade frontend, all features, visually polished.
 
+### Phase 4b.9: Runtime media cascade (libretro-thumbnails + generated marquee) — **landed 2026-04**
+
+> **Contexte** : l'audit Phase 4 a confirmé que §4.3 (CDN upload script offline) n'a jamais été écrit et que la preview panel vivait sur un CDN `/media/` self-hosted qui 404 partout. Le preview-loader avait donc son infrastructure testée mais zéro asset à consommer.
+
+**Livré** :
+
+- `media/fetchers/libretro.ts` — fetch direct sur `raw.githubusercontent.com/libretro-thumbnails/MAME/master/Named_Snaps|Named_Titles/{id}.png`. CC0, pas d'auth, CORS OK. Le `{id}` est le romset MAME ; nos RomDB ids s'alignent déjà.
+- `media/fetchers/generated-marquee.ts` — canvas 2D qui peint le titre du jeu sur un gradient arcade (cyan accent + scanlines subtiles). Dernier étage de la cascade : garantit qu'un marquee s'affiche même quand les deux sources distantes 404.
+- `PreviewLoader` refactoré en cascade explicite :
+  - `loadScreenshot` : CDN custom → libretro `Named_Snaps` → null (placeholder SVG existant)
+  - `loadMarquee` : CDN custom → libretro `Named_Titles` → canvas généré
+  - `hasVideo` inchangé (CDN only ; vraie vidéo en Phase 4b.11)
+- Browser preview panel : bandeau marquee PNG au-dessus du screen (ratio ~15 %, bordure cyan, shadow glow accent), suivi du screenshot existant en dessous.
+- `MediaCache` IDB : clés `media:{gameId}:{screenshot|video|marquee}`. Pas de TTL, clear manuel à prévoir en Phase 4b.10.
+- Tests : `preview-loader.test.ts` étendu (cascade CDN/libretro/generator, cache hit), nouveaux `libretro.test.ts` + `generated-marquee.test.ts`.
+
+**Suites** :
+- Phase 4b.10 : bouton « Clear media cache » dans Settings → Storage.
+- Phase 4b.11 (ex-4.3) : vraie video MP4. Sans clef, les DBs publiques stables n'existent pas ; deux pistes acceptables : (a) ScreenScraper API avec clef gratuite stockée en Settings → Network, (b) CDN opérateur self-hosted.
+
 ### Phase 4b.8: Phone upload robustness (post-2026-04 audit, à planifier)
 
 > **Contexte** : les tests manuels d'avril 2026 ont montré que l'upload P2P iPhone → kiosque est instable — « lost connection to server » répété, même après regenerate roomId / reload phone. Causes probables (par ordre de vraisemblance) :
