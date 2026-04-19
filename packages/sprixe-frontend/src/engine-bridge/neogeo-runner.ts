@@ -42,8 +42,13 @@ export async function createNeoGeoRunner(opts: NeoGeoRunnerOptions): Promise<Emu
     renderer = new Renderer(opts.canvas);
   }
   const emu = new NeoGeoEmulator(opts.canvas, renderer);
-  await emu.loadRomFromBuffer(opts.romBuffer, biosRec.zipData);
+  // initAudio() MUST run before loadRomFromBuffer() — NeoGeoEmulator's
+  // loadRom() calls initAudioWorker() internally, which early-returns
+  // silently if the SharedArrayBuffer hasn't been created yet. Reversing
+  // the order (as CPS-1 does) leaves the audio worker unhooked and the
+  // game mute. sprixe-edit's drop-zone.ts uses the same order.
   await emu.initAudio();
+  await emu.loadRomFromBuffer(opts.romBuffer, biosRec.zipData);
   if (opts.gamepadMapping && Object.keys(opts.gamepadMapping).length > 0) {
     const im = emu.getInputManager();
     im.setGamepadMapping(0, { ...im.getGamepadMapping(0), ...opts.gamepadMapping });
