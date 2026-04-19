@@ -46,6 +46,7 @@ export interface QrCodeOptions {
 
 export class QrCode {
   readonly canvas: HTMLCanvasElement;
+  readonly urlLink: HTMLAnchorElement;
 
   private readonly size: number;
   private readonly baseUrl: string;
@@ -63,6 +64,15 @@ export class QrCode {
     this.canvas.className = "af-qr-code";
     this.canvas.setAttribute("data-testid", "qr");
     container.appendChild(this.canvas);
+
+    // Clickable URL shown under the QR — useful on desktop, where you
+    // can't scan yourself, or to copy the link manually.
+    this.urlLink = document.createElement("a");
+    this.urlLink.className = "af-qr-url";
+    this.urlLink.setAttribute("data-testid", "qr-url");
+    this.urlLink.target = "_blank";
+    this.urlLink.rel = "noopener noreferrer";
+    container.appendChild(this.urlLink);
   }
 
   async setRoomId(roomId: string): Promise<void> {
@@ -78,6 +88,8 @@ export class QrCode {
     if (token !== this.renderToken) return; // superseded by a newer setRoomId
     this.canvas.dataset.roomId = roomId;
     this.canvas.dataset.url = this.currentUrl;
+    this.urlLink.href = this.currentUrl;
+    this.urlLink.textContent = this.currentUrl;
   }
 
   getRoomId(): string | null {
