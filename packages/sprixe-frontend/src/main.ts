@@ -31,6 +31,7 @@ import { StateSync } from "./p2p/state-sync";
 import { RomDB, type RomRecord } from "./storage/rom-db";
 import { PreviewLoader } from "./media/preview-loader";
 import { MediaCache } from "./media/media-cache";
+import { MediaScraper } from "./media/media-scraper";
 import { SaveStateDB } from "./state/save-state-db";
 import { SaveStateController } from "./state/save-state-controller";
 import { crtFilterCss } from "./render/scaling";
@@ -112,6 +113,14 @@ function startBrowser(
   const browser = new BrowserScreen(app!, { initialGames: games, previewLoader: loader });
   const hints = new HintsBar(app!);
   hints.setContext("browser");
+
+  // Kick off the background media scraper once the browser is mounted.
+  // It walks the whole catalogue, caching screenshots + marquees so the
+  // next session doesn't depend on ArcadeDB being reachable. No-op when
+  // every asset is already cached.
+  const scraper = new MediaScraper(loader);
+  scraper.enqueue(games);
+  scraper.start();
 
   const router = new InputRouter("menu");
   let playing: PlayingScreen | null = null;

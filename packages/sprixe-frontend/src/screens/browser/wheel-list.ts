@@ -205,20 +205,24 @@ export class WheelList {
     logo.className = "af-wheel-item-logo";
     logo.alt = "";
     logo.addEventListener("load", () => el.classList.add("has-logo"));
-    const candidates = this.loader.marqueeCandidates(game.id, game.system);
-    let i = 0;
-    const tryNext = (): void => {
-      if (i >= candidates.length) return;
-      logo.onerror = tryNext;
-      logo.src = candidates[i++]!;
-    };
-    tryNext();
     el.appendChild(logo);
 
     const title = document.createElement("div");
     title.className = "af-wheel-item-title";
     title.textContent = game.title;
     el.appendChild(title);
+
+    // Resolve the marquee through the IDB cache (hits first, fetches
+    // via /arcadedb proxy on miss). Guarded against the item being
+    // recycled for a different game before the promise resolves.
+    const candidates = this.loader.marqueeCandidates(game.id, game.system);
+    const cacheKey = this.loader.cacheKey(game.id, "marquee");
+    void this.loader
+      .getCachedOrFetchImage(cacheKey, candidates)
+      .then((url) => {
+        if (el.dataset.gameId !== game.id) return;
+        if (url) logo.src = url;
+      });
 
     return el;
   }

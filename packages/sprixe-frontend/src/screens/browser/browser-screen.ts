@@ -194,8 +194,8 @@ export class BrowserScreen {
       return;
     }
     if (this.loader) {
-      this.background.setScreenshotCandidates(this.loader.screenshotCandidates(game.id, game.system));
-      this.setMarquee(this.loader.marqueeCandidates(game.id, game.system));
+      this.loadCachedBackground(game);
+      this.loadCachedMarquee(game);
     } else {
       this.marqueeEl.removeAttribute("src");
     }
@@ -205,35 +205,43 @@ export class BrowserScreen {
     this.favoriteEl.textContent = game.favorite ? "★ Favorite" : "";
   }
 
-  private setMarquee(urls: string[]): void {
+  private loadCachedBackground(game: GameEntry): void {
+    if (!this.loader) return;
+    const token = this.marqueeToken;
+    const candidates = this.loader.screenshotCandidates(game.id, game.system);
+    void this.loader
+      .getCachedOrFetchImage(this.loader.cacheKey(game.id, "screenshot"), candidates)
+      .then((url) => {
+        if (token !== this.marqueeToken) return;
+        this.background.setScreenshotCandidates(url ? [url] : []);
+      });
+  }
+
+  private loadCachedMarquee(game: GameEntry): void {
+    if (!this.loader) return;
     const token = this.marqueeToken;
     this.marqueeEl.onerror = null;
     this.marqueeEl.onload = null;
-    if (urls.length === 0) {
-      this.marqueeEl.removeAttribute("src");
-      this.clearDynamicGlow();
-      return;
-    }
-    this.marqueeEl.onload = () => {
-      if (token !== this.marqueeToken) return;
-      void extractDominantColor(this.marqueeEl.src).then((color) => {
+    const candidates = this.loader.marqueeCandidates(game.id, game.system);
+    void this.loader
+      .getCachedOrFetchImage(this.loader.cacheKey(game.id, "marquee"), candidates)
+      .then((url) => {
         if (token !== this.marqueeToken) return;
-        if (color) this.root.style.setProperty("--af-dynamic-glow", color);
-        else this.clearDynamicGlow();
+        if (!url) {
+          this.marqueeEl.removeAttribute("src");
+          this.clearDynamicGlow();
+          return;
+        }
+        this.marqueeEl.onload = () => {
+          if (token !== this.marqueeToken) return;
+          void extractDominantColor(url).then((color) => {
+            if (token !== this.marqueeToken) return;
+            if (color) this.root.style.setProperty("--af-dynamic-glow", color);
+            else this.clearDynamicGlow();
+          });
+        };
+        this.marqueeEl.src = url;
       });
-    };
-    let i = 0;
-    const tryNext = (): void => {
-      if (token !== this.marqueeToken) return;
-      if (i >= urls.length) {
-        this.marqueeEl.removeAttribute("src");
-        this.clearDynamicGlow();
-        return;
-      }
-      this.marqueeEl.onerror = tryNext;
-      this.marqueeEl.src = urls[i++]!;
-    };
-    tryNext();
   }
 
   private clearDynamicGlow(): void {
