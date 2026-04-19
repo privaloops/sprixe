@@ -29,6 +29,7 @@ export class VideoPreview {
   readonly root: HTMLDivElement;
 
   private readonly imgEl: HTMLImageElement;
+  private readonly marqueeEl: HTMLImageElement;
   private readonly titleEl: HTMLDivElement;
   private readonly metaEl: HTMLDivElement;
   private readonly favoriteEl: HTMLDivElement;
@@ -41,6 +42,7 @@ export class VideoPreview {
 
   private currentId: string | null = null;
   private currentBlobUrl: string | null = null;
+  private currentMarqueeBlobUrl: string | null = null;
   private currentVideoEl: HTMLVideoElement | null = null;
   private fadeTimerId: number | null = null;
   private pendingFetchToken = 0;
@@ -54,6 +56,15 @@ export class VideoPreview {
     this.root = document.createElement("div");
     this.root.className = "af-video-preview";
     this.root.setAttribute("data-testid", "video-preview");
+
+    // Marquee banner sits on top of the media block — gives each
+    // game a "cabinet header" feel. Resolved via PreviewLoader's
+    // CDN → libretro title → canvas-generated cascade.
+    this.marqueeEl = document.createElement("img");
+    this.marqueeEl.className = "af-video-preview-marquee";
+    this.marqueeEl.setAttribute("data-testid", "video-preview-marquee");
+    this.marqueeEl.alt = "";
+    this.root.appendChild(this.marqueeEl);
 
     this.media = document.createElement("div");
     this.media.className = "af-video-preview-media";
@@ -89,7 +100,9 @@ export class VideoPreview {
       this.root.setAttribute("data-empty", "true");
       this.detachVideo();
       this.imgEl.removeAttribute("src");
+      this.marqueeEl.removeAttribute("src");
       this.revokeBlobUrl();
+      this.revokeMarqueeBlobUrl();
       this.titleEl.textContent = "";
       this.metaEl.textContent = "";
       this.favoriteEl.textContent = "";
@@ -104,17 +117,27 @@ export class VideoPreview {
     // Immediate placeholder from the game metadata.
     this.detachVideo();
     this.setImageSrc(game.screenshotUrl, `${game.title} screenshot`);
+    this.marqueeEl.removeAttribute("src");
+    this.revokeMarqueeBlobUrl();
     this.titleEl.textContent = game.title;
     const systemLabel = game.system === "cps1" ? "CPS-1" : "Neo-Geo";
     this.metaEl.textContent = `${game.publisher} · ${game.year} · ${systemLabel}`;
     this.favoriteEl.textContent = game.favorite ? "★ Favorite" : "";
 
-    // With a loader, swap to the CDN screenshot as soon as it resolves,
-    // then schedule the crossfade to video.
+    // With a loader, resolve marquee + CDN screenshot asynchronously
+    // and schedule the eventual crossfade to video. Each fetch is
+    // guarded by the token so a fast succession of hovers never races
+    // stale blobs onto the current selection.
     if (this.loader) {
       const token = this.pendingFetchToken;
+
+      void this.loader.loadMarquee(game.id, game.system, game.title).then((blob) => {
+        if (token !== this.pendingFetchToken) return;
+        if (blob) this.applyMarquee(blob, `${game.title} marquee`);
+      });
+
       void this.loader.loadScreenshot(game.id, game.system).then((blob) => {
-        if (token !== this.pendingFetchToken) return; // superseded
+        if (token !== this.pendingFetchToken) return;
         if (blob) this.applyCdnScreenshot(blob, `${game.title} screenshot`);
       });
 
@@ -179,10 +202,25 @@ export class VideoPreview {
     this.imgEl.alt = alt;
   }
 
+  private applyMarquee(blob: Blob, alt: string): void {
+    this.revokeMarqueeBlobUrl();
+    const url = URL.createObjectURL(blob);
+    this.currentMarqueeBlobUrl = url;
+    this.marqueeEl.src = url;
+    this.marqueeEl.alt = alt;
+  }
+
   private revokeBlobUrl(): void {
     if (this.currentBlobUrl) {
       URL.revokeObjectURL(this.currentBlobUrl);
       this.currentBlobUrl = null;
+    }
+  }
+
+  private revokeMarqueeBlobUrl(): void {
+    if (this.currentMarqueeBlobUrl) {
+      URL.revokeObjectURL(this.currentMarqueeBlobUrl);
+      this.currentMarqueeBlobUrl = null;
     }
   }
 

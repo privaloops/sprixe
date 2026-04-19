@@ -92,6 +92,111 @@ describe("PreviewLoader", () => {
     });
   });
 
+  describe("loadScreenshot — cascade", () => {
+    it("falls back to libretro when the CDN returns 404", async () => {
+      const libretroBlob = makeBlob("libretro snap");
+      const fetchImpl = vi.fn(async () => makeResponse(false)) as unknown as typeof fetch;
+      const libretroImpl = vi.fn(async () => libretroBlob);
+      const loader = new PreviewLoader({
+        cache: freshCache(),
+        cdnBase: CDN,
+        fetchImpl,
+        libretroImpl,
+      });
+
+      const result = await loader.loadScreenshot("sf2", "cps1");
+      expect(result).toBe(libretroBlob);
+      expect(libretroImpl).toHaveBeenCalledWith("snap", "sf2");
+    });
+
+    it("returns null only when both CDN + libretro are empty", async () => {
+      const fetchImpl = vi.fn(async () => makeResponse(false)) as unknown as typeof fetch;
+      const libretroImpl = vi.fn(async () => null);
+      const loader = new PreviewLoader({
+        cache: freshCache(),
+        cdnBase: CDN,
+        fetchImpl,
+        libretroImpl,
+      });
+      expect(await loader.loadScreenshot("xyz", "cps1")).toBeNull();
+    });
+  });
+
+  describe("loadMarquee — cascade", () => {
+    it("returns CDN marquee when present", async () => {
+      const cdnBlob = makeBlob("cdn marquee");
+      const fetchImpl = vi.fn(async () => makeResponse(true, cdnBlob)) as unknown as typeof fetch;
+      const libretroImpl = vi.fn(async () => null);
+      const marqueeGenImpl = vi.fn(async () => makeBlob("generated"));
+      const loader = new PreviewLoader({
+        cache: freshCache(),
+        cdnBase: CDN,
+        fetchImpl,
+        libretroImpl,
+        marqueeGenImpl,
+      });
+
+      const result = await loader.loadMarquee("sf2", "cps1", "Street Fighter II");
+      expect(result).toBe(cdnBlob);
+      expect(libretroImpl).not.toHaveBeenCalled();
+      expect(marqueeGenImpl).not.toHaveBeenCalled();
+    });
+
+    it("falls back to libretro title when CDN 404s", async () => {
+      const libretroBlob = makeBlob("libretro title");
+      const fetchImpl = vi.fn(async () => makeResponse(false)) as unknown as typeof fetch;
+      const libretroImpl = vi.fn(async () => libretroBlob);
+      const marqueeGenImpl = vi.fn(async () => makeBlob("generated"));
+      const loader = new PreviewLoader({
+        cache: freshCache(),
+        cdnBase: CDN,
+        fetchImpl,
+        libretroImpl,
+        marqueeGenImpl,
+      });
+
+      const result = await loader.loadMarquee("sf2", "cps1", "Street Fighter II");
+      expect(result).toBe(libretroBlob);
+      expect(libretroImpl).toHaveBeenCalledWith("title", "sf2");
+      expect(marqueeGenImpl).not.toHaveBeenCalled();
+    });
+
+    it("uses the generator when both remote sources miss", async () => {
+      const generated = makeBlob("generated marquee");
+      const fetchImpl = vi.fn(async () => makeResponse(false)) as unknown as typeof fetch;
+      const libretroImpl = vi.fn(async () => null);
+      const marqueeGenImpl = vi.fn(async () => generated);
+      const loader = new PreviewLoader({
+        cache: freshCache(),
+        cdnBase: CDN,
+        fetchImpl,
+        libretroImpl,
+        marqueeGenImpl,
+      });
+
+      const result = await loader.loadMarquee("sf2", "cps1", "Street Fighter II");
+      expect(result).toBe(generated);
+      expect(marqueeGenImpl).toHaveBeenCalledWith("Street Fighter II");
+    });
+
+    it("cache hit short-circuits the cascade", async () => {
+      const cache = freshCache();
+      await cache.put("media:sf2:marquee", makeBlob("cached"));
+      const fetchImpl = vi.fn(async () => { throw new Error("no fetch"); }) as unknown as typeof fetch;
+      const libretroImpl = vi.fn(async () => null);
+      const loader = new PreviewLoader({
+        cache,
+        cdnBase: CDN,
+        fetchImpl,
+        libretroImpl,
+      });
+
+      const result = await loader.loadMarquee("sf2", "cps1", "Street Fighter II");
+      expect(result).not.toBeNull();
+      expect(libretroImpl).not.toHaveBeenCalled();
+    });
+  });
+
   describe("hasVideo", () => {
     it("HEAD 200 → true", async () => {
       const fetchMock = vi.fn(async (_url: unknown, init?: unknown) => {
