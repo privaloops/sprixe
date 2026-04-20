@@ -424,12 +424,19 @@ function runAudioTick(): void {
 
   while (audioDebt >= FRAME_MS) {
     audioDebt -= FRAME_MS;
+    // Flow control: if the ring buffer is nearly full the AudioWorklet
+    // can't drain fast enough — without this the worker keeps writing
+    // ahead and audio drifts seconds behind the image.
+    if (ringBuffer.freeSlots < 1024) break;
     runOneFrame();
   }
 }
 
 function runOneFrame(): void {
   if (!z80 || !z80Bus || !ym2610 || !ringBuffer || !resamplerL || !resamplerR) return;
+  // Second-level guard: skip the whole frame if the consumer side is
+  // saturated. Matches the CPS1 worker's behaviour.
+  if (ringBuffer.freeSlots < 1024) return;
 
   workerFrameCount++;
 
