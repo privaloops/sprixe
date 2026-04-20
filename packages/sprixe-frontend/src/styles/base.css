@@ -86,22 +86,24 @@ html, body {
   position: relative;
   z-index: 1;
   display: grid;
-  grid-template-rows: auto 1fr;
+  /* 2×2 grid for the main content only: titleblock above media-pane in
+     col 1, wheel spanning both rows in col 2. The filter bar is
+     yanked out of the grid (position: absolute top-right) so it
+     doesn't push the title + video block down. Rows auto-sized so
+     `align-content: safe center` can vertically centre them. */
+  grid-template-columns: 2fr 1fr;
+  grid-template-rows: auto auto;
   width: 100%;
   height: 100%;
-  /* Bottom padding clears the fixed hints-bar (≈48px). */
   padding: 28px 32px 72px;
-  gap: 20px;
+  row-gap: 20px;
+  column-gap: 36px;
+  align-content: safe center;
 }
 
-/* Top bar shares the same column grid as the middle row so that the
-   title sits above the media pane (left) and the filter pills above
-   the wheel (right). */
-.af-browser-topbar {
-  display: grid;
-  grid-template-columns: 1fr minmax(360px, 460px);
-  gap: 36px;
-  align-items: center;
+.af-browser-topbar,
+.af-browser-middle {
+  display: contents;
 }
 
 /* The marquee is no longer shown, but it still has to load so the
@@ -118,11 +120,17 @@ html, body {
   pointer-events: none;
 }
 
-/* Title + meta + favorite stacked next to the marquee. */
+/* Title + meta + favorite glued to the top of the video cell
+   (grid row 2, col 1) with zero row-gap below so the title touches
+   the video preview. */
 .af-browser-titleblock {
+  grid-column: 1;
+  grid-row: 1;
   display: flex;
   flex-direction: column;
   justify-content: center;
+  align-items: center;
+  text-align: center;
   gap: 6px;
   min-width: 0;
 }
@@ -152,39 +160,65 @@ html, body {
   display: none;
 }
 
-/* Middle: media pane on the left, wheel column on the right. */
-.af-browser-middle {
-  display: grid;
-  grid-template-columns: 1fr minmax(360px, 460px);
-  gap: 36px;
-  min-height: 0;
-}
-
 /* Borderless media pane — no own background, the video/screenshot
-   sits directly on the blurred page background behind it. */
+   sits directly on the blurred page background behind it. Occupies
+   row 3 col 1 in the flat foreground grid. `aspect-ratio` gives the
+   pane a natural height (its children use position:absolute so they
+   can't drive one themselves) — combined with `max-height: 70vh` it
+   leaves enough empty space for `align-content: safe center` on the
+   foreground to vertically centre the title + video block. */
 .af-browser-media-pane {
+  grid-column: 1;
+  grid-row: 2;
+  justify-self: center;
   position: relative;
+  aspect-ratio: 4 / 3;
+  width: 100%;
+  max-width: 100%;
+  max-height: 70vh;
   min-height: 0;
   min-width: 0;
   overflow: hidden;
 }
 
-/* Wheel pane: just the cylinder now, filters moved to the topbar. */
+/* Wheel pane: spans both grid rows in col 2 so it keeps the same
+   vertical span as the title + video stack on the left.
+   `overflow: clip` defeats the 3D-stacking-context escape that lets
+   preserve-3d children ignore plain `overflow: hidden`; the extra
+   `clip-path: inset(0)` is a belt-and-braces for Firefox, which
+   treats `overflow: clip` softly when perspective is in play. */
 .af-browser-wheel-pane {
+  grid-column: 2;
+  grid-row: 1 / 3;
   position: relative;
   min-height: 0;
-  overflow: visible;
+  overflow: clip;
+  clip-path: inset(0);
 }
 
+/* Filter bar pulled out of the grid so an empty first row doesn't
+   push the centred title + video down. Anchored to the pane padding
+   corner; the absolute positioning refers to .af-browser-screen
+   (position: relative further up). */
 .af-browser-filter-pane {
-  justify-self: start;
+  position: absolute;
+  top: 28px;
+  right: 32px;
+  z-index: 2;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: calc(33.333% - 36px - 32px);
+  max-width: 460px;
 }
 
 /* --- Filter bar --- */
 
 .af-filter-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: center;
   gap: 12px;
   padding: 8px 0;
 }
@@ -227,10 +261,14 @@ html, body {
 
 .af-wheel {
   position: absolute;
-  inset: 0;
+  /* Leave room at the top of the pane for the absolutely-positioned
+     filter bar so the 3D cylinder's upper slots don't slide behind
+     the filter pills. The clip is done at this level — overflow on
+     the wheel-pane alone doesn't catch preserve-3d transforms. */
+  inset: 64px 0 0 0;
   perspective: 1400px;
   perspective-origin: 50% 50%;
-  overflow: visible;
+  overflow: hidden;
 }
 
 .af-wheel-stage {
@@ -263,7 +301,8 @@ html, body {
 }
 
 .af-wheel-item.selected {
-  filter: drop-shadow(0 0 28px color-mix(in srgb, var(--af-dynamic-glow, rgb(0, 212, 255)) 80%, transparent));
+  /* Glow disabled — kept here empty in case we want to re-add a subtle
+     highlight later. */
 }
 
 .af-wheel-item-logo {
@@ -298,8 +337,7 @@ html, body {
 }
 
 .af-wheel-item.selected .af-wheel-item-title {
-  color: color-mix(in srgb, var(--af-dynamic-glow, rgb(0, 212, 255)) 100%, transparent);
-  text-shadow: 0 0 16px color-mix(in srgb, var(--af-dynamic-glow, rgb(0, 212, 255)) 60%, transparent);
+  color: var(--af-text-primary);
 }
 
 /* --- System badges --- */
@@ -378,16 +416,16 @@ html, body {
 .af-video-preview.has-video .af-video-preview-video {
   position: absolute;
   inset: auto;
-  top: 0;
-  left: 0;
-  height: 100%;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) perspective(1200px) rotateX(1deg);
   width: auto;
+  height: auto;
   max-width: 100%;
   max-height: 100%;
   aspect-ratio: var(--af-video-ar, 4 / 3);
   object-fit: fill;
   border-radius: 6% / 5%;
-  transform: perspective(1200px) rotateX(1deg);
   box-shadow:
     inset 0 0 60px rgba(0, 0, 0, 0.55),
     inset 0 0 140px rgba(0, 0, 0, 0.35),
@@ -395,17 +433,19 @@ html, body {
 }
 
 /* Overlays must track the video box, not the pane, so scanlines and
-   vignette stop exactly where the picture stops. */
+   vignette stop exactly where the picture stops. Matching positioning
+   rules so the overlay geometry stays glued to the <video> frame
+   regardless of which axis (width or height) hit the container first. */
 .af-video-preview.has-video::after,
 .af-video-preview.has-video::before {
   content: "";
   position: absolute;
-  top: 0;
-  left: 0;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
   height: 100%;
   width: auto;
   max-width: 100%;
-  max-height: 100%;
   aspect-ratio: var(--af-video-ar, 4 / 3);
   pointer-events: none;
   border-radius: 6% / 5%;

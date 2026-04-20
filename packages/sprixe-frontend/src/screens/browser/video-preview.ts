@@ -37,6 +37,11 @@ export class VideoPreview {
   private currentId: string | null = null;
   private currentVideoEl: HTMLVideoElement | null = null;
   private fadeTimerId: number | null = null;
+  /** True once a preview has successfully auto-played with sound in
+   * this page session. Sticky: once we know the autoplay policy lets
+   * us play unmuted, subsequent wheel moves skip the mute fallback
+   * so the sound stays on when the user cycles through games. */
+  private static audioUnlocked = false;
   private pendingFetchToken = 0;
 
   constructor(container: HTMLElement, options: VideoPreviewOptions = {}) {
@@ -136,10 +141,10 @@ export class VideoPreview {
     video.className = "af-video-preview-video";
     video.setAttribute("data-testid", "video-preview-video");
     video.setAttribute("playsinline", "true");
-    // Autoplay policy: muted is always allowed. Once the user has
-    // interacted with the page (tracked globally by ensureMediaGesture
-    // below), we flip muted off so preview clips speak up.
-    video.muted = !(window as typeof window & { __sprixeMediaGestureFired?: boolean }).__sprixeMediaGestureFired;
+    // Try to play with sound from the first frame. The loadeddata
+    // handler below falls back to muted + retry when the browser's
+    // autoplay policy rejects the call — we never auto-unmute later.
+    video.muted = false;
     video.loop = true;
 
     let idx = 0;
@@ -175,11 +180,23 @@ export class VideoPreview {
       }
       this.root.classList.remove("probing-video");
       this.root.classList.add("has-video");
-      void video.play().catch(() => {
-        // Autoplay blocked — re-arm muted and retry.
-        video.muted = true;
-        void video.play().catch(() => { /* still blocked — leave visible */ });
-      });
+      // Prefer unmuted playback. Only fall back to muted when the
+      // *first* preview of the session is blocked by the autoplay
+      // policy; once we've successfully played with sound, stay
+      // unmuted on wheel navigation instead of silently re-muting.
+      void video.play()
+        .then(() => { VideoPreview.audioUnlocked = true; })
+        .catch(() => {
+          if (VideoPreview.audioUnlocked) {
+            // Audio was allowed earlier this session — retry once
+            // unmuted; if still blocked, accept no-playback rather
+            // than flipping to muted on every wheel move.
+            void video.play().catch(() => { /* leave visible, silent */ });
+            return;
+          }
+          video.muted = true;
+          void video.play().catch(() => { /* still blocked — leave visible */ });
+        });
     });
 
     this.root.appendChild(video);

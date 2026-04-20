@@ -3,8 +3,11 @@
  * re-encode as a looping WebM clip via MediaRecorder on a canvas.
  *
  * The source must be same-origin (fetched via /arcadedb proxy) so the
- * canvas isn't tainted and captureStream() stays usable. Returns null
- * when MediaRecorder is unavailable (jsdom, old Safari) — caller keeps
+ * canvas isn't tainted and captureStream() stays usable. The canvas
+ * captures the video frames; the audio track is pulled from the
+ * source `<video>` via its own captureStream() and mixed into the
+ * recorder input so the trimmed clip keeps sound. Returns null when
+ * MediaRecorder is unavailable (jsdom, old Safari) — caller keeps
  * the untrimmed blob instead.
  */
 
@@ -18,10 +21,26 @@ export interface TrimVideoOptions {
 }
 
 const PREFERRED_MIME_TYPES = [
+  "video/webm;codecs=vp9,opus",
+  "video/webm;codecs=vp8,opus",
   "video/webm;codecs=vp9",
   "video/webm;codecs=vp8",
   "video/webm",
 ];
+
+type CaptureableVideo = HTMLVideoElement & { captureStream?: () => MediaStream; mozCaptureStream?: () => MediaStream };
+
+function captureAudioTracks(video: HTMLVideoElement): MediaStreamTrack[] {
+  const v = video as CaptureableVideo;
+  const capture = v.captureStream ?? v.mozCaptureStream;
+  if (!capture) return [];
+  try {
+    const stream = capture.call(v);
+    return stream.getAudioTracks();
+  } catch {
+    return [];
+  }
+}
 
 function pickMimeType(): string | null {
   if (typeof MediaRecorder === "undefined") return null;
@@ -43,7 +62,11 @@ export async function trimVideoBlob(
 
   const sourceUrl = URL.createObjectURL(source);
   const video = document.createElement("video");
-  video.muted = true;
+  // Kept unmuted so captureStream() exposes the audio track — the
+  // element is never added to the DOM and volume is forced to 0 so
+  // the trimming pass stays silent from the user's perspective.
+  video.muted = false;
+  video.volume = 0;
   video.playsInline = true;
   video.preload = "auto";
   video.src = sourceUrl;
@@ -66,8 +89,13 @@ export async function trimVideoBlob(
     const ctx = canvas.getContext("2d");
     if (!ctx) return null;
 
-    const stream = canvas.captureStream(fps);
-    const recorder = new MediaRecorder(stream, { mimeType: mime });
+    const canvasStream = canvas.captureStream(fps);
+    const audioTracks = captureAudioTracks(video);
+    const combined = new MediaStream([
+      ...canvasStream.getVideoTracks(),
+      ...audioTracks,
+    ]);
+    const recorder = new MediaRecorder(combined, { mimeType: mime });
     const chunks: BlobPart[] = [];
     recorder.addEventListener("dataavailable", (e) => {
       if (e.data.size > 0) chunks.push(e.data);
