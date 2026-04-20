@@ -344,6 +344,19 @@ html, body {
   image-rendering: pixelated;
 }
 
+/* The <video> element paints its own black box as soon as a src is
+   assigned, even before the browser knows whether the URL is reachable.
+   Keep it hidden until the `has-video` class is applied on loadeddata
+   so 404 cascades don't flash a black rectangle over the fallback
+   screenshot. */
+.af-video-preview-video {
+  visibility: hidden;
+}
+
+.af-video-preview.has-video .af-video-preview-video {
+  visibility: visible;
+}
+
 .af-video-preview-image:not([src]) {
   visibility: hidden;
 }
@@ -355,6 +368,73 @@ html, body {
 .af-video-preview.has-video .af-video-preview-image,
 .af-video-preview.probing-video .af-video-preview-image {
   visibility: hidden;
+}
+
+/* --- CRT filter on the video preview ---
+   Fake a curved CRT tube in pure CSS. The overlays follow the true
+   video aspect ratio (`--af-video-ar`, pushed from JS at loadeddata)
+   so the rounded corners and scanlines hug the actual image edges
+   rather than the letterboxed `<video>` box. */
+.af-video-preview.has-video .af-video-preview-video {
+  position: absolute;
+  inset: auto;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: auto;
+  max-width: 100%;
+  max-height: 100%;
+  aspect-ratio: var(--af-video-ar, 4 / 3);
+  object-fit: fill;
+  border-radius: 6% / 5%;
+  transform: perspective(1200px) rotateX(1deg);
+  box-shadow:
+    inset 0 0 60px rgba(0, 0, 0, 0.55),
+    inset 0 0 140px rgba(0, 0, 0, 0.35),
+    0 10px 40px rgba(0, 0, 0, 0.6);
+}
+
+/* Overlays must track the video box, not the pane, so scanlines and
+   vignette stop exactly where the picture stops. */
+.af-video-preview.has-video::after,
+.af-video-preview.has-video::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: auto;
+  max-width: 100%;
+  max-height: 100%;
+  aspect-ratio: var(--af-video-ar, 4 / 3);
+  pointer-events: none;
+  border-radius: 6% / 5%;
+}
+
+.af-video-preview.has-video::after {
+  z-index: 2;
+  background:
+    repeating-linear-gradient(
+      to bottom,
+      transparent 0,
+      transparent 2px,
+      rgba(0, 0, 0, 0.28) 2px,
+      rgba(0, 0, 0, 0.28) 3px
+    ),
+    radial-gradient(
+      ellipse 120% 110% at center,
+      transparent 55%,
+      rgba(0, 0, 0, 0.55) 100%
+    );
+  mix-blend-mode: multiply;
+}
+
+.af-video-preview.has-video::before {
+  z-index: 1;
+  box-shadow:
+    inset 1px 0 0 rgba(255, 0, 80, 0.18),
+    inset -1px 0 0 rgba(0, 180, 255, 0.18);
+  mix-blend-mode: screen;
 }
 
 /* --- Hints bar --- */
