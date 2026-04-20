@@ -23,6 +23,14 @@ export interface MediaRecord {
   key: string;
   blob: Blob;
   addedAt: number;
+  /** Persisted explicitly because IDB serialisation strips Blob metadata
+   * in some implementations (notably fake-indexeddb in tests). */
+  size: number;
+}
+
+function recordSize(r: MediaRecord): number {
+  if (typeof r.size === "number" && r.size > 0) return r.size;
+  return r.blob?.size ?? 0;
 }
 
 export class MediaCache {
@@ -81,7 +89,7 @@ export class MediaCache {
       const tx = db.transaction(STORE_MEDIA, "readwrite");
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error ?? new Error("MediaCache.put failed"));
-      tx.objectStore(STORE_MEDIA).put({ key, blob, addedAt: Date.now() });
+      tx.objectStore(STORE_MEDIA).put({ key, blob, addedAt: Date.now(), size: blob.size });
     });
   }
 
@@ -102,9 +110,36 @@ export class MediaCache {
       const req = tx.objectStore(STORE_MEDIA).getAll();
       req.onsuccess = () => {
         const rows = (req.result ?? []) as MediaRecord[];
-        resolve(rows.reduce((sum, r) => sum + r.blob.size, 0));
+        resolve(rows.reduce((sum, r) => sum + recordSize(r), 0));
       };
       req.onerror = () => reject(req.error ?? new Error("MediaCache.totalSize failed"));
     });
+  }
+
+  /**
+   * LRU eviction: while total size exceeds `byteCap`, delete the
+   * oldest entries (lowest `addedAt`). Returns the number of rows
+   * dropped. Safe to call after every put() to keep the cache under
+   * the quota.
+   */
+  async evictUntilUnder(byteCap: number): Promise<number> {
+    const db = await this.open();
+    const rows = await new Promise<MediaRecord[]>((resolve, reject) => {
+      const tx = db.transaction(STORE_MEDIA, "readonly");
+      const req = tx.objectStore(STORE_MEDIA).getAll();
+      req.onsuccess = () => resolve((req.result ?? []) as MediaRecord[]);
+      req.onerror = () => reject(req.error ?? new Error("MediaCache.evict read failed"));
+    });
+    let total = rows.reduce((sum, r) => sum + recordSize(r), 0);
+    if (total <= byteCap) return 0;
+    const victims = rows.slice().sort((a, b) => a.addedAt - b.addedAt);
+    let dropped = 0;
+    for (const v of victims) {
+      if (total <= byteCap) break;
+      await this.delete(v.key);
+      total -= recordSize(v);
+      dropped += 1;
+    }
+    return dropped;
   }
 }

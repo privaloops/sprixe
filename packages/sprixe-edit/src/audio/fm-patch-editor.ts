@@ -312,7 +312,7 @@ export class FmPatchEditor {
   }
 
   private showPlaceholder(show: boolean, message?: string): void {
-    const ph = this.container.querySelector('#synth-placeholder');
+    const ph = this.container.querySelector<HTMLElement>('#synth-placeholder');
     if (ph) {
       ph.style.display = show ? '' : 'none';
       if (message) ph.textContent = message;

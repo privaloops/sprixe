@@ -129,6 +129,8 @@ export class VideoPreview {
     if (!this.loader) { this.revealImage(); return; }
     const candidates = this.loader.videoCandidates(game.id, game.system);
     if (candidates.length === 0) { this.revealImage(); return; }
+    const loader = this.loader;
+    const cacheKey = loader.cacheKey(game.id, "video");
 
     const video = document.createElement("video");
     video.className = "af-video-preview-video";
@@ -141,6 +143,12 @@ export class VideoPreview {
     video.loop = true;
 
     let idx = 0;
+    let objectUrl: string | null = null;
+    const setSrc = (src: string, fromCache: boolean): void => {
+      if (objectUrl) { URL.revokeObjectURL(objectUrl); objectUrl = null; }
+      if (fromCache) objectUrl = src;
+      video.src = src;
+    };
     const tryNext = (): void => {
       if (token !== this.pendingFetchToken) { video.remove(); return; }
       if (game.id !== this.currentId) { video.remove(); return; }
@@ -150,7 +158,7 @@ export class VideoPreview {
         this.revealImage();
         return;
       }
-      video.src = candidates[idx++]!;
+      setSrc(candidates[idx++]!, false);
     };
     video.addEventListener("error", () => tryNext());
     video.addEventListener("loadeddata", () => {
@@ -167,7 +175,23 @@ export class VideoPreview {
     });
 
     this.root.appendChild(video);
-    tryNext();
+
+    // Cache hit → serve the trimmed clip directly. Cache miss → stream
+    // from the first candidate (ArcadeDB) while priming the cache in
+    // the background so the next hover benefits from the short clip.
+    loader.getCachedVideoUrl(cacheKey).then((cached) => {
+      if (token !== this.pendingFetchToken) return;
+      if (game.id !== this.currentId) return;
+      if (cached) {
+        setSrc(cached, true);
+        return;
+      }
+      tryNext();
+      void loader.primeVideoCache(cacheKey, candidates).catch(() => { /* best-effort */ });
+    }).catch(() => {
+      if (token !== this.pendingFetchToken) return;
+      tryNext();
+    });
   }
 
   private revealImage(): void {
@@ -201,6 +225,10 @@ export class VideoPreview {
   private detachVideo(): void {
     if (this.currentVideoEl) {
       try { this.currentVideoEl.pause(); } catch { /* ignore */ }
+      const src = this.currentVideoEl.src;
+      if (src.startsWith("blob:")) {
+        try { URL.revokeObjectURL(src); } catch { /* ignore */ }
+      }
       this.currentVideoEl.remove();
       this.currentVideoEl = null;
     }

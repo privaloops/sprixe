@@ -25,9 +25,15 @@ import type { System } from "../data/games";
 import type { MediaCache } from "./media-cache";
 import { arcadeDbUrl, arcadeDbVideoSdUrl } from "./fetchers/arcadedb";
 import { generateMarquee } from "./fetchers/generated-marquee";
+import { trimVideoBlob } from "./trim-video";
 
 const ARCADEDB_ORIGIN = "https://adb.arcadeitalia.net";
 const ARCADEDB_PROXY_PATH = "/arcadedb";
+
+/** Default LRU cap for the video cache portion. */
+export const DEFAULT_VIDEO_CACHE_BYTES = 500 * 1024 * 1024;
+/** Default clip length kept in the cache (seconds). */
+export const DEFAULT_VIDEO_CLIP_SECONDS = 5;
 
 function toProxiedUrl(url: string): string {
   if (url.startsWith(ARCADEDB_ORIGIN)) {
@@ -49,17 +55,30 @@ export interface PreviewLoaderOptions {
   cdnBase?: string;
   /** Override the marquee canvas generator (unit tests). */
   marqueeGenImpl?: (title: string) => Promise<Blob | null>;
+  /** LRU byte cap for the cache, enforced after each video prime. */
+  videoCacheBytes?: number;
+  /** Seconds of each source video kept in the cache. Defaults to 5. */
+  videoClipSeconds?: number;
+  /** Override the trim step (unit tests). */
+  trimVideoImpl?: (source: Blob, seconds: number) => Promise<Blob | null>;
 }
 
 export class PreviewLoader {
   private readonly cache: MediaCache;
   private readonly cdnBase: string;
   private readonly marqueeGenImpl: (title: string) => Promise<Blob | null>;
+  private readonly videoCacheBytes: number;
+  private readonly videoClipSeconds: number;
+  private readonly trimVideoImpl: (source: Blob, seconds: number) => Promise<Blob | null>;
+  private readonly videoPrimeInflight = new Map<string, Promise<boolean>>();
 
   constructor(options: PreviewLoaderOptions) {
     this.cache = options.cache;
     this.cdnBase = (options.cdnBase ?? "").replace(/\/$/, "");
     this.marqueeGenImpl = options.marqueeGenImpl ?? generateMarquee;
+    this.videoCacheBytes = options.videoCacheBytes ?? DEFAULT_VIDEO_CACHE_BYTES;
+    this.videoClipSeconds = options.videoClipSeconds ?? DEFAULT_VIDEO_CLIP_SECONDS;
+    this.trimVideoImpl = options.trimVideoImpl ?? ((blob, seconds) => trimVideoBlob(blob, { seconds }));
   }
 
   // ── URL builders ────────────────────────────────────────────────
@@ -153,6 +172,68 @@ export class PreviewLoader {
 
   private withCdn(cdnUrl: string, arcadeDbUrl: string): string[] {
     return cdnUrl ? [cdnUrl, arcadeDbUrl] : [arcadeDbUrl];
+  }
+
+  /**
+   * Return a blob: URL for the cached video clip, or null if nothing
+   * is cached yet. Consumers that want to populate the cache must call
+   * `primeVideoCache` in the background.
+   */
+  async getCachedVideoUrl(cacheKey: string): Promise<string | null> {
+    const cached = await this.cache.get(cacheKey).catch(() => null);
+    if (!cached || cached.size === 0) return null;
+    return URL.createObjectURL(cached);
+  }
+
+  /**
+   * Background-fetch the first reachable candidate, trim it to
+   * `videoClipSeconds`, store the clip in the cache, then enforce
+   * LRU eviction against `videoCacheBytes`. Repeat calls for the same
+   * key dedupe via the inflight map. Returns `true` once the key is
+   * (now) cached.
+   */
+  async primeVideoCache(cacheKey: string, candidates: string[]): Promise<boolean> {
+    const cached = await this.cache.get(cacheKey).catch(() => null);
+    if (cached && cached.size > 0) return true;
+    const inflight = this.videoPrimeInflight.get(cacheKey);
+    if (inflight) return inflight;
+    const task = this.fetchTrimAndCacheVideo(cacheKey, candidates).finally(() => {
+      this.videoPrimeInflight.delete(cacheKey);
+    });
+    this.videoPrimeInflight.set(cacheKey, task);
+    return task;
+  }
+
+  private async fetchTrimAndCacheVideo(cacheKey: string, candidates: string[]): Promise<boolean> {
+    for (const url of candidates) {
+      const target = toProxiedUrl(url);
+      let fullBlob: Blob;
+      try {
+        const resp = await fetch(target);
+        if (!resp.ok) continue;
+        fullBlob = await resp.blob();
+        if (fullBlob.size === 0) continue;
+      } catch {
+        continue;
+      }
+      let clip: Blob;
+      try {
+        const trimmed = await this.trimVideoImpl(fullBlob, this.videoClipSeconds);
+        clip = trimmed ?? fullBlob;
+      } catch {
+        clip = fullBlob;
+      }
+      try {
+        await this.cache.put(cacheKey, clip);
+      } catch {
+        return false;
+      }
+      try {
+        await this.cache.evictUntilUnder(this.videoCacheBytes);
+      } catch { /* eviction best-effort */ }
+      return true;
+    }
+    return false;
   }
 
   /**
