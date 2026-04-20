@@ -97,6 +97,11 @@ export class PreviewLoader {
   }
 
   cacheKey(gameId: string, kind: AssetKind): string {
+    // Video clips are versioned: v2 was introduced when the trimmer
+    // started carrying an audio track. Previous `media:*:video`
+    // entries are silent and must not be reused — they're left
+    // orphaned in IDB and the LRU will evict them over time.
+    if (kind === "video") return `media:${gameId}:video-v2`;
     return `media:${gameId}:${kind}`;
   }
 

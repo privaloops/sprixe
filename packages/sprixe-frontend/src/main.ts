@@ -508,32 +508,8 @@ function startBrowser(
   });
 }
 
-/**
- * Marks the first DOM gesture (pointer/key/touch) on the page. Video
- * previews set `muted = true` by default to satisfy the autoplay
- * policy, then listen for this flag + retroactively unmute the clip
- * currently playing so the user gets sound as soon as they interact
- * with the page.
- */
-function installMediaGestureUnlock(): void {
-  const handler = (): void => {
-    (window as typeof window & { __sprixeMediaGestureFired?: boolean }).__sprixeMediaGestureFired = true;
-    for (const video of Array.from(document.querySelectorAll<HTMLVideoElement>(".af-video-preview-video"))) {
-      video.muted = false;
-    }
-    window.removeEventListener("pointerdown", handler);
-    window.removeEventListener("keydown", handler);
-    window.removeEventListener("touchstart", handler);
-  };
-  const opts: AddEventListenerOptions = { once: false, passive: true };
-  window.addEventListener("pointerdown", handler, opts);
-  window.addEventListener("keydown", handler, opts);
-  window.addEventListener("touchstart", handler, opts);
-}
-
 async function bootKiosk(): Promise<void> {
   window.dispatchEvent(new CustomEvent("app-ready"));
-  installMediaGestureUnlock();
 
   if (!loadMapping()) {
     await showMappingFlow();
