@@ -48,10 +48,10 @@ describe("PreviewLoader", () => {
       );
     });
 
-    it("cacheKey follows media:{gameId}:{kind}", () => {
+    it("cacheKey follows media:{gameId}:{kind} (video uses v2 suffix for audio-trim fix)", () => {
       const loader = new PreviewLoader({ cache: freshCache(), cdnBase: CDN });
       expect(loader.cacheKey("sf2", "screenshot")).toBe("media:sf2:screenshot");
-      expect(loader.cacheKey("mslug", "video")).toBe("media:mslug:video");
+      expect(loader.cacheKey("mslug", "video")).toBe("media:mslug:video-v2");
     });
   });
 
