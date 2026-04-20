@@ -424,10 +424,6 @@ function runAudioTick(): void {
 
   while (audioDebt >= FRAME_MS) {
     audioDebt -= FRAME_MS;
-    // Flow control: if the ring buffer is nearly full the AudioWorklet
-    // can't drain fast enough — without this the worker keeps writing
-    // ahead and audio drifts seconds behind the image.
-    if (ringBuffer.freeSlots < 1024) break;
     runOneFrame();
   }
 }
