@@ -46,12 +46,19 @@ export class NeoGeoBus implements BusInterface {
   private _vramWriteCount: number = 0; // debug: count VRAM writes
   getVramWriteCount(): number { return this._vramWriteCount; }
 
-  // LSPC timer
+  // LSPC timer — cycle-accurate, matches FBNeo NeoConvertIRQPosition
+  // (offset * 2 = cycles at default CPU speed, 68K @ 12 MHz)
+  private static readonly NO_IRQ_PENDING = 0x7FFF_FFFF;
+  /** Multiplier applied to the raw offset to convert to 68K cycles.
+   *  FBNeo uses (offset * 256) >> 7 = offset * 2 when the CPU speed
+   *  adjust is at its default value of 256. */
+  private static readonly TIMER_CYCLES_PER_UNIT = 2;
   private timerHigh: number = 0;
   private timerLow: number = 0;
-  private timerCounter: number = 0;
-  private timerReload: number = 0;
-  private timerRunning: boolean = false;
+  /** Remaining 68K cycles until the next IRQ2 fires. NO_IRQ_PENDING = disarmed. */
+  private timerCyclesLeft: number = NeoGeoBus.NO_IRQ_PENDING;
+  /** Cached 32-bit offset (high << 16 | low) written by the game. */
+  private timerOffset: number = 0;
 
   // IRQ state (bits: 0=VBlank, 1=timer, 2=coldboot)
   private irqPending: number = 0;  // FBNeo: nIRQAcknowledge = ~0 → no pending IRQs at boot
@@ -148,7 +155,8 @@ export class NeoGeoBus implements BusInterface {
     this.irqPending = 0; // No pending IRQs at reset (FBNeo: nIRQAcknowledge = ~0)
     this.vramAddr = 0;
     this.vramMod = 0;
-    this.timerRunning = false;
+    this.timerCyclesLeft = NeoGeoBus.NO_IRQ_PENDING;
+    this.timerOffset = 0;
     this.autoAnimCounter = 0;
     this.autoAnimSpeed = 0;
     this.autoAnimFrameTimer = 0;
@@ -248,18 +256,25 @@ export class NeoGeoBus implements BusInterface {
     }
   }
 
-  /** LSPC timer tick — call per scanline */
-  tickTimer(): boolean {
-    if (!this.timerRunning) return false;
-    if (this.timerCounter > 0) {
-      this.timerCounter--;
-      if (this.timerCounter === 0) {
-        this.timerCounter = this.timerReload;
-        this.irqPending |= 0x02; // Assert timer IRQ
-        return true;
-      }
+  /** LSPC timer tick — consumes `cycles` 68K cycles. Returns true
+   *  if IRQ2 fires during this window. Mirrors FBNeo's per-segment
+   *  check in neo_run.cpp NeoFrame loop: the IRQ is enabled by bit
+   *  0x10 of lspcControl, and auto-reloads when bit 0x80 is set. */
+  tickTimer(cycles: number): boolean {
+    if ((this.lspcControl & 0x10) === 0) return false;
+    if (this.timerCyclesLeft >= NeoGeoBus.NO_IRQ_PENDING) return false;
+    this.timerCyclesLeft -= cycles;
+    if (this.timerCyclesLeft > 0) return false;
+    this.irqPending |= 0x02;
+    if ((this.lspcControl & 0x80) !== 0) {
+      // Auto-reload: arm the next fire on the same cadence. +1 mirrors
+      // FBNeo's `nIRQOffset + 1` on auto-load.
+      this.timerCyclesLeft += (this.timerOffset + 1) * NeoGeoBus.TIMER_CYCLES_PER_UNIT;
+      if (this.timerCyclesLeft <= 0) this.timerCyclesLeft = 1;
+    } else {
+      this.timerCyclesLeft = NeoGeoBus.NO_IRQ_PENDING;
     }
-    return false;
+    return true;
   }
 
   /** Read VRAM word at given address */
@@ -476,6 +491,7 @@ export class NeoGeoBus implements BusInterface {
     // Palette RAM: 0x400000-0x401FFF (banked, 2 × 8KB)
     if (address >= 0x400000 && address <= 0x401FFF) {
       this.paletteRam[this.paletteBankOffset + (address - 0x400000)] = value;
+      this._onPaletteWrite?.();
       return;
     }
 
@@ -601,26 +617,28 @@ export class NeoGeoBus implements BusInterface {
         this.lspcControl = value;
         this.autoAnimSpeed = (value >> 8) & 0xFF;
         break;
-      case 4: // 0x3C0008: LSPC timer high
-        this.timerHigh = value;
-        this.timerReload = (this.timerHigh << 16) | this.timerLow;
+      case 4: // 0x3C0008: LSPC timer high (bit 15 ignored per FBNeo)
+        this.timerHigh = value & 0x7FFF;
+        this.timerOffset = ((this.timerHigh << 16) | this.timerLow) >>> 0;
         break;
-      case 5: // 0x3C000A: LSPC timer low
+      case 5: // 0x3C000A: LSPC timer low — arms the timer when bit 0x20
+              // of the control register is set (reload-on-offset-write)
         this.timerLow = value;
-        this.timerReload = (this.timerHigh << 16) | this.timerLow;
+        this.timerOffset = ((this.timerHigh << 16) | this.timerLow) >>> 0;
+        if ((this.lspcControl & 0x20) !== 0) {
+          // FBNeo adds +8 here "needed for turfmast" — keep the same fudge.
+          this.timerCyclesLeft = (this.timerOffset + 8) * NeoGeoBus.TIMER_CYCLES_PER_UNIT;
+          if (this.timerCyclesLeft <= 0) this.timerCyclesLeft = NeoGeoBus.NO_IRQ_PENDING;
+        }
         break;
-      case 6: { // 0x3C000C: IRQ acknowledge register (from FBNeo NeoIRQUpdate)
+      case 6: { // 0x3C000C: IRQ acknowledge — bits: 0x01=IRQ3, 0x02=IRQ2, 0x04=IRQ1
         const ack = value & 0x07;
         if (ack & 0x01) this.irqPending &= ~0x04;
         if (ack & 0x02) this.irqPending &= ~0x02;
         if (ack & 0x04) this.irqPending &= ~0x01;
-        // Timer reload
-        this.timerCounter = this.timerReload;
-        this.timerRunning = true;
         break;
       }
-      case 7: // 0x3C000E: LSPC timer stop
-        this.timerRunning = false;
+      case 7: // 0x3C000E: unused on stock LSPC; leave as a no-op.
         break;
     }
   }
@@ -633,10 +651,19 @@ export class NeoGeoBus implements BusInterface {
   private _onFixRomSwitch: ((useBios: boolean) => void) | null = null;
   private _onZ80RomSwitch: ((useBios: boolean) => void) | null = null;
   private _onPaletteBankSwitch: ((bank: number) => void) | null = null;
+  private _onPaletteWrite: (() => void) | null = null;
+  private _onShadowMode: ((on: boolean) => void) | null = null;
 
   setFixRomSwitchCallback(cb: (useBios: boolean) => void): void { this._onFixRomSwitch = cb; }
   setZ80RomSwitchCallback(cb: (useBios: boolean) => void): void { this._onZ80RomSwitch = cb; }
   setPaletteBankCallback(cb: (bank: number) => void): void { this._onPaletteBankSwitch = cb; }
+  /** Invoked on every byte write into palette RAM so the video layer
+   *  can invalidate its decoded cache before the next slice renders.
+   *  Without this, IRQ2 handlers that flash the palette mid-frame
+   *  (eye-catcher, Metal Slug 2 horizon) rendered with the stale cache. */
+  setPaletteWriteCallback(cb: () => void): void { this._onPaletteWrite = cb; }
+  /** Invoked on shadow mode toggles (reg 0x3A0001 / 0x3A0011). */
+  setShadowModeCallback(cb: (on: boolean) => void): void { this._onShadowMode = cb; }
 
   private writeControlReg(address: number, _value: number): void {
     // Control registers per FBNeo WriteIO2 (odd byte addresses)
@@ -645,6 +672,7 @@ export class NeoGeoBus implements BusInterface {
       case 0x00: // Watchdog kick (even byte)
         break;
       case 0x01: // Shadow off (normal palette)
+        this._onShadowMode?.(false);
         break;
       case 0x03: // SWPBIOS — map BIOS vectors to 0x000000
         this.biosMode = true;
@@ -660,6 +688,7 @@ export class NeoGeoBus implements BusInterface {
         this._onPaletteBankSwitch?.(1);
         break;
       case 0x11: // Shadow on (darken palette)
+        this._onShadowMode?.(true);
         break;
       case 0x13: // SWPROM — map GAME vectors to 0x000000
         this.biosMode = false;

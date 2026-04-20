@@ -348,6 +348,12 @@ export class NeoGeoEmulator {
     this.bus.setPaletteBankCallback((bank) => {
       this.video.setPaletteBank(bank);
     });
+    this.bus.setPaletteWriteCallback(() => {
+      this.video.markPaletteDirty();
+    });
+    this.bus.setShadowModeCallback((on) => {
+      this.video.setShadowMode(on);
+    });
 
     // Initialize YM2610 on main thread for Z80 sound handshake
     try {
@@ -546,11 +552,9 @@ export class NeoGeoEmulator {
       // IRQ3 (coldboot) is asserted once at loadRom() — not per-frame.
 
       // Timer tick — flush slice before IRQ2 handler modifies VRAM
-      const timerFired = this.bus.tickTimer();
-      if (timerFired && scanline < NGO_VBLANK_LINE && scanline > sliceStart) {
-        this.video.renderSlice(sliceStart, scanline);
-        sliceStart = scanline;
-      }
+      // (timer ticking moved into the inner 68K slice loop below so it
+      // counts CPU cycles rather than scanlines — matches FBNeo's
+      // NeoConvertIRQPosition.)
 
 
 
@@ -558,27 +562,30 @@ export class NeoGeoEmulator {
 
       // Check pending IRQs — don't auto-acknowledge; the BIOS/game
       // clears IRQs by writing to the LSPC control register (0x3C000C)
-      const irqLevel = this.bus.getPendingIrq();
+      let irqLevel = this.bus.getPendingIrq();
       if (irqLevel > 0) {
         this.m68000.assertInterrupt(irqLevel);
       }
 
-      // Interleave 68K and Z80 in small slices (~100 cycles each) so the
-      // Z80 reply is visible to the 68K within the same scanline.
-      // This is critical for the BIOS 68K↔Z80 handshake (tight polling loop).
+      // Interleave 68K and Z80 in small slices (~128 cycles each) so
+      // the Z80 reply is visible to the 68K within the same scanline.
+      // After each 68K slice the LSPC timer is ticked with the cycles
+      // just consumed — when it fires we flush the visible slice up to
+      // the current scanline before the IRQ2 handler runs.
       let m68kLeft = NGO_M68K_CYCLES_PER_SCANLINE;
       let z80Left = Math.round(NGO_Z80_CLOCK / NGO_FRAME_RATE / NGO_VTOTAL);
-      const SLICE = 128; // 128 68K cycles per slice — balance speed vs handshake responsiveness
+      const SLICE = 128;
 
       while (m68kLeft > 0 || z80Left > 0) {
-        // 68K slice
         let m68kSlice = Math.min(m68kLeft, SLICE);
+        let ran68kInSlice = 0;
         while (m68kSlice > 0) {
           try {
             const ran = this.m68000.step();
             this.bus.addCycles(ran);
             m68kSlice -= ran;
             m68kLeft -= ran;
+            ran68kInSlice += ran;
           } catch (e) {
             if (this.m68kErrorCount < 3) {
               console.error(`[Neo-Geo 68K] Error at PC=0x${this.m68000.getPC().toString(16)} frame=${this.frameCount}:`, e);
@@ -589,7 +596,15 @@ export class NeoGeoEmulator {
           }
         }
 
-        // Z80 slice (proportional: ~1/3 of 68K cycles at 4MHz/12MHz)
+        if (ran68kInSlice > 0 && this.bus.tickTimer(ran68kInSlice)) {
+          if (scanline < NGO_VBLANK_LINE && scanline > sliceStart) {
+            this.video.renderSlice(sliceStart, scanline);
+            sliceStart = scanline;
+          }
+          irqLevel = this.bus.getPendingIrq();
+          if (irqLevel > 0) this.m68000.assertInterrupt(irqLevel);
+        }
+
         let z80Slice = Math.min(z80Left, Math.round(SLICE / 3));
         while (z80Slice > 0) {
           if (this.z80Bus.shouldFireNmi()) {
