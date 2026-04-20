@@ -3,6 +3,7 @@ import type { CoachEvent } from './detector/events';
 import { StateExtractor } from './extractor/state-extractor';
 import { StateHistory } from './extractor/state-history';
 import { P1_BASE, P2_BASE } from './extractor/sf2hf-memory-map';
+import { CommentOrchestrator } from './llm/comment-orchestrator';
 import type { GameState } from './types';
 
 const WORK_RAM_BASE = 0xFF0000;
@@ -23,6 +24,14 @@ export interface CoachOptions {
   logEveryNFrames?: number;
   /** Override for tests. */
   now?: () => number;
+  /** Called with each LLM token as it streams in. */
+  onLlmToken?: (token: string) => void;
+  /** Called when a full LLM comment has finished streaming. */
+  onLlmComment?: (text: string) => void;
+  /** Called when the LLM path errors (network, proxy, API). */
+  onLlmError?: (err: string) => void;
+  /** Output language for the coach line. Defaults to 'en'. */
+  language?: 'en' | 'fr';
 }
 
 const SUPPORTED_GAMES = new Set(['sf2hf', 'sf2hfj', 'sf2hfu']);
@@ -52,6 +61,10 @@ function formatEvent(ev: CoachEvent): string {
       return `${head} P2 ${ev.from} → ${ev.to} [${ev.triggers.join(', ')}]`;
     case 'pattern_prediction':
       return `${head} predict=${ev.predictedAction} in ${ev.preNoticeMs}ms (conf=${ev.confidence.toFixed(2)}) — ${ev.reason}`;
+    case 'stunned':
+      return `${head} ${ev.victim} DIZZY`;
+    case 'hit_streak':
+      return `${head} ${ev.attacker} streak ×${ev.count}`;
   }
 }
 
@@ -63,6 +76,7 @@ export class CoachController {
   private readonly gameId: string;
   private readonly logEvery: number;
   private readonly now: () => number;
+  private readonly commentator: CommentOrchestrator | null;
   private tickCount = 0;
   private stopped = false;
   private recentEvents: CoachEvent[] = [];
@@ -73,6 +87,15 @@ export class CoachController {
     this.gameId = opts.gameId;
     this.logEvery = opts.logEveryNFrames ?? 60;
     this.now = opts.now ?? (() => performance.now());
+    this.commentator = opts.onLlmToken
+      ? new CommentOrchestrator({
+          onToken: opts.onLlmToken,
+          ...(opts.onLlmComment ? { onCommentDone: opts.onLlmComment } : {}),
+          ...(opts.onLlmError ? { onError: opts.onLlmError } : {}),
+          ...(opts.language ? { language: opts.language } : {}),
+          now: this.now,
+        })
+      : null;
   }
 
   start(): boolean {
@@ -89,6 +112,12 @@ export class CoachController {
     this.stopped = true;
     this.host.setVblankCallback?.(null);
     this.detector.reset();
+    this.commentator?.cancel();
+  }
+
+  /** Expose the orchestrator so callers can cancel mid-stream if needed. */
+  cancelLlm(): void {
+    this.commentator?.cancel();
   }
 
   latest(): GameState | null {
@@ -189,6 +218,17 @@ export class CoachController {
       if (ev.importance >= 0.6) {
         console.log(`[coach:event] ${formatEvent(ev)}`);
       }
+    }
+
+    if (this.commentator) {
+      this.commentator.ingest(
+        state,
+        events,
+        this.recentEvents,
+        this.detector.getLastCpuMacroState(),
+        this.history.derive(),
+        this.detector.getContext(state.timestampMs),
+      );
     }
 
     if (this.tickCount % this.logEvery === 0) {

@@ -11,6 +11,7 @@
  */
 
 import { CoachController } from "@sprixe/coach/coach-controller";
+import { SubtitleOverlay } from "../../coach/subtitle-overlay";
 import type { GameEntry } from "../../data/games";
 import type { EmulatorRunner } from "../../engine-bridge/emulator-runner";
 import { identifyRom } from "../../engine-bridge/identify";
@@ -32,6 +33,7 @@ export class PlayingScreen {
   private readonly fpsEl: HTMLDivElement;
   private readonly runner: EmulatorRunner;
   private coach: CoachController | null = null;
+  private coachOverlay: SubtitleOverlay | null = null;
   private rafId: number | null = null;
   private lastFpsUpdate = performance.now();
   private lastFpsFrames = 0;
@@ -106,10 +108,27 @@ export class PlayingScreen {
     this.runner.start();
     this.startFpsLoop();
     this.attachAudioGestureBootstrap();
-    this.coach = new CoachController(this.runner, { gameId: this.game.id });
+
+    this.coachOverlay = new SubtitleOverlay(document.body);
+    const overlay = this.coachOverlay;
+    const params = new URLSearchParams(window.location.search);
+    const coachLang = params.get("coachLang");
+    const language: "en" | "fr" = coachLang === "fr" ? "fr" : "en";
+    this.coach = new CoachController(this.runner, {
+      gameId: this.game.id,
+      language,
+      onLlmToken: (t) => overlay.appendToken(t),
+      onLlmComment: () => overlay.endStream(),
+      onLlmError: (err) => {
+        console.warn("[coach] llm error:", err);
+        overlay.showError(err);
+      },
+    });
     if (!this.coach.start()) {
       this.coach = null;
-    } else if (typeof window !== 'undefined') {
+      this.coachOverlay.destroy();
+      this.coachOverlay = null;
+    } else if (typeof window !== "undefined") {
       (window as unknown as { __coach?: CoachController }).__coach = this.coach;
     }
   }
@@ -117,6 +136,8 @@ export class PlayingScreen {
   stop(): void {
     this.coach?.stop();
     this.coach = null;
+    this.coachOverlay?.destroy();
+    this.coachOverlay = null;
     this.stopFpsLoop();
     this.gestureCleanup?.();
     this.gestureCleanup = null;

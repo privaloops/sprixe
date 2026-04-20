@@ -11,7 +11,9 @@ export type EventType =
   | 'special_startup'
   | 'corner_trap'
   | 'macro_state_change'
-  | 'pattern_prediction';
+  | 'pattern_prediction'
+  | 'stunned'
+  | 'hit_streak';
 
 export interface BaseEvent {
   type: EventType;
@@ -92,6 +94,18 @@ export interface PatternPredictionEvent extends BaseEvent {
   reason: string;
 }
 
+export interface StunnedEvent extends BaseEvent {
+  type: 'stunned';
+  victim: 'p1' | 'p2';
+}
+
+export interface HitStreakEvent extends BaseEvent {
+  type: 'hit_streak';
+  attacker: 'p1' | 'p2';
+  /** How many hits in a row the attacker has landed without taking one back. */
+  count: number;
+}
+
 export type CoachEvent =
   | HpHitEvent
   | ComboEvent
@@ -103,7 +117,9 @@ export type CoachEvent =
   | SpecialStartupEvent
   | CornerTrapEvent
   | MacroStateChangeEvent
-  | PatternPredictionEvent;
+  | PatternPredictionEvent
+  | StunnedEvent
+  | HitStreakEvent;
 
 /**
  * SF2 arcade screen bounds in world coordinates (empirical).

@@ -3,6 +3,13 @@ import type { GameState } from '../types';
 const DEFAULT_WINDOW_SECONDS = 5;
 const FRAME_RATE = 60;
 
+export interface RepeatedMove {
+  /** The raw attack_id read from RAM — semantics vary per character. */
+  attackId: number;
+  /** How many distinct times it was thrown in the window. */
+  count: number;
+}
+
 export interface DerivedMetrics {
   avgDistance: number;
   p2RetreatCount: number;
@@ -12,6 +19,13 @@ export interface DerivedMetrics {
   p1DamageDealt: number;
   p2DamageDealt: number;
   windowMs: number;
+  /**
+   * The single attack_id each player has thrown the most this window
+   * — but only if they repeated it at least 3 times. Null otherwise.
+   * Used by the commentator to catch "he's mashing the same move".
+   */
+  p1RepeatedMove: RepeatedMove | null;
+  p2RepeatedMove: RepeatedMove | null;
 }
 
 /**
@@ -64,6 +78,8 @@ export class StateHistory {
         p1DamageDealt: 0,
         p2DamageDealt: 0,
         windowMs: 0,
+        p1RepeatedMove: null,
+        p2RepeatedMove: null,
       };
     }
 
@@ -74,6 +90,8 @@ export class StateHistory {
     let p2AirFrames = 0;
     let p1Damage = 0;
     let p2Damage = 0;
+    const p1MoveCounts = new Map<number, number>();
+    const p2MoveCounts = new Map<number, number>();
 
     let prevP2X = snap[0]?.p2.x ?? 0;
     let prev: GameState | null = null;
@@ -88,11 +106,15 @@ export class StateHistory {
       if (s.p2.isAirborne) p2AirFrames++;
 
       if (prev) {
-        if (s.p1.currentAttackId !== null && prev.p1.currentAttackId !== s.p1.currentAttackId) {
+        const p1Attack = s.p1.currentAttackId;
+        if (p1Attack !== null && prev.p1.currentAttackId !== p1Attack) {
           p1Specials++;
+          p1MoveCounts.set(p1Attack, (p1MoveCounts.get(p1Attack) ?? 0) + 1);
         }
-        if (s.p2.currentAttackId !== null && prev.p2.currentAttackId !== s.p2.currentAttackId) {
+        const p2Attack = s.p2.currentAttackId;
+        if (p2Attack !== null && prev.p2.currentAttackId !== p2Attack) {
           p2Specials++;
+          p2MoveCounts.set(p2Attack, (p2MoveCounts.get(p2Attack) ?? 0) + 1);
         }
         if (s.p2.hp < prev.p2.hp) p1Damage += prev.p2.hp - s.p2.hp;
         if (s.p1.hp < prev.p1.hp) p2Damage += prev.p1.hp - s.p1.hp;
@@ -112,6 +134,8 @@ export class StateHistory {
       p1DamageDealt: p1Damage,
       p2DamageDealt: p2Damage,
       windowMs: last.timestampMs - first.timestampMs,
+      p1RepeatedMove: pickMostRepeated(p1MoveCounts),
+      p2RepeatedMove: pickMostRepeated(p2MoveCounts),
     };
   }
 
@@ -124,4 +148,15 @@ export class StateHistory {
   size(): number {
     return this.count;
   }
+}
+
+const REPEAT_THRESHOLD = 3;
+
+function pickMostRepeated(counts: Map<number, number>): RepeatedMove | null {
+  let top: RepeatedMove | null = null;
+  for (const [attackId, count] of counts) {
+    if (count < REPEAT_THRESHOLD) continue;
+    if (!top || count > top.count) top = { attackId, count };
+  }
+  return top;
 }

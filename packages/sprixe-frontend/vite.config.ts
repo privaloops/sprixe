@@ -2,6 +2,7 @@ import { defineConfig } from "vite";
 import { resolve } from "path";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import os from "node:os";
+import Anthropic from "@anthropic-ai/sdk";
 
 const pkg = JSON.parse(
   readFileSync(resolve(__dirname, "package.json"), "utf8")
@@ -109,6 +110,65 @@ export default defineConfig(({ command }) => ({
             return;
           }
           next();
+        });
+      },
+    },
+    {
+      // Dev-only proxy for the AI coach. Browser POSTs its prompt
+      // payload here; the server reads ANTHROPIC_API_KEY from the Node
+      // process env (never shipped to the client) and streams Claude
+      // Haiku token deltas back as Server-Sent Events. Production will
+      // swap this for a real edge function.
+      name: "coach-api",
+      configureServer(server) {
+        server.middlewares.use(async (req, res, next) => {
+          const url = req.url?.split("?")[0];
+          if (url !== "/api/coach/generate" || req.method !== "POST") return next();
+
+          const apiKey = process.env.ANTHROPIC_API_KEY;
+          if (!apiKey) {
+            res.statusCode = 500;
+            res.end(JSON.stringify({ error: "ANTHROPIC_API_KEY not set in server env" }));
+            return;
+          }
+
+          let body: { systemPrompt: string; userPrompt: string; maxTokens?: number };
+          try {
+            const chunks: Buffer[] = [];
+            for await (const chunk of req) chunks.push(chunk as Buffer);
+            body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+          } catch {
+            res.statusCode = 400;
+            res.end(JSON.stringify({ error: "invalid JSON body" }));
+            return;
+          }
+
+          res.setHeader("Content-Type", "text/event-stream");
+          res.setHeader("Cache-Control", "no-cache, no-transform");
+          res.setHeader("Connection", "keep-alive");
+          res.setHeader("X-Accel-Buffering", "no");
+          res.flushHeaders?.();
+
+          try {
+            const anthropic = new Anthropic({ apiKey });
+            const stream = anthropic.messages.stream({
+              model: "claude-haiku-4-5-20251001",
+              max_tokens: body.maxTokens ?? 50,
+              system: body.systemPrompt,
+              messages: [{ role: "user", content: body.userPrompt }],
+            });
+            for await (const event of stream) {
+              if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
+                res.write(`data: ${JSON.stringify({ token: event.delta.text })}\n\n`);
+              }
+            }
+            const final = await stream.finalMessage();
+            res.write(`data: ${JSON.stringify({ done: true, usage: final.usage })}\n\n`);
+            res.end();
+          } catch (e) {
+            res.write(`data: ${JSON.stringify({ error: String(e instanceof Error ? e.message : e) })}\n\n`);
+            res.end();
+          }
         });
       },
     },

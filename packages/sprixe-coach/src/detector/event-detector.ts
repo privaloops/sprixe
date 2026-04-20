@@ -33,6 +33,14 @@ export class EventDetector {
   private matchHasStarted = false;
   private lastPredictionAtMs: Map<string, number> = new Map();
 
+  // Tendency counters surfaced to the commentator through a dedicated
+  // getContext() getter.
+  private p1Streak = 0;
+  private p2Streak = 0;
+  private streakFiredAt = { p1: 0, p2: 0 };
+  private lastHitAtMs: number | null = null;
+  private stunActive: { p1: boolean; p2: boolean } = { p1: false, p2: false };
+
   detect(current: GameState, history: StateHistory): CoachEvent[] {
     const out: CoachEvent[] = [];
     const prev = this.prev;
@@ -59,6 +67,7 @@ export class EventDetector {
       this.detectCombos(prev, current, out);
       this.detectRoundBoundaries(prev, current, out);
       this.detectCornerTrap(current, out);
+      this.detectStun(prev, current, out);
     }
 
     if (active) {
@@ -78,6 +87,28 @@ export class EventDetector {
     this.lowHpFired = { p1: false, p2: false };
     this.matchHasStarted = false;
     this.lastPredictionAtMs.clear();
+    this.p1Streak = 0;
+    this.p2Streak = 0;
+    this.streakFiredAt = { p1: 0, p2: 0 };
+    this.lastHitAtMs = null;
+    this.stunActive = { p1: false, p2: false };
+  }
+
+  getLastCpuMacroState(): AIMacroState {
+    return this.lastCpuState;
+  }
+
+  /** Aggregated tendency counters useful for commentary. */
+  getContext(nowMs: number): {
+    p1HitStreak: number;
+    p2HitStreak: number;
+    msSinceLastHit: number;
+  } {
+    return {
+      p1HitStreak: this.p1Streak,
+      p2HitStreak: this.p2Streak,
+      msSinceLastHit: this.lastHitAtMs === null ? Infinity : nowMs - this.lastHitAtMs,
+    };
   }
 
   private detectHpChanges(prev: GameState, curr: GameState, out: CoachEvent[]): void {
@@ -99,6 +130,38 @@ export class EventDetector {
           victimHpAfter: currHp,
           victimHpPercent: hpPct,
         });
+
+        // Streak bookkeeping: attacker's chain grows, victim's resets.
+        this.lastHitAtMs = curr.timestampMs;
+        if (attacker === 'p1') {
+          this.p1Streak++;
+          this.p2Streak = 0;
+          if (this.p1Streak >= 3 && this.streakFiredAt.p1 < this.p1Streak) {
+            out.push({
+              type: 'hit_streak',
+              frameIdx: curr.frameIdx,
+              timestampMs: curr.timestampMs,
+              importance: this.p1Streak >= 4 ? IMPORTANCE.important : IMPORTANCE.moderate,
+              attacker: 'p1',
+              count: this.p1Streak,
+            });
+            this.streakFiredAt.p1 = this.p1Streak;
+          }
+        } else {
+          this.p2Streak++;
+          this.p1Streak = 0;
+          if (this.p2Streak >= 3 && this.streakFiredAt.p2 < this.p2Streak) {
+            out.push({
+              type: 'hit_streak',
+              frameIdx: curr.frameIdx,
+              timestampMs: curr.timestampMs,
+              importance: this.p2Streak >= 4 ? IMPORTANCE.important : IMPORTANCE.moderate,
+              attacker: 'p2',
+              count: this.p2Streak,
+            });
+            this.streakFiredAt.p2 = this.p2Streak;
+          }
+        }
       }
 
       const pct = currHp / maxHp;
@@ -200,6 +263,26 @@ export class EventDetector {
         importance: IMPORTANCE.important,
         victim: p1Ko ? 'p1' : 'p2',
       });
+    }
+  }
+
+  private detectStun(prev: GameState, curr: GameState, out: CoachEvent[]): void {
+    for (const side of ['p1', 'p2'] as const) {
+      const prevStun = prev[side].stunCounter;
+      const currStun = curr[side].stunCounter;
+      // Rising edge: stun timer moves from 0 to a meaningful value.
+      if (!this.stunActive[side] && currStun > prevStun && currStun >= 32) {
+        out.push({
+          type: 'stunned',
+          frameIdx: curr.frameIdx,
+          timestampMs: curr.timestampMs,
+          importance: IMPORTANCE.important,
+          victim: side,
+        });
+        this.stunActive[side] = true;
+      } else if (currStun === 0) {
+        this.stunActive[side] = false;
+      }
     }
   }
 
