@@ -92,6 +92,12 @@ html, body {
   /* Bottom padding clears the fixed hints-bar (≈48px). */
   padding: 28px 32px 72px;
   gap: 20px;
+  /* Centers the topbar + middle stack vertically when the viewport
+     has extra room (big screens). `safe` keyword skips the centering
+     whenever the content is taller than the container so the topbar
+     never gets pushed up behind the hints-bar and filters never
+     clip into the wheel below. */
+  align-content: safe center;
 }
 
 /* Top bar shares the same column grid as the middle row so that the
@@ -99,9 +105,9 @@ html, body {
    the wheel (right). */
 .af-browser-topbar {
   display: grid;
-  grid-template-columns: 1fr minmax(360px, 460px);
+  grid-template-columns: 2fr 1fr;
   gap: 36px;
-  align-items: center;
+  align-items: stretch;
 }
 
 /* The marquee is no longer shown, but it still has to load so the
@@ -118,11 +124,15 @@ html, body {
   pointer-events: none;
 }
 
-/* Title + meta + favorite stacked next to the marquee. */
+/* Title + meta + favorite stacked in the topbar's left cell. Centred
+   horizontally so the title sits above the centre of the video
+   preview below. */
 .af-browser-titleblock {
   display: flex;
   flex-direction: column;
   justify-content: center;
+  align-items: center;
+  text-align: center;
   gap: 6px;
   min-width: 0;
 }
@@ -155,7 +165,7 @@ html, body {
 /* Middle: media pane on the left, wheel column on the right. */
 .af-browser-middle {
   display: grid;
-  grid-template-columns: 1fr minmax(360px, 460px);
+  grid-template-columns: 2fr 1fr;
   gap: 36px;
   min-height: 0;
 }
@@ -177,14 +187,21 @@ html, body {
 }
 
 .af-browser-filter-pane {
-  justify-self: start;
+  /* Fill the 1fr column and centre its content so the filter bar
+     stays horizontally aligned with the wheel below it. */
+  justify-self: stretch;
+  display: flex;
+  justify-content: center;
+  align-items: center;
 }
 
 /* --- Filter bar --- */
 
 .af-filter-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: center;
   gap: 12px;
   padding: 8px 0;
 }
@@ -378,16 +395,16 @@ html, body {
 .af-video-preview.has-video .af-video-preview-video {
   position: absolute;
   inset: auto;
-  top: 0;
-  left: 0;
-  height: 100%;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) perspective(1200px) rotateX(1deg);
   width: auto;
+  height: auto;
   max-width: 100%;
   max-height: 100%;
   aspect-ratio: var(--af-video-ar, 4 / 3);
   object-fit: fill;
   border-radius: 6% / 5%;
-  transform: perspective(1200px) rotateX(1deg);
   box-shadow:
     inset 0 0 60px rgba(0, 0, 0, 0.55),
     inset 0 0 140px rgba(0, 0, 0, 0.35),
@@ -395,15 +412,18 @@ html, body {
 }
 
 /* Overlays must track the video box, not the pane, so scanlines and
-   vignette stop exactly where the picture stops. */
+   vignette stop exactly where the picture stops. Matching positioning
+   rules so the overlay geometry stays glued to the <video> frame
+   regardless of which axis (width or height) hit the container first. */
 .af-video-preview.has-video::after,
 .af-video-preview.has-video::before {
   content: "";
   position: absolute;
-  top: 0;
-  left: 0;
-  height: 100%;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
   width: auto;
+  height: auto;
   max-width: 100%;
   max-height: 100%;
   aspect-ratio: var(--af-video-ar, 4 / 3);
