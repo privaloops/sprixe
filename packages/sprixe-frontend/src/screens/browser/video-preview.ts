@@ -165,6 +165,14 @@ export class VideoPreview {
       if (token !== this.pendingFetchToken) return;
       if (game.id !== this.currentId) return;
       this.currentVideoEl = video;
+      // Drive the CRT overlays off the real video aspect ratio so the
+      // rounded corners and scanlines follow the actual image edges,
+      // not the letterboxed object-fit box.
+      const vw = video.videoWidth;
+      const vh = video.videoHeight;
+      if (vw > 0 && vh > 0) {
+        this.root.style.setProperty("--af-video-ar", `${vw} / ${vh}`);
+      }
       this.root.classList.remove("probing-video");
       this.root.classList.add("has-video");
       void video.play().catch(() => {
