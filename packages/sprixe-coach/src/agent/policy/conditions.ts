@@ -35,8 +35,9 @@ export function evaluateCondition(
   const dist = Math.abs(state.p1.x - state.p2.x);
 
   switch (id) {
-    // ── Distance ──
-    case 'dist_close':       return dist < 80;
+    // ── Distance (throw range ~32px, c.LK/c.MK ~55-65px, s.HK ~85px) ──
+    case 'dist_touch':       return dist < 40;
+    case 'dist_close':       return dist >= 40 && dist < 80;
     case 'dist_mid':         return dist >= 80 && dist < 180;
     case 'dist_far':         return dist >= 180 && dist < 280;
     case 'dist_fullscreen':  return dist >= 280;
@@ -63,9 +64,14 @@ export function evaluateCondition(
     case 'p1_attacking_special':
       return state.p1.attacking && state.p1.stateByte === 0x0C;
     case 'fireball_flying':
+      // Window narrowed to 40 frames (approx Hadouken full-screen travel).
+      // Also exclude if P1 has committed to a rush (attacking a normal) —
+      // the projectile is past; reacting to a stale fireball instead of
+      // defending the rush was a major source of spam in earlier tuning.
       return ctx.p1LastSpecialFrame !== null
         && (ctx.frameIdx - ctx.p1LastSpecialFrame) > 0
-        && (ctx.frameIdx - ctx.p1LastSpecialFrame) < 70;
+        && (ctx.frameIdx - ctx.p1LastSpecialFrame) < 40
+        && !(state.p1.attacking && state.p1.stateByte === 0x0A);
     case 'p1_whiffed_special':
       // Special finished but P1 is still in recovery — punish window.
       return ctx.p1LastSpecialFrame !== null

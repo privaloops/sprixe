@@ -4,22 +4,9 @@ import { moveName } from './detector/move-names';
 import { StateExtractor } from './extractor/state-extractor';
 import { StateHistory } from './extractor/state-history';
 import { P1_BASE, P2_BASE } from './extractor/sf2hf-memory-map';
-import { CommentOrchestrator } from './llm/comment-orchestrator';
-import { TtsPlayer } from './tts/tts-player';
-import { LocalTtsPlayer } from './tts/local-tts-player';
 import { AiFighter } from './agent/ai-fighter';
-import { PlayerProfiler } from './agent/player-profile';
-import { ClaudeStrategist } from './agent/claude-strategist';
 import type { VirtualInputChannel } from './agent/input-sequencer';
 import type { GameState } from './types';
-
-/** Common interface shared by ElevenLabs and browser-native TTS. */
-interface TtsEngine {
-  speak(text: string): void;
-  destroy(): void;
-}
-
-export type TtsProvider = 'eleven' | 'local' | 'off';
 
 const WORK_RAM_BASE = 0xFF0000;
 
@@ -35,7 +22,7 @@ export interface CoachHost {
    *  for P1 LK/MK/HK), not the main IO port buffer. */
   getCpsbRegisters?(): Uint8Array;
   /** Persistent virtual input channel for P2. Required for AI-opponent
-   *  mode; when null the coach is narration-only. */
+   *  mode; without it the AI fighter is never built. */
   getVirtualP2Channel?(): VirtualInputChannel;
   /** Attach/detach the virtual P2 channel to the input layer. Called
    *  every frame by the coach to auto-arm during fights and auto-disarm
@@ -51,39 +38,21 @@ export interface CoachOptions {
   logEveryNFrames?: number;
   /** Override for tests. */
   now?: () => number;
-  /** Called with each LLM token as it streams in. */
-  onLlmToken?: (token: string) => void;
-  /** Called when a full LLM comment has finished streaming. */
-  onLlmComment?: (text: string) => void;
-  /** Called when the LLM path errors (network, proxy, API). */
-  onLlmError?: (err: string) => void;
-  /** Output language for the coach line. Defaults to 'en'. */
-  language?: 'en' | 'fr';
   /**
    * Calibration mode: skip EVERYTHING except the `[coach:calibrate]`
-   * lines emitted on unknown attack ids. No LLM calls, no TTS, no
-   * periodic state log, no event log. Used to fill move-names.ts.
+   * lines emitted on unknown attack ids. No periodic state log, no
+   * event log. Used to fill move-names.ts.
    */
   calibrateOnly?: boolean;
-  /**
-   * TTS backend selector.
-   *   'eleven' (default) — ElevenLabs Flash via the dev proxy, high
-   *      quality hype caster voice, ~1.2s latency.
-   *   'local' — browser-native Web Speech API, ~0ms latency but uses
-   *      the OS voices so the quality / hype factor is limited.
-   *   'off' — no voice, subtitles only.
-   */
-  ttsProvider?: TtsProvider;
-  /** Optional voice override forwarded to /api/coach/tts (ElevenLabs). */
-  ttsVoiceId?: string;
   /** Enable the AI opponent — drives P2 via virtual inputs with a
-   *  deterministic reflex policy. Narration and detection layers keep
-   *  working in parallel. Default false. */
+   *  deterministic reflex policy. Default false. */
   enableAiOpponent?: boolean;
   /** Pick the AI execution engine when the opponent is on.
-   *   'mode'   — legacy hand-written modes + Claude picks one of them
-   *   'policy' — DSL rules engine, Claude composes live policies */
+   *   'mode'   — legacy hand-written modes
+   *   'policy' — DSL rules engine */
   aiEngine?: 'mode' | 'policy';
+  aiLevel?: 'easy' | 'normal' | 'hard' | 'tas';
+  aiDebugLoopAction?: string;
 }
 
 const SUPPORTED_GAMES = new Set(['sf2hf', 'sf2hfj', 'sf2hfu']);
@@ -100,10 +69,7 @@ const BUTTON_CLASS: Record<string, { kind: 'punch' | 'kick'; strength: 'light' |
 
 /**
  * Classify an attack from the directional keys pressed in the ~300ms
- * before the attack button. Motions are universal across SF2 fighters
- * — qcf+P is Hadouken on Ryu, Yoga Fire on Dhalsim, Tiger Shot on
- * Sagat, etc., so we describe them by MOTION CLASS rather than named
- * moves and let the commentary layer re-skin per character.
+ * before the attack button. Motions are universal across SF2 fighters.
  */
 function classifyMoveFromHistory(
   history: Array<{ key: string; atMs: number }>,
@@ -147,43 +113,11 @@ type Motion = 'qcf' | 'qcb' | 'dragon' | 'reverse-dragon' | 'charge-fb' | 'charg
  */
 function detectMotion(directions: Direction[]): Motion {
   const tail = directions.slice(-6).join(',');
-  // Quarter-circle forward: D → F (DF in between is optional/inferred)
   if (/\bD\b.*\bF\b/.test(tail)) return 'qcf';
-  // Quarter-circle back: D → B
   if (/\bD\b.*\bB\b/.test(tail)) return 'qcb';
-  // Dragon punch: F → D → F (with optional DF)
   if (/\bF\b.*\bD\b.*\bF\b/.test(tail)) return 'dragon';
-  // Reverse dragon: B → D → B
   if (/\bB\b.*\bD\b.*\bB\b/.test(tail)) return 'reverse-dragon';
   return null;
-}
-
-interface BuildTtsOptions {
-  provider: TtsProvider;
-  language?: 'en' | 'fr';
-  voiceId?: string;
-  onStart?(): void;
-  onEnd?(): void;
-}
-
-function buildTtsEngine(opts: BuildTtsOptions): TtsEngine | null {
-  if (typeof window === 'undefined') return null;
-  if (opts.provider === 'off') return null;
-  if (opts.provider === 'local') {
-    const lang = opts.language === 'fr' ? 'fr-FR' : 'en-US';
-    return new LocalTtsPlayer({
-      lang,
-      onError: (err) => console.warn('[coach:tts:local]', err),
-      ...(opts.onStart ? { onStart: opts.onStart } : {}),
-      ...(opts.onEnd ? { onEnd: opts.onEnd } : {}),
-    });
-  }
-  return new TtsPlayer({
-    ...(opts.voiceId ? { voiceId: opts.voiceId } : {}),
-    onError: (err) => console.warn('[coach:tts:eleven]', err),
-    ...(opts.onStart ? { onStart: opts.onStart } : {}),
-    ...(opts.onEnd ? { onEnd: opts.onEnd } : {}),
-  });
 }
 
 function formatEvent(ev: CoachEvent): string {
@@ -230,12 +164,8 @@ export class CoachController {
   private readonly gameId: string;
   private readonly logEvery: number;
   private readonly now: () => number;
-  private readonly commentator: CommentOrchestrator | null;
-  private readonly ttsPlayer: TtsEngine | null;
   private readonly calibrateOnly: boolean;
   private readonly aiFighter: AiFighter | null;
-  private readonly aiProfiler: PlayerProfiler | null;
-  private readonly aiStrategist: ClaudeStrategist | null;
   private tickCount = 0;
   private stopped = false;
   // Calibration state — previous frame's P1 input bytes and P1 struct
@@ -262,56 +192,16 @@ export class CoachController {
     this.now = opts.now ?? (() => performance.now());
     this.calibrateOnly = opts.calibrateOnly === true;
 
-    // Build the commentator first so we can wire the TTS engine's
-    // onStart/onEnd callbacks back into its overlap-prevention lock.
-    // When AI-opponent mode is on, the ClaudeStrategist speaks in the
-    // fighter's first person instead — we disable the passive coach to
-    // avoid two voices stepping on each other.
-    this.commentator = !this.calibrateOnly && opts.onLlmToken && !opts.enableAiOpponent
-      ? new CommentOrchestrator({
-          onToken: opts.onLlmToken,
-          onCommentDone: (text) => {
-            this.ttsPlayer?.speak(text);
-            opts.onLlmComment?.(text);
-          },
-          ...(opts.onLlmError ? { onError: opts.onLlmError } : {}),
-          ...(opts.language ? { language: opts.language } : {}),
-          now: this.now,
-        })
-      : null;
-
-    const commentator = this.commentator;
-    this.ttsPlayer = this.calibrateOnly ? null : buildTtsEngine({
-      provider: opts.ttsProvider ?? 'eleven',
-      ...(opts.language ? { language: opts.language } : {}),
-      ...(opts.ttsVoiceId ? { voiceId: opts.ttsVoiceId } : {}),
-      ...(commentator ? {
-        onStart: () => commentator.notifyTtsStart(),
-        onEnd: () => commentator.notifyTtsEnd(),
-      } : {}),
-    });
-
     // AI opponent — off by default. Requires a virtual P2 channel from
     // the host; in its absence (e.g. tests) the fighter is never built.
     const vp2 = opts.enableAiOpponent ? host.getVirtualP2Channel?.() : undefined;
-    this.aiFighter = vp2 ? new AiFighter(vp2, { enginePolicy: opts.aiEngine === 'policy' }) : null;
-    this.aiProfiler = this.aiFighter ? new PlayerProfiler() : null;
-    // Disable Claude strategist in policy mode — we want to lock the AI
-    // on the hardcoded default policy while tuning it. Re-enable once
-    // the policy baseline feels right.
-    const strategistEnabled = this.aiFighter !== null && opts.aiEngine !== 'policy';
-    this.aiStrategist = strategistEnabled ? new ClaudeStrategist(this.aiFighter!, {
-      ...(opts.language ? { language: opts.language } : {}),
-      onToken: (t) => opts.onLlmToken?.(t),
-      onNarration: (text) => {
-        this.ttsPlayer?.speak(text);
-        opts.onLlmComment?.(text);
-      },
-      onError: (err) => opts.onLlmError?.(err),
-      now: this.now,
+    this.aiFighter = vp2 ? new AiFighter(vp2, {
+      enginePolicy: opts.aiEngine === 'policy',
+      ...(opts.aiLevel ? { level: opts.aiLevel } : {}),
+      ...(opts.aiDebugLoopAction ? { debugLoopAction: opts.aiDebugLoopAction } : {}),
     }) : null;
     if (this.aiFighter) {
-      console.log('[sprixe-coach] AI opponent ARMED — mode policy + Claude strategist driving P2');
+      console.log('[sprixe-coach] AI opponent ARMED — driving P2');
       if (typeof window !== 'undefined') {
         (window as unknown as { __aiFighter?: AiFighter }).__aiFighter = this.aiFighter;
       }
@@ -355,18 +245,11 @@ export class CoachController {
     this.stopped = true;
     this.host.setVblankCallback?.(null);
     this.detector.reset();
-    this.commentator?.cancel();
-    this.ttsPlayer?.destroy();
     this.aiFighter?.reset();
     if (this.keyListener && typeof window !== 'undefined') {
       window.removeEventListener('keydown', this.keyListener);
       this.keyListener = null;
     }
-  }
-
-  /** Expose the orchestrator so callers can cancel mid-stream if needed. */
-  cancelLlm(): void {
-    this.commentator?.cancel();
   }
 
   latest(): GameState | null {
@@ -401,9 +284,6 @@ export class CoachController {
   /**
    * Snapshot a RAM window, then call `diffFrom(addr, length)` later
    * after doing an action in-game to see which bytes changed.
-   *   __coach.mark(0xFF83BE, 64)
-   *   // ...walk right in the game...
-   *   __coach.diffFrom(0xFF83BE, 64)
    */
   mark(addr: number, length = 64): void {
     const ram = this.host.getWorkRam?.();
@@ -453,13 +333,6 @@ export class CoachController {
   /**
    * Calibration tick: decode P1's arcade input bytes + snapshot the P1
    * struct so we can see which RAM byte reacts to each press.
-   *
-   * ioPorts[1] = P1 low byte (active-LOW):
-   *   bits 0-3 = Right / Left / Down / Up
-   *   bits 4-6 = LP / MP / HP
-   * cpsbRegs[0x37] = P1 kicks byte (active-LOW):
-   *   bits 0-2 = LK / MK / HK
-   * (kicks don't route through ioPorts on CPS-1 — they live in CPS-B).
    */
   private logCalibration(state: GameState, ram: Uint8Array): void {
     const io = this.host.getIoPorts?.();
@@ -467,9 +340,6 @@ export class CoachController {
     const p1Byte = io?.[1] ?? 0xFF;
     const kickByte = cpsb?.[0x37] ?? 0xFF;
 
-    // Detect 1→0 transitions on the 6 button bits only. Directions are
-    // reported as held-state below, not as press events, because what
-    // matters is which direction was held at the frame of the press.
     const pressed: string[] = [];
     if ((this.previousP1Io & 0x10) !== 0 && (p1Byte & 0x10) === 0) pressed.push('LP');
     if ((this.previousP1Io & 0x20) !== 0 && (p1Byte & 0x20) === 0) pressed.push('MP');
@@ -510,8 +380,6 @@ export class CoachController {
       }
     }
 
-    // Snapshot for next frame's diff. Always taken so the diff always
-    // represents a 1-frame delta rather than stale history.
     this.snapshotP1Struct(ram);
   }
 
@@ -530,8 +398,7 @@ export class CoachController {
       const before = this.p1StructSnapshot[i] ?? 0;
       const after  = ram[start + i] ?? 0;
       if (before === after) continue;
-      // Skip ±1 ticks on animation frame counters — keep everything else
-      // (including ±2..±4 pointer LSB deltas which were lost before).
+      // Skip ±1 ticks on animation frame counters.
       const delta = Math.abs(after - before);
       if (delta === 1 && before !== 0 && after !== 0) continue;
       const addr = (P1_BASE + i).toString(16).toUpperCase();
@@ -560,23 +427,13 @@ export class CoachController {
       this.host.armVirtualP2?.(fightActive);
       if (fightActive) {
         this.aiFighter.onVblank(state);
-        this.aiProfiler?.observe(state);
-        // Ask the strategist every ~250ms — its own throttle (5s min,
-        // 1.8s urgent) suppresses calls that are still on cooldown.
-        if (this.aiProfiler && this.aiStrategist && this.tickCount % 15 === 0) {
-          const profile = this.aiProfiler.snapshot(state, this.history.derive());
-          this.aiStrategist.consider(state, profile, this.recentEvents);
-        }
       } else {
         this.aiFighter.reset();
-        this.aiProfiler?.reset();
-        this.aiStrategist?.cancel();
       }
     }
 
     // Calibration mode: one line per button press with direction held +
-    // the post-press animPtr trace (15 frames) so a new unknown move's
-    // startup pointer can be read off directly and added to move-names.ts.
+    // the post-press animPtr trace (15 frames).
     if (this.calibrateOnly) {
       this.logCalibration(state, ram);
       return;
@@ -588,13 +445,11 @@ export class CoachController {
       if (this.recentEvents.length > this.RECENT_EVENT_CAP) {
         this.recentEvents.shift();
       }
-      if (!this.calibrateOnly && ev.importance >= 0.6) {
+      if (ev.importance >= 0.6) {
         console.log(`[coach:event] ${formatEvent(ev)}`);
       }
       // Runtime move logger. When the detector fires special_startup
       // and we have a name for the animPtr, log "Ryu → Hadouken jab".
-      // Unknown ptrs print the hex so we can extend move-names.ts
-      // incrementally without a fresh calibration run.
       if (ev.type === 'special_startup') {
         const resolved = moveName(ev.character, ev.animPtr);
         const ptrHex = `0x${ev.animPtr.toString(16).toUpperCase().padStart(8, '0')}`;
@@ -609,17 +464,6 @@ export class CoachController {
           );
         }
       }
-    }
-
-    if (this.commentator) {
-      this.commentator.ingest(
-        state,
-        events,
-        this.recentEvents,
-        this.detector.getLastCpuMacroState(),
-        this.history.derive(),
-        this.detector.getContext(state.timestampMs),
-      );
     }
 
     this.tickCount++;

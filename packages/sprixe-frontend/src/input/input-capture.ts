@@ -36,6 +36,12 @@ export class InputCapture {
       if (event.key === "Alt" || event.key === "Shift" || event.key === "Control" || event.key === "Meta") {
         return;
       }
+      // Block the key from reaching the game input manager AND any other
+      // listener (form submit on Enter, menu navigation, etc.). Without
+      // this, pressing Enter during a remap also triggers Start and the
+      // game launches out from under the settings modal.
+      event.preventDefault();
+      event.stopImmediatePropagation();
       this.emit({ kind: "key", code: event.code });
     };
   }
@@ -47,7 +53,8 @@ export class InputCapture {
     this.pressedSnapshot.clear();
     this.axisSnapshot.clear();
     this.takeBaseline();
-    window.addEventListener("keydown", this.onKeyDown);
+    // Capture phase so we fire BEFORE the emulator's bubble-phase handler.
+    window.addEventListener("keydown", this.onKeyDown, true);
     this.scheduleNextTick();
   }
 
@@ -58,7 +65,7 @@ export class InputCapture {
       cancelAnimationFrame(this.rafId);
       this.rafId = null;
     }
-    window.removeEventListener("keydown", this.onKeyDown);
+    window.removeEventListener("keydown", this.onKeyDown, true);
   }
 
   /** Public tick entrypoint — tests drive this directly. */

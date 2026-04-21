@@ -48,7 +48,7 @@ const jumpWithAttack = (dir: readonly VirtualButton[], btn: VirtualButton): Inpu
   { held: [],                    frames: 2 },
 ];
 
-export function resolveAction(id: ActionId): ActionResult {
+export function resolveMotion(id: ActionId): ActionResult {
   switch (id) {
     // ── Specials ──
     case 'hadouken_jab':    return { kind: 'motion', frames: hadouken('button1'), label: 'Hadouken LP' };

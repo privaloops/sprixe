@@ -11,7 +11,6 @@
  */
 
 import { CoachController } from "@sprixe/coach/coach-controller";
-import { SubtitleOverlay } from "../../coach/subtitle-overlay";
 import type { GameEntry } from "../../data/games";
 import type { EmulatorRunner } from "../../engine-bridge/emulator-runner";
 import { identifyRom } from "../../engine-bridge/identify";
@@ -33,7 +32,6 @@ export class PlayingScreen {
   private readonly fpsEl: HTMLDivElement;
   private readonly runner: EmulatorRunner;
   private coach: CoachController | null = null;
-  private coachOverlay: SubtitleOverlay | null = null;
   private rafId: number | null = null;
   private lastFpsUpdate = performance.now();
   private lastFpsFrames = 0;
@@ -111,49 +109,33 @@ export class PlayingScreen {
 
     const params = new URLSearchParams(window.location.search);
     const calibrateOnly = params.get("calibrate") === "1";
-    const coachLang = params.get("coachLang");
-    const language: "en" | "fr" = coachLang === "fr" ? "fr" : "en";
-    const ttsParam = params.get("tts");
-    const ttsProvider: "eleven" | "local" | "off" =
-      calibrateOnly || ttsParam === "0" || ttsParam === "off" ? "off"
-      : ttsParam === "local" ? "local"
-      : "eleven";
-    const ttsVoiceId = params.get("coachVoice") ?? undefined;
     const enableAiOpponent = params.get("ai") === "1";
     const aiEngine: "mode" | "policy" = params.get("engine") === "policy" ? "policy" : "mode";
+    const levelParam = params.get("level");
+    // DEBUG default: 'tas' — we want the unbeatable baseline first,
+    // then tune the optimal tier before re-enabling easier presets.
+    const aiLevel: "easy" | "normal" | "hard" | "tas" =
+      levelParam === "easy" || levelParam === "normal" || levelParam === "hard" || levelParam === "tas"
+        ? levelParam
+        : "tas";
+    // ?debug=<action> forces the AI to repeat one action (bypasses policy).
+    // Used to isolate motion-library bugs.
+    const debugParam = params.get("debug");
+    const aiDebugLoopAction = debugParam && debugParam.length > 0 ? debugParam : undefined;
     // Note: the CoachController auto-arms the virtual P2 channel only
     // while a fight is active, so the keyboard still drives P2 during
     // menu navigation and character select.
-    const subtitlesParam = params.get("subtitles");
-    // Subtitles are useful when the voice is slow (ElevenLabs, ~1.2s) or
-    // off entirely, but redundant when the browser TTS speaks instantly.
-    // URL override lets the user force either behaviour.
-    const showSubtitles = calibrateOnly ? false
-      : subtitlesParam === "1" ? true
-      : subtitlesParam === "0" ? false
-      : ttsProvider !== "local";
-    this.coachOverlay = showSubtitles ? new SubtitleOverlay(document.body) : null;
-    const overlay = this.coachOverlay;
 
     this.coach = new CoachController(this.runner, {
       gameId: this.game.id,
-      language,
-      ttsProvider,
       calibrateOnly,
       enableAiOpponent,
       aiEngine,
-      ...(ttsVoiceId ? { ttsVoiceId } : {}),
-      onLlmToken: (t) => overlay?.appendToken(t),
-      onLlmComment: () => overlay?.endStream(),
-      onLlmError: (err) => {
-        console.warn("[coach] llm error:", err);
-        overlay?.showError(err);
-      },
+      aiLevel,
+      ...(aiDebugLoopAction ? { aiDebugLoopAction } : {}),
     });
     if (!this.coach.start()) {
       this.coach = null;
-      this.coachOverlay?.destroy();
-      this.coachOverlay = null;
     } else if (typeof window !== "undefined") {
       (window as unknown as { __coach?: CoachController }).__coach = this.coach;
     }
@@ -171,8 +153,6 @@ export class PlayingScreen {
   stop(): void {
     this.coach?.stop();
     this.coach = null;
-    this.coachOverlay?.destroy();
-    this.coachOverlay = null;
     this.stopFpsLoop();
     this.gestureCleanup?.();
     this.gestureCleanup = null;

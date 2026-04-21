@@ -1,6 +1,10 @@
 import type { GameState } from '../types';
 import { ModeManager, TurtleSpaceControl, MODE_REGISTRY, type Mode } from './modes';
 import { PolicyRunner, DEFAULT_RYU_POLICY, type Policy } from './policy';
+import type { DifficultyLevel } from './policy/difficulty';
+import { KEN_MOVESET, getMoveset } from './characters';
+import type { CharacterMoveset } from './characters/types';
+import type { CharacterId } from '../types';
 import type { VirtualInputChannel } from './input-sequencer';
 
 export interface AiFighterOptions {
@@ -8,6 +12,12 @@ export interface AiFighterOptions {
   initialMode?: string;
   /** Switch to the policy engine (DSL rules) instead of the mode engine. */
   enginePolicy?: boolean;
+  /** Difficulty level for the policy engine. Defaults to 'normal'. */
+  level?: DifficultyLevel;
+  /** Moveset for the controlled character. Defaults to Ken. */
+  moveset?: CharacterMoveset;
+  /** Debug: force Ken to loop a single action. Bypasses tier logic. */
+  debugLoopAction?: string;
 }
 
 /**
@@ -24,11 +34,19 @@ export interface AiFighterOptions {
 export class AiFighter {
   private readonly modeManager: ModeManager | null;
   private readonly policyRunner: PolicyRunner | null;
+  private detectedCharId: CharacterId | null = null;
 
   constructor(channel: VirtualInputChannel, opts: AiFighterOptions = {}) {
     if (opts.enginePolicy) {
       this.modeManager = null;
-      this.policyRunner = new PolicyRunner(channel, DEFAULT_RYU_POLICY);
+      const moveset = opts.moveset ?? KEN_MOVESET;
+      // DEBUG default: 'tas' — unbeatable baseline while we tune the
+      // optimal tier. Downgrade to 'normal' once the ceiling is solid.
+      const level = opts.level ?? 'tas';
+      this.policyRunner = new PolicyRunner(channel, DEFAULT_RYU_POLICY, moveset, level);
+      if (opts.debugLoopAction) {
+        this.policyRunner.setDebugLoopAction(opts.debugLoopAction);
+      }
     } else {
       const initial = opts.initialMode && MODE_REGISTRY[opts.initialMode]
         ? MODE_REGISTRY[opts.initialMode]!
@@ -39,6 +57,12 @@ export class AiFighter {
   }
 
   onVblank(state: GameState): void {
+    // Auto-detect P2's character and swap moveset if it changed
+    // (character select between rounds, different match, etc).
+    if (this.policyRunner && state.p2.charId !== 'unknown' && state.p2.charId !== this.detectedCharId) {
+      this.detectedCharId = state.p2.charId;
+      this.policyRunner.setMoveset(getMoveset(state.p2.charId));
+    }
     this.modeManager?.onVblank(state);
     this.policyRunner?.onVblank(state);
   }
