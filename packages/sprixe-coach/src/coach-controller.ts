@@ -6,6 +6,14 @@ import { StateHistory } from './extractor/state-history';
 import { P1_BASE, P2_BASE } from './extractor/sf2hf-memory-map';
 import { AiFighter } from './agent/ai-fighter';
 import type { VirtualInputChannel } from './agent/input-sequencer';
+import { KenMoveValidator } from './agent/tas/ken-validator';
+import { KenAnimInspector } from './agent/tas/ken-anim-inspector';
+import { KenTimelineRecorder } from './agent/tas/ken-timeline-recorder';
+import { CMKPunishTest } from './agent/tas/cmk-punish-test';
+import {
+  classifyAttackHeight,
+  minGapToHurtboxes,
+} from './agent/policy/threat-geometry';
 import type { GameState } from './types';
 
 const WORK_RAM_BASE = 0xFF0000;
@@ -56,6 +64,24 @@ export interface CoachOptions {
   aiEngine?: 'mode' | 'policy';
   aiLevel?: 'easy' | 'normal' | 'hard' | 'tas';
   aiDebugLoopAction?: string;
+  /** Phase 1 harness: enable Ken move-map calibration (overrides TAS). */
+  calibrateKen?: boolean;
+  /** Phase 1 gate: compare predicted vs live Ken attackboxes each frame,
+   *  log mismatches >2px. Zero overhead when off. */
+  validateKen?: boolean;
+  /** Phase 1 investigation: log raw animPtr + 24-byte struct every
+   *  vblank while Ken is in an attack state. Used to reverse-engineer
+   *  the frame-advance mechanism. */
+  inspectKen?: boolean;
+  /** Phase 1 pivot: capture the empirical (animPtr, holdFrames)[]
+   *  timeline per Ken move. Prints TS snippet on move completion. */
+  recordKen?: boolean;
+  /** Phase 2: log live threat geometry (attackbox gap + height + whiff) each
+   *  frame P1 has an active attackbox. Dry-run for the threat detector. */
+  debugThreat?: boolean;
+  /** Feasibility probe: on every Ryu sweep, fire a Ken sweep the same
+   *  frame and log press-to-hit latency. Bypasses the AI fighter. */
+  testCmkPunish?: boolean;
 }
 
 const SUPPORTED_GAMES = new Set(['sf2hf', 'sf2hfj', 'sf2hfu']);
@@ -169,6 +195,12 @@ export class CoachController {
   private readonly now: () => number;
   private readonly calibrateOnly: boolean;
   private readonly aiFighter: AiFighter | null;
+  private readonly kenValidator: KenMoveValidator | null;
+  private readonly kenInspector: KenAnimInspector | null;
+  private readonly kenRecorder: KenTimelineRecorder | null;
+  private readonly debugThreat: boolean;
+  private readonly cmkPunishTest: CMKPunishTest | null;
+  private prevThreatKey = '';
   private tickCount = 0;
   private stopped = false;
   // Calibration state — previous frame's P1 input bytes and P1 struct
@@ -209,12 +241,36 @@ export class CoachController {
       enginePolicy: opts.aiEngine === 'policy',
       ...(opts.aiLevel ? { level: opts.aiLevel } : {}),
       ...(opts.aiDebugLoopAction ? { debugLoopAction: opts.aiDebugLoopAction } : {}),
+      ...(opts.calibrateKen ? { calibrateKen: true } : {}),
     }) : null;
     if (this.aiFighter) {
       console.log('[sprixe-coach] AI opponent ARMED — driving P2');
       if (typeof window !== 'undefined') {
         (window as unknown as { __aiFighter?: AiFighter }).__aiFighter = this.aiFighter;
       }
+    }
+    this.kenValidator = opts.validateKen ? new KenMoveValidator() : null;
+    if (this.kenValidator) {
+      console.log('[sprixe-coach] Ken move validator ARMED — predicted vs live attackbox');
+    }
+    this.kenInspector = opts.inspectKen ? new KenAnimInspector() : null;
+    if (this.kenInspector) {
+      console.log('[sprixe-coach] Ken animPtr inspector ARMED — raw struct dump');
+    }
+    this.kenRecorder = opts.recordKen ? new KenTimelineRecorder() : null;
+    if (this.kenRecorder) {
+      console.log('[sprixe-coach] Ken timeline recorder ARMED — captures (animPtr, holdFrames)[]');
+    }
+    this.debugThreat = opts.debugThreat === true;
+    if (this.debugThreat) {
+      console.log('[sprixe-coach] threat detector dry-run ARMED — per-frame gap/height log');
+    }
+    // Feasibility probe — owns P2 channel, no AI fighter plumbing.
+    // Built only when a virtual P2 channel is available.
+    const vp2Test = opts.testCmkPunish ? host.getVirtualP2Channel?.() : undefined;
+    this.cmkPunishTest = vp2Test ? new CMKPunishTest(vp2Test) : null;
+    if (this.cmkPunishTest) {
+      console.log('[sprixe-coach] cMK punish feasibility test ARMED — AI fighter bypassed');
     }
   }
 
@@ -256,6 +312,10 @@ export class CoachController {
     this.host.setVblankCallback?.(null);
     this.detector.reset();
     this.aiFighter?.reset();
+    if (this.kenValidator) {
+      console.log(this.kenValidator.summary());
+      this.kenValidator.reset();
+    }
     if (this.keyListener && typeof window !== 'undefined') {
       window.removeEventListener('keydown', this.keyListener);
       this.keyListener = null;
@@ -333,6 +393,31 @@ export class CoachController {
 
   private markedAddr: number | null = null;
   private markedSnapshot: Uint8Array | null = null;
+
+  /**
+   * Emit one log line per transition when a P1 attackbox becomes active
+   * or its threat classification changes. Deduped against the previous
+   * frame so the console stays readable even at 60fps.
+   */
+  private logThreat(state: GameState): void {
+    const atk = state.p1.attackbox;
+    if (!atk) {
+      if (this.prevThreatKey !== '') {
+        this.prevThreatKey = '';
+      }
+      return;
+    }
+    const gap = minGapToHurtboxes(atk, state.p2);
+    const height = classifyAttackHeight(atk, state.p2);
+    const whiff = gap !== null && gap > 20 && state.p1.isRecovery;
+    const key = `${height}|${gap ?? '?'}|${whiff ? 'w' : '-'}`;
+    if (key === this.prevThreatKey) return;
+    this.prevThreatKey = key;
+    const gapStr = gap === null ? '?' : gap.toFixed(0);
+    console.log(
+      `[coach:threat] f=${state.frameIdx} gap=${gapStr}px height=${height} ${whiff ? 'WHIFF' : ''}`,
+    );
+  }
 
   /** Print the last N recorded events, most recent first. */
   eventsTail(n = 10): void {
@@ -424,9 +509,35 @@ export class CoachController {
     const ram = this.host.getWorkRam?.();
     if (!ram) return;
 
-    const state = this.extractor.extract(ram, this.now(), this.host.getProgramRom?.());
+    const rom = this.host.getProgramRom?.();
+    const state = this.extractor.extract(ram, this.now(), rom);
     this.history.push(state);
     this.latestState = state;
+
+    if (this.kenValidator && rom) {
+      this.kenValidator.onFrame(state, rom);
+    }
+    if (this.kenInspector && rom) {
+      this.kenInspector.onFrame(state, rom);
+    }
+    this.kenRecorder?.onFrame(state);
+
+    if (this.debugThreat) {
+      this.logThreat(state);
+    }
+
+    // Feasibility probe takes over P2 — bypass AI fighter entirely.
+    if (this.cmkPunishTest) {
+      const fightActive = state.roundPhase === 'fight'
+        && state.p1.hp > 0 && state.p2.hp > 0;
+      this.host.armVirtualP2?.(fightActive);
+      if (fightActive) {
+        this.cmkPunishTest.onVblank(state);
+      } else {
+        this.cmkPunishTest.reset();
+      }
+      return;
+    }
 
     // AI opponent plumbing. Auto-arm the virtual P2 channel only during
     // an active fight, so the keyboard/gamepad can still drive P2

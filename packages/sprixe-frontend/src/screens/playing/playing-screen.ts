@@ -124,6 +124,26 @@ export class PlayingScreen {
     // Used to isolate motion-library bugs.
     const debugParam = params.get("debug");
     const aiDebugLoopAction = debugParam && debugParam.length > 0 ? debugParam : undefined;
+    // ?calibrate-ken=1 — runs the Ken move-map calibration harness in
+    // place of the TAS pilot. Prints the animPtr table to the console
+    // once every move in CALIBRATION_MOVES has been observed.
+    const calibrateKen = params.get("calibrate-ken") === "1";
+    // ?validate-ken=1 — cross-checks predictKenAttackBox vs live attackbox
+    // every frame. Zero console noise on a clean round.
+    const validateKen = params.get("validate-ken") === "1";
+    // ?inspect-ken=1 — dumps raw Ken animPtr + 24-byte struct each
+    // vblank. Used to reverse-engineer SF2HF's frame-advance mechanism.
+    const inspectKen = params.get("inspect-ken") === "1";
+    // ?record-ken=1 — captures Ken move timelines (animPtr + hold
+    // frames) and prints TS snippets ready to paste into ken-move-timelines.ts.
+    const recordKen = params.get("record-ken") === "1";
+    // ?debug-threat=1 — logs P1 attackbox gap + height classification on
+    // every transition. Dry-run for the geometry-based threat detector.
+    const debugThreat = params.get("debug-threat") === "1";
+    // ?test-cmk-punish=1 — feasibility probe. On every Ryu sweep, Ken
+    // fires a sweep the SAME frame and logs press-to-hit latency. The
+    // normal AI policy is bypassed for the duration of the test.
+    const testCmkPunish = params.get("test-cmk-punish") === "1";
     // Note: the CoachController auto-arms the virtual P2 channel only
     // while a fight is active, so the keyboard still drives P2 during
     // menu navigation and character select.
@@ -131,10 +151,19 @@ export class PlayingScreen {
     this.coach = new CoachController(this.runner, {
       gameId: this.game.id,
       calibrateOnly,
-      enableAiOpponent,
+      // Force-enable the AI opponent under calibration / feasibility tests —
+      // those harnesses drive P2 via virtual inputs, so a spectator/manual
+      // P2 is useless.
+      enableAiOpponent: enableAiOpponent || calibrateKen || testCmkPunish,
       aiEngine,
       aiLevel,
       ...(aiDebugLoopAction ? { aiDebugLoopAction } : {}),
+      ...(calibrateKen ? { calibrateKen: true } : {}),
+      ...(validateKen ? { validateKen: true } : {}),
+      ...(inspectKen ? { inspectKen: true } : {}),
+      ...(recordKen ? { recordKen: true } : {}),
+      ...(debugThreat ? { debugThreat: true } : {}),
+      ...(testCmkPunish ? { testCmkPunish: true } : {}),
     });
     if (!this.coach.start()) {
       this.coach = null;
