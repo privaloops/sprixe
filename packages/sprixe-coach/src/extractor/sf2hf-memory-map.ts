@@ -52,6 +52,13 @@ export const SF2HF_MEMORY_MAP = {
   // Attacking flag (+0x18B). 0x01 while an attack is in progress.
   p1_attacking:   { offset: 0xFF8549, bytes: 1, confidence: 'validated', note: 'Attacking flag — 0x01 during an attack' } as MemoryAddress,
   p1_rounds_won:  { offset: 0xFF864E, bytes: 1, confidence: 'validated' } as MemoryAddress,
+  // Hitbox system (source: Jesuszilla mame-rr sf2-hitboxes.lua, FBNeo sf2hf.ini).
+  // pos_y is a SIGNED WORD at base+0x0A (distinct from the jump-height byte
+  // at base+0x0C which is p1_y in the legacy mapping above).
+  p1_pos_y:       { offset: 0xFF83C8, bytes: 2, confidence: 'validated', note: 'Signed word world Y (base+0x0A). Y grows down on screen.' } as MemoryAddress,
+  p1_flip_x:      { offset: 0xFF83D0, bytes: 1, confidence: 'validated', note: 'Facing byte (base+0x12): 1 = facing left → mirror box X' } as MemoryAddress,
+  // Per-character hitbox table directory pointer (base+0x34). 32-bit ROM addr.
+  p1_hitbox_ptr:  { offset: 0xFF83F2, bytes: 4, confidence: 'validated', note: 'Hitbox table base pointer (base+0x34) — ROM address, BE' } as MemoryAddress,
 
   // ── Player 2 (CPU-controlled in arcade 1P mode) ───────────────────────────
   p2_hp:          { offset: 0xFF86E8, bytes: 2, confidence: 'validated' } as MemoryAddress,
@@ -69,6 +76,13 @@ export const SF2HF_MEMORY_MAP = {
   p2_state:       { offset: 0xFF86C1, bytes: 1, confidence: 'validated' } as MemoryAddress,
   p2_attacking:   { offset: 0xFF8849, bytes: 1, confidence: 'validated' } as MemoryAddress,
   p2_rounds_won:  { offset: 0xFF894E, bytes: 1, confidence: 'validated' } as MemoryAddress,
+  // Hitbox system — P2 base = P1 base + 0x300. Same offsets.
+  p2_pos_y:       { offset: 0xFF86C8, bytes: 2, confidence: 'validated', note: 'Signed word world Y (p2 base+0x0A)' } as MemoryAddress,
+  p2_flip_x:      { offset: 0xFF86D0, bytes: 1, confidence: 'validated', note: 'Facing byte (p2 base+0x12)' } as MemoryAddress,
+  p2_hitbox_ptr:  { offset: 0xFF86F2, bytes: 4, confidence: 'validated', note: 'Hitbox table base pointer (p2 base+0x34)' } as MemoryAddress,
+
+  // ── Camera / screen ──────────────────────────────────────────────────────
+  camera_x:       { offset: 0xFF8BC4, bytes: 2, confidence: 'validated', note: 'Screen left X in world coords (signed word). Source: Jesuszilla mame-rr.' } as MemoryAddress,
 
   // ── CPU AI state (Bison-specific, to reverse) ─────────────────────────────
   // Placeholder offsets — REVERSE WITH MAME DEBUGGER before trusting these.

@@ -43,6 +43,13 @@ export interface EmulatorRunner {
    */
   getWorkRam?(): Uint8Array;
   /**
+   * Read-only view of the 68K program ROM. The coach dereferences
+   * animation pointers (stored in RAM at player+0x1A) into this ROM
+   * buffer to read per-frame metadata bytes (yoke, posture, block
+   * type) that drive the TAS oracle.
+   */
+  getProgramRom?(): Uint8Array;
+  /**
    * Read-only view of the mapped I/O port bytes (player inputs, active
    * LOW). Lets the coach calibration capture which arcade button was
    * pressed independently of the input source (keyboard, gamepad,

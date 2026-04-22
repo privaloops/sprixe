@@ -6,6 +6,7 @@ import { KEN_MOVESET, getMoveset } from './characters';
 import type { CharacterMoveset } from './characters/types';
 import type { CharacterId } from '../types';
 import type { VirtualInputChannel } from './input-sequencer';
+import { TasPilot } from './tas/pilot';
 
 export interface AiFighterOptions {
   /** Mode name to start the match in (legacy mode-based engine). */
@@ -34,15 +35,22 @@ export interface AiFighterOptions {
 export class AiFighter {
   private readonly modeManager: ModeManager | null;
   private readonly policyRunner: PolicyRunner | null;
+  private readonly tasPilot: TasPilot | null;
   private detectedCharId: CharacterId | null = null;
 
   constructor(channel: VirtualInputChannel, opts: AiFighterOptions = {}) {
-    if (opts.enginePolicy) {
+    const level = opts.level ?? 'tas';
+    // TAS level uses the new oracle-based pilot — deterministic single
+    // function state → action, no tier dice, no combo stitching.
+    // Wins over any engine flag: level=tas always routes here.
+    if (level === 'tas') {
       this.modeManager = null;
+      this.policyRunner = null;
+      this.tasPilot = new TasPilot(channel);
+    } else if (opts.enginePolicy) {
+      this.modeManager = null;
+      this.tasPilot = null;
       const moveset = opts.moveset ?? KEN_MOVESET;
-      // DEBUG default: 'tas' — unbeatable baseline while we tune the
-      // optimal tier. Downgrade to 'normal' once the ceiling is solid.
-      const level = opts.level ?? 'tas';
       this.policyRunner = new PolicyRunner(channel, DEFAULT_RYU_POLICY, moveset, level);
       if (opts.debugLoopAction) {
         this.policyRunner.setDebugLoopAction(opts.debugLoopAction);
@@ -53,6 +61,7 @@ export class AiFighter {
         : TurtleSpaceControl;
       this.modeManager = new ModeManager(channel, initial);
       this.policyRunner = null;
+      this.tasPilot = null;
     }
   }
 
@@ -65,6 +74,7 @@ export class AiFighter {
     }
     this.modeManager?.onVblank(state);
     this.policyRunner?.onVblank(state);
+    this.tasPilot?.onFrame(state);
   }
 
   /** Mode engine: switch active mode. */
@@ -96,5 +106,6 @@ export class AiFighter {
   reset(): void {
     this.modeManager?.reset();
     this.policyRunner?.reset();
+    this.tasPilot?.reset();
   }
 }

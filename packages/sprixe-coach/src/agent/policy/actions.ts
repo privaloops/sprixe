@@ -15,37 +15,35 @@ export type ActionResult =
   | { kind: 'held'; held: readonly VirtualButton[]; frames: number; label: string }
   | { kind: 'noop'; label: string };
 
-// ── Motion library (complete, P2-facing-left) ──
+// ── Motion library — MINIMUM FRAMES (SF2 input buffer ~8f).
+// Each direction held 1 frame = 1 game input poll = recognized.
 
 const hadouken = (btn: VirtualButton): InputFrame[] => [
-  { held: ['down'],         frames: 2 },
-  { held: ['down', 'left'], frames: 2 },
-  { held: ['left'],         frames: 1 },
-  { held: ['left', btn],    frames: 3 },
-  { held: [],               frames: 2 },
+  { held: ['down'],         frames: 1 },
+  { held: ['down', 'left'], frames: 1 },
+  { held: ['left', btn],    frames: 1 },
 ];
 
 const shoryu = (btn: VirtualButton): InputFrame[] => [
-  { held: ['left'],              frames: 2 },
-  { held: [],                    frames: 1 },
-  { held: ['down'],              frames: 2 },
-  { held: ['down', 'left'],      frames: 2 },
-  { held: ['down', 'left', btn], frames: 3 },
-  { held: [],                    frames: 2 },
+  { held: ['left'],              frames: 1 },
+  { held: ['down'],              frames: 1 },
+  { held: ['down', 'left', btn], frames: 1 },
 ];
 
 const tatsu = (btn: VirtualButton): InputFrame[] => [
-  { held: ['down'],           frames: 2 },
-  { held: ['down', 'right'],  frames: 2 },
-  { held: ['right'],           frames: 1 },
-  { held: ['right', btn],      frames: 3 },
-  { held: [],                  frames: 2 },
+  { held: ['down'],          frames: 1 },
+  { held: ['down', 'right'], frames: 1 },
+  { held: ['right', btn],    frames: 1 },
 ];
 
+// Jump arc is physics-driven (~28f). We press Up+dir once, hold dir
+// until descent, then add attack button. Trailing neutral covers
+// landing so the pilot doesn't re-decide mid-air.
 const jumpWithAttack = (dir: readonly VirtualButton[], btn: VirtualButton): InputFrame[] => [
-  { held: [...dir, 'up'],        frames: 3 },
-  { held: [...dir, 'up', btn],   frames: 10 },
-  { held: [],                    frames: 2 },
+  { held: [...dir, 'up'],  frames: 1 },
+  { held: [...dir],        frames: 10 },
+  { held: [...dir, btn],   frames: 3 },
+  { held: [],              frames: 14 },
 ];
 
 export function resolveMotion(id: ActionId): ActionResult {
@@ -96,76 +94,21 @@ export function resolveMotion(id: ActionId): ActionResult {
     // Standing normals as motions (press → release) so the arcade input
     // buffer reads a clean single press, not a long hold that the game
     // ignores after the first frame.
-    case 'standing_jab':
-      return { kind: 'motion', frames: [
-        { held: ['button1'], frames: 2 },
-        { held: [],          frames: 3 },
-      ], label: 's.LP' };
-    case 'standing_strong':
-      return { kind: 'motion', frames: [
-        { held: ['button2'], frames: 3 },
-        { held: [],          frames: 3 },
-      ], label: 's.MP' };
-    case 'standing_fierce':
-      return { kind: 'motion', frames: [
-        { held: ['button3'], frames: 4 },
-        { held: [],          frames: 3 },
-      ], label: 's.HP' };
-    case 'standing_short':
-      return { kind: 'motion', frames: [
-        { held: ['button4'], frames: 2 },
-        { held: [],          frames: 3 },
-      ], label: 's.LK' };
-    case 'standing_forward':
-      return { kind: 'motion', frames: [
-        { held: ['button5'], frames: 3 },
-        { held: [],          frames: 3 },
-      ], label: 's.MK' };
-    case 'standing_rh':
-      return { kind: 'motion', frames: [
-        { held: ['button6'], frames: 4 },
-        { held: [],          frames: 3 },
-      ], label: 's.HK' };
-    // Crouching normals written as short motions (press then release) so
-    // the arcade input buffer reads one clean press, not a hold that
-    // gets stuck on "charging".
-    case 'crouch_jab':
-      return { kind: 'motion', frames: [
-        { held: ['down'],              frames: 1 },
-        { held: ['down', 'button1'],   frames: 2 },
-        { held: ['down'],              frames: 1 },
-      ], label: 'c.LP' };
-    case 'crouch_short':
-      return { kind: 'motion', frames: [
-        { held: ['down'],              frames: 1 },
-        { held: ['down', 'button4'],   frames: 2 },
-        { held: ['down'],              frames: 1 },
-      ], label: 'c.LK' };
-    case 'crouch_strong':
-      return { kind: 'motion', frames: [
-        { held: ['down'],              frames: 1 },
-        { held: ['down', 'button2'],   frames: 3 },
-        { held: ['down'],              frames: 1 },
-      ], label: 'c.MP' };
-    case 'crouch_fierce':
-      return { kind: 'motion', frames: [
-        { held: ['down'],              frames: 1 },
-        { held: ['down', 'button3'],   frames: 4 },
-        { held: ['down'],              frames: 1 },
-      ], label: 'c.HP' };
-    case 'crouch_mk':
-      return { kind: 'motion', frames: [
-        { held: ['down'],              frames: 1 },
-        { held: ['down', 'button5'],   frames: 3 },
-        { held: ['down'],              frames: 1 },
-      ], label: 'c.MK' };
-    case 'sweep':
-      return { kind: 'motion', frames: [
-        { held: ['down'],              frames: 1 },
-        { held: ['down', 'button6'],   frames: 3 },
-        { held: ['down'],              frames: 2 },
-        { held: [],                    frames: 1 },
-      ], label: 'sweep' };
+    // Normals — 1 frame press, sequencer releases automatically on drain.
+    case 'standing_jab':     return { kind: 'motion', frames: [{ held: ['button1'], frames: 1 }], label: 's.LP' };
+    case 'standing_strong':  return { kind: 'motion', frames: [{ held: ['button2'], frames: 1 }], label: 's.MP' };
+    case 'standing_fierce':  return { kind: 'motion', frames: [{ held: ['button3'], frames: 1 }], label: 's.HP' };
+    case 'standing_short':   return { kind: 'motion', frames: [{ held: ['button4'], frames: 1 }], label: 's.LK' };
+    case 'standing_forward': return { kind: 'motion', frames: [{ held: ['button5'], frames: 1 }], label: 's.MK' };
+    case 'standing_rh':      return { kind: 'motion', frames: [{ held: ['button6'], frames: 1 }], label: 's.HK' };
+    // Crouch normals — D+button simultaneous. The game reads direction
+    // at the moment of button press, so 1 frame is enough.
+    case 'crouch_jab':    return { kind: 'motion', frames: [{ held: ['down', 'button1'], frames: 1 }], label: 'c.LP' };
+    case 'crouch_short':  return { kind: 'motion', frames: [{ held: ['down', 'button4'], frames: 1 }], label: 'c.LK' };
+    case 'crouch_strong': return { kind: 'motion', frames: [{ held: ['down', 'button2'], frames: 1 }], label: 'c.MP' };
+    case 'crouch_fierce': return { kind: 'motion', frames: [{ held: ['down', 'button3'], frames: 1 }], label: 'c.HP' };
+    case 'crouch_mk':     return { kind: 'motion', frames: [{ held: ['down', 'button5'], frames: 1 }], label: 'c.MK' };
+    case 'sweep':         return { kind: 'motion', frames: [{ held: ['down', 'button6'], frames: 1 }], label: 'sweep' };
 
     // ── Jumps — 6 forward + 6 neutral + 6 back variants + bare ──
     case 'jump_forward_lp': return { kind: 'motion', frames: jumpWithAttack(['left'], 'button1'),  label: 'j.LP fwd' };
@@ -198,13 +141,14 @@ export function resolveMotion(id: ActionId): ActionResult {
       return { kind: 'motion', frames: [{ held: ['up', 'left'], frames: 3 }, { held: [], frames: 1 }], label: 'empty jump' };
 
     // ── Movement ──
-    case 'walk_forward': return { kind: 'held', held: ['left'],  frames: 20, label: 'walk fwd' };
-    case 'walk_back':    return { kind: 'held', held: ['right'], frames: 20, label: 'walk back' };
-    case 'neutral':      return { kind: 'held', held: [],        frames: 10, label: 'neutral' };
+    case 'walk_forward': return { kind: 'held', held: ['left'],  frames: 6, label: 'walk fwd' };
+    case 'walk_back':    return { kind: 'held', held: ['right'], frames: 6, label: 'walk back' };
+    case 'neutral':      return { kind: 'held', held: [],        frames: 4, label: 'neutral' };
 
-    // ── Block ──
-    case 'block_crouch': return { kind: 'held', held: ['down', 'right'], frames: 30, label: 'block crouch' };
-    case 'block_stand':  return { kind: 'held', held: ['right'],         frames: 30, label: 'block stand' };
+    // ── Block — short window so the pilot re-evaluates quickly and
+    //           can swap low↔high block or counter-attack in gaps.
+    case 'block_crouch': return { kind: 'held', held: ['down', 'right'], frames: 8, label: 'block crouch' };
+    case 'block_stand':  return { kind: 'held', held: ['right'],         frames: 8, label: 'block stand' };
 
     // ── Throws (P2 facing left: forward=left, back=right) ──
     case 'throw_forward':

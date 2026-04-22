@@ -1,0 +1,188 @@
+{
+  "_doc": {
+    "evaluation": "Première règle dont TOUTES les conditions matchent gagne. Les règles défensives sont en haut.",
+    "p1_states": [
+      "stunned      = P1 dizzy (stunCounter > 32)",
+      "hurt         = P1 en hitstun (stateByte 0x0E, couvre aussi le knockdown au sol)",
+      "recovery     = P1 dans la recovery d'un move (yoke2 = 0x01) → fenêtre de punish garantie",
+      "airborne     = P1 en l'air (saut avec ou sans attaque)",
+      "special_startup = P1 lance un spécial (stateByte 0x0C: Hadouken, DP, Tatsu)",
+      "attacking    = P1 en plein coup normal sol (stateByte 0x0A + attacking)",
+      "walking      = P1 en marche (avant OU arrière — direction non distinguable)",
+      "crouching    = P1 accroupi",
+      "neutral      = P1 idle, aucun des ci-dessus",
+      "any          = match n'importe quel état"
+    ],
+    "frame_accurate_conditions": {
+      "p1_move":            "Match exact de l'ActionId courant de P1 (ex: 'hadouken_fierce'). Résolu via animPtr → frame-data.ts.",
+      "p1_recovery_left":   "Frames restantes avant que P1 puisse rebouger. Format dist: '>=10', '<5', '10-30'.",
+      "p1_startup_left":    "Frames avant que le move de P1 devienne actif. '>=8' = on peut DP avant que ça sorte."
+    },
+    "math_reference": {
+      "ken_chp_dp":        "cHP(1f motion) + cHP startup(5f) + cHP cancel into DP(3f motion) + DP startup(5f) = ~14f jusqu'au DP actif. Cancel window: cHP active 5-12 du move. Punish si p1_recovery_left >= 5.",
+      "ken_cmk_fb":        "cMK(1f motion) + cMK startup(7f) + cancel Hadouken(3f motion) + fireball startup(10f) = ~21f. Boule de feu lente. Punish stun ou recovery >= 15.",
+      "ken_shoryu_aa":     "DP(3f motion) + DP startup(5f) = 8f jusqu'à hitbox DP. Anti-air fiable si p1_startup_left >= 5 sur jumping fierce (startup 6).",
+      "ryu_hadouken_jab":  "startup 13, active 1, recovery 30 → total 44f. Recovery 30f = fenêtre énorme pour cHP DP.",
+      "ryu_hadouken_fierce": "startup 10, active 1, recovery 30 → total 41f.",
+      "ryu_shoryu_fierce": "startup 5, active 14, recovery 34 → total 53f. Punishable -18 si blocké.",
+      "ryu_sweep":         "startup 8, active 6, recovery 24 → total 38f. Knockdown on hit mais gros recovery."
+    },
+    "dist_format": "'<40' | '>200' | '<=100' | '>=60' | '40-120' (inclusif)",
+    "other_conditions": {
+      "wakeup": "true/false — fenêtre 20f après que Ken se relève",
+      "fireball": "true/false — fireball P1 en vol (35f après startup)",
+      "p1_cornered": "true/false",
+      "p2_cornered": "true/false",
+      "p2_hp": "<20 | 20-50 | >50 (pourcentage Ken)"
+    },
+    "glossaire_notation": {
+      "j":  "jump (saut)",
+      "c":  "crouch (accroupi)",
+      "s":  "stand (debout)",
+      "LP": "Light Punch / jab — poing faible (button1)",
+      "MP": "Medium Punch / strong — poing moyen (button2)",
+      "HP": "Heavy Punch / fierce — poing fort (button3)",
+      "LK": "Light Kick / short — pied faible (button4)",
+      "MK": "Medium Kick / forward — pied moyen (button5)",
+      "HK": "Heavy Kick / roundhouse — pied fort (button6)",
+      "DP": "Dragon Punch / Shoryuken — uppercut spécial",
+      "FB": "Fireball / Hadouken — boule de feu",
+      "xx": "cancel — annulation d'un coup normal vers un spécial",
+      "→":  "link ou enchaînement",
+      "BnB": "Bread and Butter — combo de base fiable"
+    },
+    "actions_dispo_fr": {
+      "hadouken_jab":      "Hadouken faible (boule de feu lente)",
+      "hadouken_strong":   "Hadouken moyen",
+      "hadouken_fierce":   "Hadouken fort (boule de feu rapide)",
+      "shoryu_jab":        "Shoryuken faible (uppercut 1 hit)",
+      "shoryu_strong":     "Shoryuken moyen",
+      "shoryu_fierce":     "Shoryuken fort (uppercut 2 hits, knockdown)",
+      "tatsu_lk":          "Tatsumaki faible (tornade basse)",
+      "tatsu_mk":          "Tatsumaki moyen",
+      "tatsu_hk":          "Tatsumaki fort (tornade longue, corner carry)",
+      "standing_jab":      "Poing faible debout",
+      "standing_strong":   "Poing moyen debout",
+      "standing_fierce":   "Poing fort debout (bon anti-air)",
+      "standing_short":    "Pied faible debout",
+      "standing_forward":  "Pied moyen debout (neck kick)",
+      "standing_rh":       "Pied fort debout",
+      "crouch_jab":        "Poing faible accroupi",
+      "crouch_strong":     "Poing moyen accroupi",
+      "crouch_fierce":     "Poing fort accroupi (cancellable)",
+      "crouch_short":      "Pied faible accroupi (cLK)",
+      "crouch_mk":         "Pied moyen accroupi (poke principal)",
+      "sweep":             "Balayette (pied fort accroupi, knockdown)",
+      "jump_forward_hp":   "Saut avant + poing fort (jHP)",
+      "jump_forward_hk":   "Saut avant + pied fort (jHK, meilleur jump-in)",
+      "jump_forward_mk":   "Saut avant + pied moyen (cross-up)",
+      "jump_back_hk":      "Saut arrière + pied fort",
+      "jump_neutral":      "Saut vertical sans attaque",
+      "walk_forward":      "Marche avant",
+      "walk_back":         "Marche arrière",
+      "block_crouch":      "Garde basse (bloque bas + mid)",
+      "block_stand":       "Garde haute (bloque aérien + mid)",
+      "throw_forward":     "Projection avant",
+      "throw_back":        "Projection arrière"
+    },
+    "combos_dispo_fr": {
+      "ground_chp_dp":       "Poing fort accroupi → Shoryu fort (cHP xx DP) — punish sol proche",
+      "ground_cmk_fb":       "Pied moyen accroupi → Hadouken fort (cMK xx FB) — punish sol mi-distance",
+      "ground_shp_dp":       "Poing fort debout → Shoryu fort (sHP xx DP) — variante proche",
+      "bnb_jhk_chp_dp":      "Pied sauté fort → Poing fort accroupi → Shoryu fort (jHK → cHP xx DP) — BnB tueur 3 hits",
+      "bnb_jhp_chp_dp":      "Poing sauté fort → Poing fort accroupi → Shoryu fort (jHP → cHP xx DP) — BnB poing 3 hits",
+      "bnb_jhk_shp_dp":      "Pied sauté fort → Poing fort debout → Shoryu fort (jHK → sHP xx DP)",
+      "bnb_jhk_cmk_fb":      "Pied sauté fort → Pied moyen accroupi → Hadouken (jHK → cMK xx FB) — sûr sur block",
+      "bnb_jhp_chp_fb":      "Poing sauté fort → Poing fort accroupi → Hadouken (jHP → cHP xx FB) — combo poing/poing/boule safe",
+      "corner_chp_tatsu":    "Poing fort accroupi → Tatsumaki fort (cHP xx Tatsu) — maintient P1 au coin",
+      "bnb_jhk_chp_tatsu":   "Pied sauté fort → Poing fort accroupi → Tatsumaki (jHK → cHP xx Tatsu) — version corner",
+      "tick_clk_clk_dp":     "Pied faible × 2 accroupi → Shoryu faible (cLK cLK xx jab DP) — hit-confirm safe",
+      "tick_clk_clk_throw":  "Pied faible × 2 accroupi → Projection (cLK cLK → throw) — mixup tick throw",
+      "stun_jhk_chp_dp":     "Identique à bnb_jhk_chp_dp — taggé pour les punish sur dizzy",
+      "aa_fierce_dp":        "Shoryu fort (anti-air 2 hits en proche)"
+    }
+  },
+
+  "rules": [
+    { "label": "wakeup_block",           "when": { "wakeup": true },                                      "do": "block_crouch" },
+
+    { "label": "stun_punish_chp_corner", "when": { "p1": "stunned", "dist": "<60", "p1_cornered": true }, "do": "corner_chp_tatsu" },
+    { "label": "stun_punish_chp",        "when": { "p1": "stunned", "dist": "<60" },                      "do": "ground_chp_dp" },
+    { "label": "stun_punish_cmk_dp",     "when": { "p1": "stunned", "dist": "60-110" },                   "do": "ground_cmk_dp" },
+    { "label": "stun_punish_bnb",        "when": { "p1": "stunned", "dist": "110-150" },                  "do": "bnb_jhp_chp_dp" },
+    { "label": "stun_punish_approach",   "when": { "p1": "stunned" },                                     "do": "walk_forward" },
+
+    { "label": "hurt_punish_corner",     "when": { "p1": "hurt", "dist": "<55", "p1_cornered": true },    "do": "corner_chp_tatsu" },
+    { "label": "hurt_punish_chp",        "when": { "p1": "hurt", "dist": "<55" },                         "do": "ground_chp_jab_dp" },
+    { "label": "hurt_punish_cmk_dp",     "when": { "p1": "hurt", "dist": "55-110" },                      "do": "ground_cmk_dp" },
+    { "label": "hurt_punish_approach",   "when": { "p1": "hurt", "dist": "110-200" },                     "do": "walk_forward" },
+    { "label": "hurt_okizeme_walk",      "when": { "p1": "hurt" },                                        "do": "walk_forward" },
+
+    { "label": "counter_fireball_dp",    "when": { "p1_move": "hadouken_fierce", "p1_startup_left": ">=8", "dist": "<90" },  "do": "shoryu_fierce" },
+    { "label": "counter_fireball_jab",   "when": { "p1_move": "hadouken_jab",    "p1_startup_left": ">=8", "dist": "<90" },  "do": "shoryu_fierce" },
+    { "label": "counter_fireball_strong","when": { "p1_move": "hadouken_strong", "p1_startup_left": ">=8", "dist": "<90" },  "do": "shoryu_fierce" },
+
+    { "label": "fireball_jumpover_fierce", "when": { "p1_move": "hadouken_fierce",  "p1_startup_left": ">=3", "dist": "150-250" }, "do": "bnb_jhp_chp_fb" },
+    { "label": "fireball_jumpover_jab",    "when": { "p1_move": "hadouken_jab",     "p1_startup_left": ">=3", "dist": "150-250" }, "do": "bnb_jhp_chp_fb" },
+    { "label": "fireball_jumpover_strong", "when": { "p1_move": "hadouken_strong",  "p1_startup_left": ">=3", "dist": "150-250" }, "do": "bnb_jhp_chp_fb" },
+
+    { "label": "aa_jhp_guaranteed",      "when": { "p1_move": "jump_forward_hp", "p1_startup_left": ">=3", "dist": "<100" },  "do": "shoryu_fierce" },
+    { "label": "aa_jhk_guaranteed",      "when": { "p1_move": "jump_forward_hp", "p1_startup_left": ">=3", "dist": "<100" },  "do": "shoryu_fierce" },
+    { "label": "aa_jmp_guaranteed",      "when": { "p1_move": "jump_forward_mp", "p1_startup_left": ">=3", "dist": "<100" },  "do": "shoryu_fierce" },
+
+    { "label": "anti_air_close_dp",      "when": { "p1": "airborne", "dist": "<70" },                     "do": "shoryu_fierce" },
+    { "label": "anti_air_mid_jab_dp",    "when": { "p1": "airborne", "dist": "70-110" },                  "do": "shoryu_jab" },
+    { "label": "anti_air_far_block",     "when": { "p1": "airborne" },                                    "do": "block_stand" },
+
+    { "label": "post_landing_block",     "when": { "p1_just_landed": true },                              "do": "block_stand" },
+
+    { "label": "fireball_flying_dp",     "when": { "fireball": true, "dist": "<60" },                     "do": "shoryu_fierce" },
+    { "label": "fireball_war_far",       "when": { "fireball": true, "dist": ">=200" },                   "do": "hadouken_fierce" },
+    { "label": "fireball_flying_block",  "when": { "fireball": true },                                    "do": "block_crouch" },
+
+    { "label": "punish_hadouken_chp_corner", "when": { "p1_move": "hadouken_fierce", "p1_recovery_left": ">=20", "dist": "<50", "p1_cornered": true }, "do": "corner_chp_tatsu" },
+    { "label": "punish_hadouken_chp",        "when": { "p1_move": "hadouken_fierce", "p1_recovery_left": ">=20", "dist": "<50" },                      "do": "ground_chp_dp" },
+    { "label": "punish_hadouken_cmk",        "when": { "p1_move": "hadouken_fierce", "p1_recovery_left": ">=18", "dist": "50-110" },                   "do": "ground_cmk_fb" },
+
+    { "label": "punish_shoryu_whiff",        "when": { "p1_move": "shoryu_fierce",   "p1_recovery_left": ">=25", "dist": "<50" },                      "do": "ground_chp_dp" },
+    { "label": "punish_shoryu_bnb",          "when": { "p1_move": "shoryu_fierce",   "p1_recovery_left": ">=34", "dist": "50-150" },                   "do": "bnb_jhp_chp_dp" },
+
+    { "label": "punish_sweep_whiff",         "when": { "p1_move": "sweep",           "p1_recovery_left": ">=20", "dist": "<50" },                      "do": "ground_chp_dp" },
+
+    { "label": "punish_recov_generic_chp",   "when": { "p1": "recovery", "p1_recovery_left": ">=15", "dist": "<50", "p1_cornered": true }, "do": "corner_chp_tatsu" },
+    { "label": "punish_recov_generic_chp2",  "when": { "p1": "recovery", "p1_recovery_left": ">=15", "dist": "<50" },                      "do": "ground_chp_jab_dp" },
+    { "label": "punish_recov_generic_cmk",   "when": { "p1": "recovery", "p1_recovery_left": ">=15", "dist": "50-110" },                   "do": "ground_cmk_fb" },
+
+    { "label": "throw_tech_touch",       "when": { "p1": "attacking", "dist": "<28" },                    "do": "throw_forward" },
+    { "label": "block_active_normal",    "when": { "p1": "attacking" },                                   "do": "block_crouch" },
+    { "label": "block_special_startup",  "when": { "p1": "special_startup" },                             "do": "block_crouch" },
+
+    { "label": "p2corner_reversal_air",  "when": { "p2_cornered": true, "p1": "airborne", "dist": "<70" },  "do": "shoryu_fierce" },
+    { "label": "p2corner_escape_walk",   "when": { "p2_cornered": true, "p1": "neutral", "dist": ">=60" },  "do": "walk_forward" },
+    { "label": "p2corner_block_crouch",  "when": { "p2_cornered": true },                                   "do": "block_crouch" },
+
+    { "label": "corner_tick_dp",         "when": { "p1_cornered": true, "p1": "neutral", "dist": "<40" }, "do": "tick_clk_clk_dp" },
+    { "label": "corner_chp_tatsu_close", "when": { "p1_cornered": true, "p1": "neutral", "dist": "40-70" }, "do": "corner_chp_tatsu" },
+    { "label": "corner_poke_cmk",        "when": { "p1_cornered": true, "p1": "neutral", "dist": "70-110" }, "do": "crouch_mk" },
+    { "label": "corner_approach_walk",   "when": { "p1_cornered": true },                                 "do": "walk_forward" },
+
+    { "label": "neutral_touch_tick_dp",  "when": { "p1": "neutral", "dist": "<40" },                      "do": "tick_clk_clk_dp" },
+    { "label": "neutral_close_cmk",      "when": { "p1": "neutral", "dist": "40-70" },                    "do": "crouch_mk" },
+    { "label": "neutral_mid_walk",       "when": { "p1": "neutral", "dist": "70-250" },                   "do": "walk_forward" },
+    { "label": "neutral_fullscreen_fb",  "when": { "p1": "neutral", "dist": ">=250" },                    "do": "hadouken_fierce" },
+
+    { "label": "walking_touch_tick_dp",  "when": { "p1": "walking", "dist": "<40" },                      "do": "tick_clk_clk_dp" },
+    { "label": "walking_close_cmk",      "when": { "p1": "walking", "dist": "40-70" },                    "do": "crouch_mk" },
+    { "label": "walking_mid_walk",       "when": { "p1": "walking", "dist": "70-250" },                   "do": "walk_forward" },
+
+    { "label": "crouching_close_cmk",    "when": { "p1": "crouching", "dist": "<70" },                    "do": "crouch_mk" },
+    { "label": "crouching_mid_walk",     "when": { "p1": "crouching", "dist": "70-250" },                 "do": "walk_forward" },
+
+    { "label": "dist_fallback_touch",    "when": { "dist": "<40" },                                       "do": "tick_clk_clk_dp" },
+    { "label": "dist_fallback_close",    "when": { "dist": "40-70" },                                     "do": "crouch_mk" },
+    { "label": "dist_fallback_mid",      "when": { "dist": "70-250" },                                    "do": "walk_forward" }
+  ],
+
+  "_fallback_doc": "Principe Ken TAS: agressif mais non-prévisible. Le fallback final = walk_forward (safe, 6f commit, ré-évalue la frame suivante). Les dist_fallback_* couvrent les cas où aucune règle state-specific ne match. Pas de hadouken par défaut (prévisible, punissable).",
+  "fallback": "walk_forward"
+}

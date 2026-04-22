@@ -13,6 +13,7 @@
 import { CoachController } from "@sprixe/coach/coach-controller";
 import type { GameEntry } from "../../data/games";
 import type { EmulatorRunner } from "../../engine-bridge/emulator-runner";
+import { HitboxOverlay } from "../../engine-bridge/hitbox-overlay";
 import { identifyRom } from "../../engine-bridge/identify";
 import { createRunner } from "../../engine-bridge/systems";
 import { loadMapping } from "../../input/mapping-store";
@@ -32,6 +33,7 @@ export class PlayingScreen {
   private readonly fpsEl: HTMLDivElement;
   private readonly runner: EmulatorRunner;
   private coach: CoachController | null = null;
+  private hitboxOverlay: HitboxOverlay | null = null;
   private rafId: number | null = null;
   private lastFpsUpdate = performance.now();
   private lastFpsFrames = 0;
@@ -138,6 +140,11 @@ export class PlayingScreen {
       this.coach = null;
     } else if (typeof window !== "undefined") {
       (window as unknown as { __coach?: CoachController }).__coach = this.coach;
+      // Hitbox debug overlay — F7 to toggle. Uses live RAM hitboxes from
+      // the state extractor (attackbox/hurtboxes/pushbox). Needs the game
+      // canvas as parent for positioning.
+      this.hitboxOverlay = new HitboxOverlay(this.canvas, this.coach);
+      (window as unknown as { __hitboxOverlay?: HitboxOverlay }).__hitboxOverlay = this.hitboxOverlay;
     }
 
     // Expose the virtual P2 input channel on window so the AI opponent
@@ -151,6 +158,8 @@ export class PlayingScreen {
   }
 
   stop(): void {
+    this.hitboxOverlay?.destroy();
+    this.hitboxOverlay = null;
     this.coach?.stop();
     this.coach = null;
     this.stopFpsLoop();

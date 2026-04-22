@@ -17,6 +17,9 @@ const WORK_RAM_BASE = 0xFF0000;
  */
 export interface CoachHost {
   getWorkRam?(): Uint8Array;
+  /** 68K program ROM. The extractor reads animation metadata (yoke,
+   *  posture, etc.) by dereferencing animPtr into this buffer. */
+  getProgramRom?(): Uint8Array;
   getIoPorts?(): Uint8Array;
   /** CPS-B registers — CPS-1 routes kick buttons here (cpsbRegs[0x37]
    *  for P1 LK/MK/HK), not the main IO port buffer. */
@@ -184,6 +187,13 @@ export class CoachController {
   private keyListener: ((e: KeyboardEvent) => void) | null = null;
   private recentEvents: CoachEvent[] = [];
   private readonly RECENT_EVENT_CAP = 32;
+  private latestState: GameState | null = null;
+
+  /** Last extracted GameState (updated each vblank). Useful for overlays
+   *  and debug tools. Returns null before the first vblank or after stop(). */
+  getLatestState(): GameState | null {
+    return this.latestState;
+  }
 
   constructor(host: CoachHost, opts: CoachOptions) {
     this.host = host;
@@ -414,16 +424,16 @@ export class CoachController {
     const ram = this.host.getWorkRam?.();
     if (!ram) return;
 
-    const state = this.extractor.extract(ram, this.now());
+    const state = this.extractor.extract(ram, this.now(), this.host.getProgramRom?.());
     this.history.push(state);
+    this.latestState = state;
 
     // AI opponent plumbing. Auto-arm the virtual P2 channel only during
     // an active fight, so the keyboard/gamepad can still drive P2
     // through the menu and character select.
     if (this.aiFighter) {
-      const fightActive = state.p1.hp > 0 && state.p2.hp > 0
-        && state.p1.charId !== state.p2.charId
-        && state.p1.charId !== 'unknown' && state.p2.charId !== 'unknown';
+      const fightActive = state.roundPhase === 'fight'
+        && state.p1.hp > 0 && state.p2.hp > 0;
       this.host.armVirtualP2?.(fightActive);
       if (fightActive) {
         this.aiFighter.onVblank(state);

@@ -48,6 +48,7 @@ export async function createCps1Runner(opts: Cps1RunnerOptions): Promise<Emulato
     saveState: () => emu.exportStateAsBuffer(),
     loadState: (buf: ArrayBuffer) => emu.importStateFromBuffer(buf),
     getWorkRam: () => emu.getWorkRam(),
+    getProgramRom: () => emu.getProgramRom(),
     getIoPorts: () => emu.getIoPorts(),
     getCpsbRegisters: () => emu.getCpsbRegisters(),
     getVirtualP2Channel: () => virtualP2,

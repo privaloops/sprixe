@@ -22,6 +22,9 @@ export interface ConditionContext {
   p1Dx: number;
   /** Smoothed horizontal drift while P1 is airborne. */
   p1JumpDrift: number;
+  /** True while P1 is airborne (jump 0x04 OR jumping normal 0x0A started mid-air).
+   *  Cleared when P1 returns to a grounded state. */
+  p1InAir: boolean;
   frameIdx: number;
 }
 
@@ -51,12 +54,17 @@ export function evaluateCondition(
       return state.p1.stateByte === 0x02 && ctx.p1Dx < -0.3;
     case 'p1_crouching':
       return state.p1.stateByte === 0x06;
-    case 'p1_jump_forward':
-      return state.p1.stateByte === 0x04 && ctx.p1JumpDrift > 0.5;
-    case 'p1_jump_back':
-      return state.p1.stateByte === 0x04 && ctx.p1JumpDrift < -0.5;
+    case 'p1_jump_forward': {
+      // "Forward" = toward P2. Sign flips based on relative position.
+      const towardP2 = state.p2.x < state.p1.x ? -1 : 1;
+      return ctx.p1InAir && ctx.p1JumpDrift * towardP2 > 0.3;
+    }
+    case 'p1_jump_back': {
+      const towardP2 = state.p2.x < state.p1.x ? -1 : 1;
+      return ctx.p1InAir && ctx.p1JumpDrift * towardP2 < -0.3;
+    }
     case 'p1_jump_neutral':
-      return state.p1.stateByte === 0x04 && Math.abs(ctx.p1JumpDrift) <= 0.5;
+      return ctx.p1InAir && Math.abs(ctx.p1JumpDrift) <= 0.3;
 
     // ── P1 attacks ──
     case 'p1_attacking_normal':
@@ -125,13 +133,21 @@ export function updateConditionContext(
   if (ctx.prevState) {
     const rawDx = state.p1.x - ctx.prevState.p1.x;
     ctx.p1Dx = rawDx;
-    if (state.p1.stateByte === 0x04) {
+    // Track airborne state: set on jump 0x04, stay true through jumping
+    // normals (0x0A while already in air), clear on ground state return.
+    const sb = state.p1.stateByte;
+    if (sb === 0x04) {
+      ctx.p1InAir = true;
+    } else if (sb === 0x00 || sb === 0x02 || sb === 0x06 || sb === 0x0E) {
+      ctx.p1InAir = false;
+    }
+    if (ctx.p1InAir) {
       // Smooth the air drift — jumps often warp x on the first frame.
       ctx.p1JumpDrift = ctx.p1JumpDrift * 0.7 + rawDx * 0.3;
     } else {
       ctx.p1JumpDrift = 0;
     }
-    if (state.p1.stateByte === 0x04 && ctx.prevState.p1.stateByte !== 0x04) {
+    if (sb === 0x04 && ctx.prevState.p1.stateByte !== 0x04) {
       ctx.p1LastJumpFrame = frameIdx;
       ctx.p1JumpDrift = 0;
     }
@@ -157,6 +173,7 @@ export function createConditionContext(): ConditionContext {
     p1LastNormalEndFrame: null,
     p1Dx: 0,
     p1JumpDrift: 0,
+    p1InAir: false,
     frameIdx: 0,
   };
 }

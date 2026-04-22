@@ -121,6 +121,13 @@ export class Bus implements BusInterface {
     return this.workRam;
   }
 
+  /** Expose the program ROM for read-only consumers (coach / analyzers).
+   *  ROM animations store per-frame metadata (yoke, posture, block type)
+   *  that callers dereference via the 68k-address anim pointer. */
+  getProgramRom(): Uint8Array {
+    return this.programRom;
+  }
+
   /** Set M68K A0 getter for palette ROM source tracing */
   setM68kA0Getter(getter: () => number): void {
     this._m68kGetA0 = getter;

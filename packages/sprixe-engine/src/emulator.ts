@@ -416,6 +416,7 @@ export class Emulator {
   getVram(): Uint8Array { return this.bus.getVram(); }
   getPaletteBase(): number { return this.video?.getPaletteBase() ?? 0x8000; }
   getWorkRam(): Uint8Array { return this.bus.getWorkRam(); }
+  getProgramRom(): Uint8Array { return this.bus.getProgramRom(); }
   getPaletteRomSource(): Map<number, number> { return this.bus.getPaletteRomSource(); }
 
   /** Expose I/O ports for DIP switch configuration. */

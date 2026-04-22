@@ -28,6 +28,14 @@ export function classifyCpuMacroState(
   const dist = Math.abs(current.p1.x - current.p2.x);
   const triggers: string[] = [];
 
+  // Corner pressure wins over every other classifier — P1 cornered is
+  // an opportunity we never abandon, even when pushback briefly inflates
+  // dist or the retreat count spikes from post-hit drift.
+  if (isCornerPressure(current)) {
+    triggers.push('p1_cornered', `dist=${Math.round(dist)}`);
+    return { state: 'corner_pressure', triggers };
+  }
+
   if (hpPct < HP_DESPERATION) {
     triggers.push(`hp=${Math.round(hpPct * 100)}%`);
     return { state: 'desperation', triggers };
@@ -36,11 +44,6 @@ export function classifyCpuMacroState(
   if (derived.p2RetreatCount >= RETREAT_TELEPORT && derived.windowMs < 2500) {
     triggers.push(`retreat_x${derived.p2RetreatCount}_in_${Math.round(derived.windowMs)}ms`);
     return { state: 'teleport_setup', triggers };
-  }
-
-  if (isCornerPressure(current)) {
-    triggers.push('p1_cornered', `dist=${Math.round(dist)}`);
-    return { state: 'corner_pressure', triggers };
   }
 
   if (hpPct < HP_DEFENSIVE && derived.p2SpecialCount === 0) {
@@ -69,10 +72,12 @@ export function classifyCpuMacroState(
 function isCornerPressure(state: GameState): boolean {
   const { p1, p2 } = state;
   const dist = Math.abs(p1.x - p2.x);
-  if (dist > 160) return false;
+  if (dist > 220) return false;
   // "Corner" in the SF2 world space: P1 X close to a hard bound.
-  // With our empirical bounds (80..900), within 80px of either edge.
-  const near = p1.x < 180 || p1.x > 800;
+  // Widened to 260/720 (was 180/800) so corner_pressure survives the
+  // pushback from a landed Hadouken (~40-80px) without flip-flopping
+  // back to charge_building between every exchange.
+  const near = p1.x < 260 || p1.x > 720;
   return near;
 }
 

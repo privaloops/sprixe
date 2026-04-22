@@ -50,6 +50,14 @@ const RYU_MOVES: Record<number, string> = {
   0x00060FFE: 'Tatsumaki',
 };
 
+const KEN_MOVES: Record<number, string> = {
+  // A-quick seed — force (jab/strong/fierce) pending full calibration.
+  0x0009032A: 'Hadouken',
+  0x00090456: 'Tatsumaki',
+  0x0009046E: 'Tatsumaki',
+  0x0009065A: 'Shoryuken',
+};
+
 const HONDA_MOVES: Record<number, string> = {
   // Calibration pending — run the demo in 2P vs Honda and log P2 anim_ptr.
 };
@@ -60,6 +68,7 @@ const BISON_MOVES: Record<number, string> = {
 
 const CHARACTER_MOVE_TABLES: Partial<Record<CharacterId, Record<number, string>>> = {
   ryu: RYU_MOVES,
+  ken: KEN_MOVES,
   'e-honda': HONDA_MOVES,
   bison: BISON_MOVES,
 };

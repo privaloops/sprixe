@@ -310,13 +310,15 @@ export class InputManager {
     ioPorts[8] = this.readPort(4);  // coins, starts, service (high byte)
     ioPorts[9] = 0xFF;              // low byte = 0xFF
 
-    // Extra buttons (4-6 / kicks) → CPS-B register at offset 0x36 (addr 0x800176)
-    // MAME: cps1_in2_r / cps_b_r reads this as 16-bit: P2 high | P1 low
+    // Extra buttons (4-6 / kicks) → CPS-B IN2 at offset 0x36 (addr 0x800176)
+    // MAME cps1_cps_b_r returns input_port_read("IN2") = 0xFF00 | in2_byte
     if (cpsbRegs) {
-      const p1Hi = this.readPort(1); // P1 buttons 4-6
-      const p2Hi = this.readPort(3); // P2 buttons 4-6
-      cpsbRegs[0x36] = p2Hi;  // high byte = P2 kicks
-      cpsbRegs[0x37] = p1Hi;  // low byte = P1 kicks
+      const p1Kicks = this.readPort(1); // 0xFF with bits 0-2 cleared on P1 kick
+      const p2Kicks = this.readPort(3); // 0xFF with bits 0-2 cleared on P2 kick
+      // IN2 is a single 8-bit port: P1 kicks bits 0-2, P2 kicks bits 4-6, bits 3/7 = 1
+      const in2 = (p1Kicks & 0x07) | ((p2Kicks & 0x07) << 4) | 0x88;
+      cpsbRegs[0x36] = 0xFF; // high byte padding (game only reads 0x800177)
+      cpsbRegs[0x37] = in2;  // low byte = combined IN2
     }
   }
 

@@ -29,6 +29,9 @@ export interface FrameData {
   cancellableUntil?: number;
   /** Does this move knockdown the target? */
   knockdown?: boolean;
+  /** Deprecated: use live RAM hitboxes (p1.attackbox) instead.
+   *  Reach is now derived from actual game data per frame. */
+  reach?: number;
 }
 
 /** Frame data for Ryu. Ken mirrors these values in HF. */

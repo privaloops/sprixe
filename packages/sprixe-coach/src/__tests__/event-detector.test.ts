@@ -20,6 +20,9 @@ function char(o: Partial<CharacterState> = {}): CharacterState {
     animPtr: 0,
     stateByte: 0,
     attacking: false,
+    yoke: 0xFF,
+    yoke2: 0,
+    isRecovery: false,
     ...o,
   };
 }
