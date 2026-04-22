@@ -1,5 +1,11 @@
 import type { GameState } from '../../types';
 import type { ConditionId } from './types';
+import {
+  classifyAttackHeight,
+  minGapToHurtboxes,
+  pushboxHorizontalGap,
+  type AttackHeight,
+} from './threat-geometry';
 
 /**
  * Per-frame derived state maintained by the PolicyRunner. Primitives
@@ -26,6 +32,17 @@ export interface ConditionContext {
    *  Cleared when P1 returns to a grounded state. */
   p1InAir: boolean;
   frameIdx: number;
+  // ── Threat geometry (derived from p1.attackbox vs p2.hurtboxes) ──
+  /** Minimum pixel gap from P1's active attackbox to any P2 hurtbox.
+   *  Negative = already overlapping. null when P1 has no active attack. */
+  p1AttackGap: number | null;
+  /** Height classification of P1's active attack vs P2's hurtbox column. */
+  p1AttackHeight: AttackHeight | null;
+  /** True when P1 has an active attackbox but it won't connect (gap large
+   *  AND P1 already in recovery) — clean punish window. */
+  p1WhiffingActive: boolean;
+  /** Horizontal pushbox gap (P1 vs P2). null when either pushbox missing. */
+  pushboxGap: number | null;
 }
 
 const MAX_HP = 144;
@@ -118,6 +135,20 @@ export function evaluateCondition(
     // ── Timer ──
     case 'round_start': return state.timer > 95;
     case 'timer_low':   return state.timer > 0 && state.timer < 20;
+
+    // ── Threat geometry ──
+    case 'threat_imminent':
+      return ctx.p1AttackGap !== null && ctx.p1AttackGap <= 8;
+    case 'threat_overhead':
+      return ctx.p1AttackHeight === 'overhead';
+    case 'threat_low':
+      return ctx.p1AttackHeight === 'low';
+    case 'threat_mid':
+      return ctx.p1AttackHeight === 'mid';
+    case 'p1_whiffing_punishable':
+      return ctx.p1WhiffingActive;
+    case 'p1_grab_range':
+      return ctx.pushboxGap !== null && ctx.pushboxGap < 6 && !state.p1.attacking;
   }
 }
 
@@ -161,6 +192,24 @@ export function updateConditionContext(
       ctx.p1LastNormalEndFrame = frameIdx;
     }
   }
+
+  // Threat geometry — recomputed each frame from box state already on
+  // state.p1 / state.p2. Cheap: just AABB math on up to 4 rects.
+  const atk = state.p1.attackbox;
+  if (atk) {
+    const gap = minGapToHurtboxes(atk, state.p2);
+    ctx.p1AttackGap = gap;
+    ctx.p1AttackHeight = classifyAttackHeight(atk, state.p2);
+    // "Whiffing" = attack exists but clearly can't reach, AND P1 is in
+    // recovery (can't restart / cancel) → safe punish window.
+    ctx.p1WhiffingActive = gap !== null && gap > 20 && state.p1.isRecovery;
+  } else {
+    ctx.p1AttackGap = null;
+    ctx.p1AttackHeight = null;
+    ctx.p1WhiffingActive = false;
+  }
+  ctx.pushboxGap = pushboxHorizontalGap(state.p1, state.p2);
+
   ctx.prevState = state;
   ctx.frameIdx = frameIdx;
 }
@@ -175,5 +224,9 @@ export function createConditionContext(): ConditionContext {
     p1JumpDrift: 0,
     p1InAir: false,
     frameIdx: 0,
+    p1AttackGap: null,
+    p1AttackHeight: null,
+    p1WhiffingActive: false,
+    pushboxGap: null,
   };
 }

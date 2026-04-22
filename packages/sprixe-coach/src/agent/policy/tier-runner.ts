@@ -155,6 +155,14 @@ function weightedPickCombo(
 }
 
 function rulePriority(conds: readonly string[]): number {
+  // Threat geometry outranks every abstract condition — when an
+  // attackbox is physically about to hit P2, geometry is the only
+  // thing that matters.
+  if (conds.includes('threat_imminent') && conds.includes('threat_low'))      return 120;
+  if (conds.includes('threat_imminent') && conds.includes('threat_overhead')) return 115;
+  if (conds.includes('threat_imminent')) return 110;
+  if (conds.includes('p1_whiffing_punishable')) return 95;
+  if (conds.includes('p1_grab_range')) return 92;
   if (conds.includes('p1_jump_forward') && (conds.includes('dist_close') || conds.includes('dist_mid'))) return 100;
   if (conds.includes('me_stunned')) return 90;
   if (conds.includes('p1_stunned')) return 85;

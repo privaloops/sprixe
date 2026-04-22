@@ -12,6 +12,9 @@ export type ConditionId =
   // P1 attacks
   | 'p1_attacking_normal' | 'p1_attacking_special'
   | 'fireball_flying' | 'p1_whiffed_special' | 'p1_recovery_normal'
+  // Threat geometry (box-driven, not state-byte-driven)
+  | 'threat_imminent' | 'threat_overhead' | 'threat_low' | 'threat_mid'
+  | 'p1_whiffing_punishable' | 'p1_grab_range'
   // Status
   | 'p1_stunned' | 'me_stunned'
   // Position

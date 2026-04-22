@@ -17,6 +17,34 @@ import { role } from '../resolvers';
  *   - Cornered me → DP reversal first, throw tech second
  */
 export const OPTIMAL_RULES: readonly Rule[] = [
+  // ══ THREAT (geometry-driven) — highest priority ═════════════════════
+  // Attackbox is physically about to hit us. React NOW. Block is the
+  // baseline; low-risk punish options (sweep, long_poke) trade or win
+  // when we out-prioritize P1's move.
+  { tier: 'optimal', if: ['threat_imminent', 'threat_low'],      do: role('block'),          weight: 0.55, outcome: 'neutral' },
+  { tier: 'optimal', if: ['threat_imminent', 'threat_low'],      do: role('sweep'),          weight: 0.25, outcome: 'trade' },
+  { tier: 'optimal', if: ['threat_imminent', 'threat_low'],      do: role('anti_air'),       weight: 0.20, outcome: 'trade' },
+
+  { tier: 'optimal', if: ['threat_imminent', 'threat_overhead'], do: role('block_high'),     weight: 0.60, outcome: 'neutral' },
+  { tier: 'optimal', if: ['threat_imminent', 'threat_overhead'], do: role('anti_air'),       weight: 0.30, outcome: 'win' },
+  { tier: 'optimal', if: ['threat_imminent', 'threat_overhead'], do: role('throw_tech'),     weight: 0.10, outcome: 'trade' },
+
+  { tier: 'optimal', if: ['threat_imminent', 'threat_mid'],      do: role('block'),          weight: 0.40, outcome: 'neutral' },
+  { tier: 'optimal', if: ['threat_imminent', 'threat_mid'],      do: role('block_high'),     weight: 0.20, outcome: 'neutral' },
+  { tier: 'optimal', if: ['threat_imminent', 'threat_mid'],      do: role('throw_tech'),     weight: 0.25, outcome: 'win' },
+  { tier: 'optimal', if: ['threat_imminent', 'threat_mid'],      do: role('sweep'),          weight: 0.15, outcome: 'trade' },
+
+  // ══ WHIFF PUNISH (geometry-driven) — active attack visibly missing ══
+  { tier: 'optimal', if: ['p1_whiffing_punishable'],             do: role('big_punish'),     weight: 0.50, outcome: 'win' },
+  { tier: 'optimal', if: ['p1_whiffing_punishable'],             do: role('sweep'),          weight: 0.25, outcome: 'win' },
+  { tier: 'optimal', if: ['p1_whiffing_punishable'],             do: role('long_poke'),      weight: 0.15, outcome: 'win' },
+  { tier: 'optimal', if: ['p1_whiffing_punishable'],             do: role('approach'),       weight: 0.10, outcome: 'win' },
+
+  // ══ GRAB RANGE (pushboxes touching, no attack) ══════════════════════
+  { tier: 'optimal', if: ['p1_grab_range'],                      do: role('throw_tech'),     weight: 0.55, outcome: 'win' },
+  { tier: 'optimal', if: ['p1_grab_range'],                      do: role('throw_back'),     weight: 0.25, outcome: 'win' },
+  { tier: 'optimal', if: ['p1_grab_range'],                      do: role('big_punish'),     weight: 0.20, outcome: 'win' },
+
   // ══ ANTI-AIR — mandatory, always fierce ══════════════════════════════
   { tier: 'optimal', if: ['p1_jump_forward', 'dist_close'], do: role('anti_air'),        weight: 0.85, outcome: 'win' },
   { tier: 'optimal', if: ['p1_jump_forward', 'dist_close'], do: role('anti_air_safe'),   weight: 0.15, outcome: 'win' },
