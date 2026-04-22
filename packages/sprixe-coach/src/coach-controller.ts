@@ -11,6 +11,11 @@ import { KenAnimInspector } from './agent/tas/ken-anim-inspector';
 import { KenTimelineRecorder } from './agent/tas/ken-timeline-recorder';
 import { CMKPunishTest } from './agent/tas/cmk-punish-test';
 import {
+  computeKenVsRyuMatrix,
+  dumpMatrix,
+  dumpPairDetail,
+} from './agent/tas/move-range-matrix';
+import {
   classifyAttackHeight,
   minGapToHurtboxes,
 } from './agent/policy/threat-geometry';
@@ -82,6 +87,9 @@ export interface CoachOptions {
   /** Feasibility probe: on every Ryu sweep, fire a Ken sweep the same
    *  frame and log press-to-hit latency. Bypasses the AI fighter. */
   testCmkPunish?: boolean;
+  /** One-shot: compute and log the Ken×Ryu punish-range matrix at the
+   *  first vblank where both hitboxPtrs are available. */
+  dumpRanges?: boolean;
 }
 
 const SUPPORTED_GAMES = new Set(['sf2hf', 'sf2hfj', 'sf2hfu']);
@@ -200,6 +208,8 @@ export class CoachController {
   private readonly kenRecorder: KenTimelineRecorder | null;
   private readonly debugThreat: boolean;
   private readonly cmkPunishTest: CMKPunishTest | null;
+  private readonly dumpRanges: boolean;
+  private rangesDumped = false;
   private prevThreatKey = '';
   private tickCount = 0;
   private stopped = false;
@@ -271,6 +281,10 @@ export class CoachController {
     this.cmkPunishTest = vp2Test ? new CMKPunishTest(vp2Test) : null;
     if (this.cmkPunishTest) {
       console.log('[sprixe-coach] cMK punish feasibility test ARMED — AI fighter bypassed');
+    }
+    this.dumpRanges = opts.dumpRanges === true;
+    if (this.dumpRanges) {
+      console.log('[sprixe-coach] punish-range matrix dump ARMED — waits for both hitboxPtrs');
     }
   }
 
@@ -524,6 +538,34 @@ export class CoachController {
 
     if (this.debugThreat) {
       this.logThreat(state);
+    }
+
+    // One-shot: compute and log the Ken×Ryu punish-range matrix the
+    // first time we see both hitboxPtrs populated in Work RAM.
+    if (this.dumpRanges && !this.rangesDumped && rom) {
+      // p1 = Ryu (player), p2 = Ken (CPU) by convention for this setup.
+      const kenPtr = state.p2.hitboxPtr ?? 0;
+      const ryuPtr = state.p1.hitboxPtr ?? 0;
+      if (kenPtr !== 0 && ryuPtr !== 0
+          && state.p1.charId === 'ryu' && state.p2.charId === 'ken') {
+        const matrix = computeKenVsRyuMatrix(rom, kenPtr, ryuPtr);
+        console.log(
+          `[sprixe-coach] punish-range matrix (kenHitboxPtr=0x${kenPtr.toString(16)}, ryuHitboxPtr=0x${ryuPtr.toString(16)}):`,
+        );
+        // Split per-Ken-move to avoid console truncation on long dumps.
+        for (const kenMove of Object.keys(matrix)) {
+          const sub = { [kenMove]: matrix[kenMove]! };
+          console.log(dumpMatrix(sub));
+        }
+        // Verbose dump for the suspicious pair — Ken c.LK vs Ryu sweep.
+        // Live test shows c.LK catches the sweep at ~140px, but the
+        // matrix reports 24px. This dump prints the raw ROM values per
+        // frame pair so we can spot where the reach + extent model breaks.
+        console.log(
+          dumpPairDetail(rom, kenPtr, ryuPtr, 'crouch_short', 'sweep'),
+        );
+        this.rangesDumped = true;
+      }
     }
 
     // Feasibility probe takes over P2 — bypass AI fighter entirely.

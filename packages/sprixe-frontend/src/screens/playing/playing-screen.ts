@@ -144,6 +144,10 @@ export class PlayingScreen {
     // fires a sweep the SAME frame and logs press-to-hit latency. The
     // normal AI policy is bypassed for the duration of the test.
     const testCmkPunish = params.get("test-cmk-punish") === "1";
+    // ?dump-ranges=1 — one-shot: at the first vblank where both
+    // hitboxPtrs are populated, compute and print the Ken×Ryu
+    // punish-range matrix (max hit distance per move pair).
+    const dumpRanges = params.get("dump-ranges") === "1";
     // Note: the CoachController auto-arms the virtual P2 channel only
     // while a fight is active, so the keyboard still drives P2 during
     // menu navigation and character select.
@@ -164,6 +168,7 @@ export class PlayingScreen {
       ...(recordKen ? { recordKen: true } : {}),
       ...(debugThreat ? { debugThreat: true } : {}),
       ...(testCmkPunish ? { testCmkPunish: true } : {}),
+      ...(dumpRanges ? { dumpRanges: true } : {}),
     });
     if (!this.coach.start()) {
       this.coach = null;
