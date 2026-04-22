@@ -41,28 +41,90 @@ const DAMAGE_TIER: Partial<Record<ActionId, number>> = {
   throw_forward: 3, throw_back: 3,
 };
 
+type RyuCategory = 'grounded_normal' | 'airborne' | 'projectile' | 'special';
+
+function classifyRyuMove(ryuMove: string): RyuCategory {
+  if (ryuMove.startsWith('jumping_')) return 'airborne';
+  if (ryuMove.startsWith('hadouken_')) return 'projectile';
+  if (ryuMove.startsWith('shoryuken_') || ryuMove === 'tatsumaki') return 'special';
+  return 'grounded_normal';
+}
+
 /**
- * Preference score: fast + damaging + cancellable > slow. Negative
- * startup penalty dominates because a slow move that can't reach in
- * time just isn't an option even if it hits hard.
+ * Per-category contextual weights. Baseline score = speed + damage +
+ * cancel + knockdown. Context bonus re-ranks by matchup: a shoryu is
+ * king anti-air but suicide vs a grounded jab (whiff = full punish);
+ * sweep punishes Ryu sweep's 18f recovery; cMK cancels into Hadouken
+ * on counter-hit normals; jump_forward_hk is the staple reversal vs a
+ * mid-range fireball (too far to DP).
+ *
+ * The signs are large enough to consistently dominate the ±4 spread of
+ * the baseline so the picked move actually changes with context. A
+ * large negative effectively excludes the move from the pool unless
+ * every alternative is worse.
  */
+const CONTEXT_WEIGHTS: Record<RyuCategory, Partial<Record<ActionId, number>>> = {
+  airborne: {
+    shoryu_fierce: 12,
+    shoryu_strong: 8,
+    shoryu_jab: 6,
+    standing_fierce: 4,
+    crouch_fierce: 3,
+  },
+  projectile: {
+    shoryu_fierce: 10,
+    shoryu_strong: 7,
+    shoryu_jab: 5,
+    jump_forward_hk: 5,
+    jump_forward_hp: 4,
+  },
+  special: {
+    shoryu_fierce: 8,
+    sweep: 6,
+    crouch_fierce: 5,
+  },
+  grounded_normal: {
+    // DPs are strongly penalised — whiffing a shoryu on blocked jab
+    // concedes a full combo, far worse than trading a cMK.
+    shoryu_fierce: -15,
+    shoryu_strong: -15,
+    shoryu_jab: -15,
+    // Cancel-pokes preferred. cMK links into Hadouken on hit; sweep
+    // punishes Ryu's long-recovery grounded moves (sweep, forward,
+    // roundhouse). cHP is the mid-range go-to when spacing is right.
+    crouch_mk: 8,
+    sweep: 7,
+    crouch_fierce: 6,
+    crouch_jab: 5,
+    crouch_short: 4,
+    standing_fierce: 3,
+  },
+};
+
 function scoreOption(
   kenMove: ActionId,
   startup: number,
   damageTier: number,
   cancellable: boolean,
   knockdown: boolean,
+  ryuMove: string,
 ): number {
-  const speedScore = Math.max(0, 12 - startup);  // 12f startup = 0, 3f = 9
+  const speedScore = Math.max(0, 12 - startup);
   const damageScore = damageTier * 2;
   const cancelBonus = cancellable ? 3 : 0;
   const kdBonus = knockdown ? 2 : 0;
-  return speedScore + damageScore + cancelBonus + kdBonus;
+  const ctxBonus = CONTEXT_WEIGHTS[classifyRyuMove(ryuMove)][kenMove] ?? 0;
+  return speedScore + damageScore + cancelBonus + kdBonus + ctxBonus;
 }
 
 /**
- * Turn the raw range matrix into a sorted counter table. Options with
- * maxHitDist <= 0 (can't connect) are dropped.
+ * Turn the raw range matrix into a sorted counter table. Scoring is
+ * done per (kenMove, ryuMove) pair so the same Ken move can rank
+ * differently against an anti-air vs a whiff-punish — the range matrix
+ * alone is near-uniform across Ryu moves (hurtbox extents converge),
+ * so context weights do the work of differentiating the picks.
+ *
+ * Options with maxHitDist <= 0 (geometrically unreachable) are dropped.
  */
 export function buildCounterTable(matrix: KenRyuMatrix): CounterTable {
   const byRyuMove: Record<string, CounterOption[]> = {};
@@ -72,9 +134,9 @@ export function buildCounterTable(matrix: KenRyuMatrix): CounterTable {
     const damageTier = DAMAGE_TIER[kenMove as ActionId] ?? 1;
     const cancellable = fd.cancellableUntil !== undefined;
     const knockdown = fd.knockdown === true;
-    const score = scoreOption(kenMove as ActionId, fd.startup, damageTier, cancellable, knockdown);
     for (const [ryuMove, pair] of Object.entries(row) as Array<[string, PairResult]>) {
       if (pair.maxHitDist <= 0) continue;
+      const score = scoreOption(kenMove as ActionId, fd.startup, damageTier, cancellable, knockdown, ryuMove);
       if (!byRyuMove[ryuMove]) byRyuMove[ryuMove] = [];
       byRyuMove[ryuMove]!.push({
         kenMove: kenMove as ActionId,
@@ -117,6 +179,10 @@ export interface PickOptions {
  *   frames_to_hit       = detectionLatency + counter.startup
  *   predicted_dist_hit  = dist + ryuDxAway * frames_to_hit
  *   eligible            ⇔ predicted_dist_hit ≤ counter.maxHitDist
+ *
+ * Strategic unsoundness (e.g. DP vs grounded jab) is handled upstream
+ * by CONTEXT_WEIGHTS in scoreOption — the offending moves get large
+ * negative bonuses so they sort to the bottom of the candidate list.
  *
  * When Ryu is approaching (ryuDxAway < 0), even moves whose static
  * reach is below the current distance become eligible — Ryu walks

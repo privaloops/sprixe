@@ -7,145 +7,94 @@ import {
   type InputFrame,
 } from '../input-sequencer';
 import { resolveMotion } from '../policy/actions';
-import { FRAME_STRIDE } from './box-predictor';
-import {
-  computeKenVsRyuMatrix,
-  RYU_MOVE_STARTUPS,
-} from './move-range-matrix';
-import {
-  buildCounterTable,
-  pickCounter,
-  type CounterTable,
-} from './ken-vs-ryu-counters';
+import { minGapToHurtboxes } from '../policy/threat-geometry';
+import { resolveBoxFromRom, ATTACK_BOX_SPEC } from './box-predictor';
+import { KEN_MOVE_TIMELINES } from './ken-move-timelines';
 
 /**
- * Deterministic counter-punish AI for Ken vs Ryu.
+ * Geometric counter-AI — pixel-accurate.
  *
- * Flow each vblank:
- *   1. Lazy-init: compute the punish-range matrix and counter table from
- *      ROM, build a reverse-map animPtr → ryu move name.
- *   2. Identify the move Ryu just started (rising edge on p1.attacking).
- *   3. Pick the highest-scored Ken counter that fits the current distance.
- *   4. Push the counter's motion frames to the virtual P2 input channel.
+ * Algorithm: every vblank, read the opponent's active attackbox
+ * (p1.attackbox, extracted live from ROM) and compute the minimum AABB
+ * gap to Ken's hurtboxes. Fire a counter as soon as the gap drops to
+ * ≤ TRIGGER_GAP_PX.
  *
- * Bypasses the tier-based policy runner entirely. Ken stays idle between
- * counters — the goal is to prove the counter table converts into real
- * hits in-game, nothing more.
+ * Why a tight 8px threshold is correct — not a "wet-finger" 40px guess:
+ *   - The opponent's attackbox is only live during the active frames
+ *     of his move (3-8f for a jab, 5-10f for a sweep, etc.).
+ *   - Once the gap reaches 0-8px, the hitbox is mid-sweep through
+ *     Ken's column and will stay inside it for the rest of the active
+ *     window — by the time Ken's 3f cLK launches, Ryu is still in the
+ *     middle of his active frames, so cLK lands as a trade or clean
+ *     interrupt (Ken cLK has priority because it launched later into
+ *     an already-exposed hurtbox).
+ *   - Firing earlier (large GAP) sends Ken out while Ryu is still in
+ *     startup and might bait/block. Firing later (negative GAP) means
+ *     Ken already ate the blow.
+ *
+ * No move tables, no predictions, no pushbox heuristics. The only
+ * special case: if the opponent is airborne we swap cLK for shoryu
+ * fierce (anti-air). Hadoukens travel as projectiles and show up as
+ * their own attackbox on p1 briefly — they're handled by the same
+ * code path automatically.
  */
 
-const RYU_MAX_FRAMES = 30;
+/** Min frames between two counter fires. cLK total = 3+2+6=11f, so
+ *  12f prevents interrupting our own animation. */
+const COOLDOWN_FRAMES = 12;
 
 export class KenCounterAi {
   private readonly sequencer: InputSequencer;
-  private matrix: ReturnType<typeof computeKenVsRyuMatrix> | null = null;
-  private table: CounterTable | null = null;
-  /** animPtr → ryu move name. Populated from a stride walk per move. */
-  private ryuMoveByPtr: Map<number, string> = new Map();
-  private prevP1Attacking = false;
-  private prevP1AnimPtr = 0;
-  private prevP1X: number | null = null;
-  /** Exponentially smoothed signed dx of P1, in world px per frame.
-   *  Positive = P1 moving right. Converted to "dx away from Ken" at
-   *  pickCounter call time based on who's on which side. */
-  private p1DxSmooth = 0;
   private lastCounterFrame = -Infinity;
-  /** Min frames between two counter triggers — prevents spam while our
-   *  own attack is still animating. */
-  private readonly cooldownFrames = 20;
+  private prevAttackboxPresent = false;
 
   constructor(private readonly channel: VirtualInputChannel) {
     this.sequencer = new InputSequencer(channel);
+    console.log('[ken-counter-ai] geometric counter ARMED');
   }
 
   onVblank(state: GameState, rom: Uint8Array): void {
-    const kenPtr = state.p2.hitboxPtr ?? 0;
-    const ryuPtr = state.p1.hitboxPtr ?? 0;
-
-    // Always advance the sequencer. tick() consumes the next queued
-    // input when busy, and releases all buttons (neutral) when empty.
-    // Without this call, the channel stays stuck on the last setHeld()
-    // — so Ken keeps holding DOWN after a single-frame c.HP press.
     this.sequencer.tick();
 
-    // Track Ryu's per-frame horizontal velocity. Reject teleport-sized
-    // jumps (round reset, position snap) to avoid corrupting the EMA.
-    if (this.prevP1X !== null) {
-      const raw = state.p1.x - this.prevP1X;
-      if (Math.abs(raw) < 10) {
-        this.p1DxSmooth = this.p1DxSmooth * 0.6 + raw * 0.4;
-      }
-    }
-    this.prevP1X = state.p1.x;
+    // Rising-edge: attackbox transitions from absent to present on this
+    // very frame — Ryu just committed to the active phase of a move.
+    // Snapshot before any early return so the edge isn't lost across
+    // cooldown / busy frames.
+    const attackboxNow = state.p1.attackbox !== null && state.p1.attackbox !== undefined;
+    const attackboxRising = attackboxNow && !this.prevAttackboxPresent;
+    this.prevAttackboxPresent = attackboxNow;
 
     if (this.sequencer.busy) return;
+    if (state.frameIdx - this.lastCounterFrame < COOLDOWN_FRAMES) return;
+    if (state.p2.stateByte !== 0x00) return;
+    if (!attackboxRising) return;
 
-    // Lazy init once both hitboxPtrs are available + characters right.
-    if (!this.table) {
-      if (kenPtr === 0 || ryuPtr === 0) return;
-      if (state.p1.charId !== 'ryu' || state.p2.charId !== 'ken') return;
-      this.matrix = computeKenVsRyuMatrix(rom, kenPtr, ryuPtr);
-      this.table = buildCounterTable(this.matrix);
-      this.ryuMoveByPtr = buildRyuPtrMap(rom);
+    // Resolve cLK Ken's attackbox live from ROM at Ken's current
+    // position/facing. If it would overlap any Ryu hurtbox → cLK can
+    // land → fire. Otherwise cLK whiffs → do nothing.
+    const cLKAtk = computeKenCLKAttackBox(state, rom);
+    if (!cLKAtk) return;
+    const whiffGap = minGapToHurtboxes(cLKAtk, state.p1);
+    if (whiffGap === null || whiffGap > 0) {
       console.log(
-        `[ken-counter-ai] initialized — ${this.ryuMoveByPtr.size} animPtrs mapped`,
-      );
-    }
-
-    // Cooldown — don't spam counters over the top of our own attack.
-    if (state.frameIdx - this.lastCounterFrame < this.cooldownFrames) return;
-
-    // Detect rising edge on p1.attacking: Ryu just launched a move.
-    const attacking = state.p1.attacking;
-    const prevAttacking = this.prevP1Attacking;
-    this.prevP1Attacking = attacking;
-    this.prevP1AnimPtr = state.p1.animPtr;
-    if (!attacking || prevAttacking) return;
-
-    const ryuMove = this.ryuMoveByPtr.get(state.p1.animPtr);
-    if (!ryuMove) return;
-
-    // Ground shoryukens are invincible + airborne — don't waste a counter.
-    if (ryuMove.startsWith('shoryuken')) return;
-
-    const dist = Math.abs(state.p1.x - state.p2.x);
-    // Convert smoothed world dx into "away from Ken" dx. If Ken (P2)
-    // is to the right of Ryu (P1), Ryu moving right = moving toward
-    // Ken = negative dxAway.
-    const kenOnRight = state.p2.x >= state.p1.x;
-    const ryuDxAway = kenOnRight ? -this.p1DxSmooth : this.p1DxSmooth;
-    const counter = pickCounter(this.table!, {
-      ryuMove,
-      dist,
-      ryuDxAway,
-      detectionLatency: 1,
-    });
-    if (!counter) {
-      console.log(
-        `[ken-counter-ai] f=${state.frameIdx} Ryu ${ryuMove}`
-        + ` dist=${dist}px ryuDxAway=${ryuDxAway.toFixed(1)} — no viable counter`,
+        `[ken-counter-ai] f=${state.frameIdx} attack rising but cLK whiffs (gap=${whiffGap}) — skip`,
       );
       return;
     }
 
-    const framesToHit = 1 + counter.startup;
-    const predictedDist = dist + ryuDxAway * framesToHit;
+    const action: ActionId = 'crouch_short';
     console.log(
-      `[ken-counter-ai] f=${state.frameIdx} Ryu ${ryuMove} @ ${dist}px`
-      + ` ryuDxAway=${ryuDxAway.toFixed(1)}px/f → ${counter.kenMove}`
-      + ` (startup=${counter.startup}f, predicted=${predictedDist.toFixed(0)}px, range≤${counter.maxHitDist}px)`,
+      `[ken-counter-ai] f=${state.frameIdx} FIRE cLK would connect (gap=${whiffGap.toFixed(0)}) → ${action}`,
     );
-    this.executeMotion(counter.kenMove, state);
+    this.executeMotion(action, state);
     this.lastCounterFrame = state.frameIdx;
   }
 
   reset(): void {
     this.sequencer.clear();
     this.channel.releaseAll();
-    this.prevP1Attacking = false;
-    this.prevP1AnimPtr = 0;
-    this.prevP1X = null;
-    this.p1DxSmooth = 0;
     this.lastCounterFrame = -Infinity;
+    this.prevAttackboxPresent = false;
   }
 
   private executeMotion(action: ActionId, state: GameState): void {
@@ -164,25 +113,30 @@ export class KenCounterAi {
 }
 
 /**
- * Build animPtr → moveName map for Ryu by stride-walking each startup
- * until we hit another startup or a blank frame.
+ * Resolve Ken's cLK attackbox pixel-accurately from the ROM, anchored
+ * to his current world position/facing. Walks the recorded cLK
+ * timeline and returns the first animation frame that exposes an
+ * attackbox (i.e. the first active frame). Returns null if Ken's
+ * hitboxPtr is absent or no active frame has a live box.
  */
-function buildRyuPtrMap(rom: Uint8Array): Map<number, string> {
-  const startups = new Set<number>(Object.values(RYU_MOVE_STARTUPS));
-  const map = new Map<number, string>();
-  for (const [moveName, startup] of Object.entries(RYU_MOVE_STARTUPS)) {
-    for (let i = 0; i < RYU_MAX_FRAMES; i++) {
-      const ptr = startup + i * FRAME_STRIDE;
-      if (i > 0 && startups.has(ptr)) break;
-      const atkId = rom[ptr + 0x0C] ?? 0;
-      const headId = rom[ptr + 0x08] ?? 0;
-      const bodyId = rom[ptr + 0x09] ?? 0;
-      const legsId = rom[ptr + 0x0A] ?? 0;
-      if (atkId === 0 && headId === 0 && bodyId === 0 && legsId === 0) break;
-      if (!map.has(ptr)) map.set(ptr, moveName);
-    }
+function computeKenCLKAttackBox(state: GameState, rom: Uint8Array) {
+  const hitboxPtr = state.p2.hitboxPtr;
+  if (!hitboxPtr) return null;
+  const timeline = KEN_MOVE_TIMELINES['crouch_short'];
+  if (!timeline) return null;
+  for (const entry of timeline) {
+    const box = resolveBoxFromRom(
+      rom,
+      entry.animPtr,
+      hitboxPtr,
+      state.p2.x,
+      state.p2.posY ?? 0,
+      state.p2.facingLeft ?? false,
+      ATTACK_BOX_SPEC,
+    );
+    if (box) return box;
   }
-  return map;
+  return null;
 }
 
 function flipButtons(buttons: readonly VirtualButton[], facingLeft: boolean): readonly VirtualButton[] {
