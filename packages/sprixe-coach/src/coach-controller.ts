@@ -16,6 +16,10 @@ import {
   dumpPairDetail,
 } from './agent/tas/move-range-matrix';
 import {
+  buildCounterTable,
+  dumpCounterTable,
+} from './agent/tas/ken-vs-ryu-counters';
+import {
   classifyAttackHeight,
   minGapToHurtboxes,
 } from './agent/policy/threat-geometry';
@@ -557,13 +561,11 @@ export class CoachController {
           const sub = { [kenMove]: matrix[kenMove]! };
           console.log(dumpMatrix(sub));
         }
-        // Verbose dump for the suspicious pair — Ken c.LK vs Ryu sweep.
-        // Live test shows c.LK catches the sweep at ~140px, but the
-        // matrix reports 24px. This dump prints the raw ROM values per
-        // frame pair so we can spot where the reach + extent model breaks.
         console.log(
           dumpPairDetail(rom, kenPtr, ryuPtr, 'crouch_short', 'sweep'),
         );
+        const counterTable = buildCounterTable(matrix);
+        console.log(dumpCounterTable(counterTable));
         this.rangesDumped = true;
       }
     }
