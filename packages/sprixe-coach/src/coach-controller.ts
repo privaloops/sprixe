@@ -11,6 +11,8 @@ import { KenAnimInspector } from './agent/tas/ken-anim-inspector';
 import { KenTimelineRecorder } from './agent/tas/ken-timeline-recorder';
 import { CMKPunishTest } from './agent/tas/cmk-punish-test';
 import { KenCounterAi } from './agent/tas/ken-counter-ai';
+import { KenOffenseLlm } from './agent/tas/ken-offense-llm';
+import { KenTrajectoryRecorder } from './agent/tas/ken-trajectory-recorder';
 import {
   computeKenVsRyuMatrix,
   dumpMatrix,
@@ -27,6 +29,48 @@ import {
 import type { GameState } from './types';
 
 const WORK_RAM_BASE = 0xFF0000;
+
+/**
+ * Training-mode emulation for trajectory recording. Overwrites the
+ * 68K's freshly-computed fields every vblank before extraction:
+ *
+ *   Ryu (P1):
+ *     x          → 100 (pinned to far-left, well out of Ken's reach)
+ *     stateByte  → 0x00 (idle FSM)
+ *     attacking  → 0x00
+ *
+ *   Ken (P2):
+ *     x          → 500 by default, 300 when the next move is a
+ *                  jump_back_* (they travel rightward up to ~130px and
+ *                  benefit from the extra right-wall margin). Only
+ *                  applied when Ken is idle (0x00), so we never
+ *                  teleport him mid-attack.
+ */
+function freezeForRecording(ram: Uint8Array, nextKenMove: string | null): void {
+  // ── Ryu pinned left ──
+  const p1XOff = 0xFF83C4 - WORK_RAM_BASE;
+  const p1StateOff = 0xFF83C1 - WORK_RAM_BASE;
+  const p1AttackingOff = 0xFF8549 - WORK_RAM_BASE;
+  if (p1XOff + 1 < ram.length) {
+    ram[p1XOff] = 0x00;     // 100 hi byte
+    ram[p1XOff + 1] = 0x64; // 100 lo byte
+  }
+  if (p1StateOff < ram.length) ram[p1StateOff] = 0x00;
+  if (p1AttackingOff < ram.length) ram[p1AttackingOff] = 0x00;
+
+  // ── Ken anchor adapted to upcoming move ──
+  const p2XOff = 0xFF86C4 - WORK_RAM_BASE;
+  const p2StateOff = 0xFF86C1 - WORK_RAM_BASE;
+  const isBackJump = nextKenMove !== null && nextKenMove.startsWith('jump_back_');
+  // 300 = 0x012C, 500 = 0x01F4
+  const hi = isBackJump ? 0x01 : 0x01;
+  const lo = isBackJump ? 0x2C : 0xF4;
+  if (p2StateOff < ram.length && ram[p2StateOff] === 0x00
+      && p2XOff + 1 < ram.length) {
+    ram[p2XOff] = hi;
+    ram[p2XOff + 1] = lo;
+  }
+}
 
 /**
  * Minimal host surface needed by the coach. PlayingScreen passes in the
@@ -98,6 +142,12 @@ export interface CoachOptions {
   /** Run the deterministic Ken counter-punish AI derived from the
    *  Ken×Ryu matrix. Bypasses the tier-based policy runner. */
   aiCounter?: boolean;
+  /** Run the LLM-driven offensive policy (Claude via /api/coach/generate).
+   *  Offence-only; defence stays on the synchronous counter-AI. */
+  aiLlm?: boolean;
+  /** Record Ken's live trajectories + hitboxes into console JSON
+   *  fragments — input for the punish engine's ken-trajectories.json. */
+  recordTrajectories?: boolean;
 }
 
 const SUPPORTED_GAMES = new Set(['sf2hf', 'sf2hfj', 'sf2hfu']);
@@ -217,6 +267,8 @@ export class CoachController {
   private readonly debugThreat: boolean;
   private readonly cmkPunishTest: CMKPunishTest | null;
   private readonly counterAi: KenCounterAi | null;
+  private readonly offenseLlm: KenOffenseLlm | null;
+  private readonly trajectoryRecorder: KenTrajectoryRecorder | null;
   private readonly dumpRanges: boolean;
   private rangesDumped = false;
   private prevThreatKey = '';
@@ -255,12 +307,17 @@ export class CoachController {
 
     // AI opponent — off by default. Requires a virtual P2 channel from
     // the host; in its absence (e.g. tests) the fighter is never built.
-    const vp2 = opts.enableAiOpponent ? host.getVirtualP2Channel?.() : undefined;
+    // recordTrajectories implies calibrateKen: the calibration pilot
+    // drives Ken through every move automatically while the recorder
+    // captures the trajectories in parallel.
+    const autoCalibrate = opts.calibrateKen === true || opts.recordTrajectories === true;
+    const wantsAiFighter = opts.enableAiOpponent || autoCalibrate;
+    const vp2 = wantsAiFighter ? host.getVirtualP2Channel?.() : undefined;
     this.aiFighter = vp2 ? new AiFighter(vp2, {
       enginePolicy: opts.aiEngine === 'policy',
       ...(opts.aiLevel ? { level: opts.aiLevel } : {}),
       ...(opts.aiDebugLoopAction ? { debugLoopAction: opts.aiDebugLoopAction } : {}),
-      ...(opts.calibrateKen ? { calibrateKen: true } : {}),
+      ...(autoCalibrate ? { calibrateKen: true } : {}),
     }) : null;
     if (this.aiFighter) {
       console.log('[sprixe-coach] AI opponent ARMED — driving P2');
@@ -299,6 +356,20 @@ export class CoachController {
     this.counterAi = vp2Counter ? new KenCounterAi(vp2Counter) : null;
     if (this.counterAi) {
       console.log('[sprixe-coach] deterministic counter-punish AI ARMED — tier policy bypassed');
+    }
+    // LLM offence — pilots Ken's offensive choices via Claude. Defence
+    // remains on the synchronous counterAi so reaction frames are kept
+    // at 0 latency. When both are on, counterAi fires first (it owns
+    // state 0x00 while its sequencer is busy), and offenseLlm only
+    // acts while Ken is actually idle.
+    const vp2Llm = opts.aiLlm ? host.getVirtualP2Channel?.() : undefined;
+    this.offenseLlm = vp2Llm ? new KenOffenseLlm(vp2Llm) : null;
+    if (this.offenseLlm) {
+      console.log('[sprixe-coach] LLM offensive policy ARMED — /api/coach/generate');
+    }
+    this.trajectoryRecorder = opts.recordTrajectories ? new KenTrajectoryRecorder() : null;
+    if (this.trajectoryRecorder) {
+      console.log('[sprixe-coach] trajectory recorder ARMED — perform each Ken move, copy [record-traj] fragments into ken-trajectories.json');
     }
   }
 
@@ -537,6 +608,15 @@ export class CoachController {
     const ram = this.host.getWorkRam?.();
     if (!ram) return;
 
+    // Trajectory-recording mode: training-mode emulation. Ryu pinned
+    // at x=100 idle so he never approaches Ken; Ken teleported to
+    // x=500 between moves (x=300 before back jumps for extra right-
+    // wall margin). Applied every vblank before extraction.
+    if (this.trajectoryRecorder) {
+      const nextMove = this.aiFighter?.currentCalibrationMove() ?? null;
+      freezeForRecording(ram, nextMove);
+    }
+
     const rom = this.host.getProgramRom?.();
     const state = this.extractor.extract(ram, this.now(), rom);
     this.history.push(state);
@@ -549,6 +629,7 @@ export class CoachController {
       this.kenInspector.onFrame(state, rom);
     }
     this.kenRecorder?.onFrame(state);
+    this.trajectoryRecorder?.onFrame(state);
 
     if (this.debugThreat) {
       this.logThreat(state);
@@ -593,16 +674,23 @@ export class CoachController {
       return;
     }
 
-    // Deterministic counter-punish AI. Owns P2 like the feasibility
-    // probe, also bypasses the tier policy.
-    if (this.counterAi && rom) {
+    // Deterministic counter-punish AI + optional LLM offence. Both
+    // share the same virtual-P2 channel: the counter runs first
+    // (reactive defence) and the LLM offence runs only on frames the
+    // counter didn't already write to the channel.
+    if ((this.counterAi || this.offenseLlm) && rom) {
       const fightActive = state.roundPhase === 'fight'
         && state.p1.hp > 0 && state.p2.hp > 0;
       this.host.armVirtualP2?.(fightActive);
       if (fightActive) {
-        this.counterAi.onVblank(state, rom);
+        this.counterAi?.onVblank(state, rom);
+        const counterActed = this.counterAi?.firedOnFrame(state.frameIdx) === true;
+        if (!counterActed) {
+          this.offenseLlm?.onVblank(state);
+        }
       } else {
-        this.counterAi.reset();
+        this.counterAi?.reset();
+        this.offenseLlm?.reset();
       }
       return;
     }

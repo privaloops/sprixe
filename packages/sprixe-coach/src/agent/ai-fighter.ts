@@ -7,6 +7,7 @@ import type { CharacterMoveset } from './characters/types';
 import type { CharacterId } from '../types';
 import type { VirtualInputChannel } from './input-sequencer';
 import { TasPilot } from './tas/pilot';
+import { KenCalibrationPilot } from './tas/calibration-pilot';
 
 export interface AiFighterOptions {
   /** Mode name to start the match in (legacy mode-based engine). */
@@ -19,6 +20,9 @@ export interface AiFighterOptions {
   moveset?: CharacterMoveset;
   /** Debug: force Ken to loop a single action. Bypasses tier logic. */
   debugLoopAction?: string;
+  /** Phase 1 harness: run the Ken move-map calibration routine instead
+   *  of the regular TAS pilot. Overrides every other engine flag. */
+  calibrateKen?: boolean;
 }
 
 /**
@@ -36,10 +40,20 @@ export class AiFighter {
   private readonly modeManager: ModeManager | null;
   private readonly policyRunner: PolicyRunner | null;
   private readonly tasPilot: TasPilot | null;
+  private readonly calibrationPilot: KenCalibrationPilot | null;
   private detectedCharId: CharacterId | null = null;
 
   constructor(channel: VirtualInputChannel, opts: AiFighterOptions = {}) {
     const level = opts.level ?? 'tas';
+    // Calibration mode wins over every engine flag.
+    if (opts.calibrateKen) {
+      this.modeManager = null;
+      this.policyRunner = null;
+      this.tasPilot = null;
+      this.calibrationPilot = new KenCalibrationPilot(channel);
+      return;
+    }
+    this.calibrationPilot = null;
     // TAS level uses the new oracle-based pilot — deterministic single
     // function state → action, no tier dice, no combo stitching.
     // Wins over any engine flag: level=tas always routes here.
@@ -75,6 +89,7 @@ export class AiFighter {
     this.modeManager?.onVblank(state);
     this.policyRunner?.onVblank(state);
     this.tasPilot?.onFrame(state);
+    this.calibrationPilot?.onFrame(state);
   }
 
   /** Mode engine: switch active mode. */
@@ -103,9 +118,17 @@ export class AiFighter {
   /** True if running the DSL policy engine. */
   usesPolicyEngine(): boolean { return this.policyRunner !== null; }
 
+  /** Current calibration move (null if not in calibration mode or
+   *  the schedule is finished). Exposed so the trajectory-recording
+   *  freezer can adapt Ken's anchor X per-move. */
+  currentCalibrationMove(): string | null {
+    return this.calibrationPilot?.currentMove() ?? null;
+  }
+
   reset(): void {
     this.modeManager?.reset();
     this.policyRunner?.reset();
     this.tasPilot?.reset();
+    this.calibrationPilot?.reset();
   }
 }
