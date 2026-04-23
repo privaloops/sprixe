@@ -1,0 +1,89 @@
+{
+  "_comment": "Ken punish options ranked by expected damage (descending). The engine walks this list top-to-bottom, simulates each option's interception against the opponent's current move, keeps the first option that (a) physically connects and (b) passes the delta_HP guard (damage_inflicted - damage_taken > 0, or trade survivable when Ken.hp > damage_taken). Hand-editable: tweak damages, reorder, add/remove options without recompiling. Sequence entries are ActionIds resolved via resolveMotion().",
+  "options": [
+    {
+      "id": "combo_jhp_chp_dpHP",
+      "sequence": ["jump_forward_hp", "crouch_fierce", "shoryu_fierce"],
+      "damage": 50,
+      "notes": "Max damage. Requires Ken to land in cHP range during Ryu recovery."
+    },
+    {
+      "id": "combo_jhk_chp_dpHP",
+      "sequence": ["jump_forward_hk", "crouch_fierce", "shoryu_fierce"],
+      "damage": 48,
+      "notes": "j.HK is slightly more lenient timing than j.HP on deep jump-ins."
+    },
+    {
+      "id": "combo_jhp_shp_fb",
+      "sequence": ["jump_forward_hp", "standing_fierce", "hadouken_fierce"],
+      "damage": 45,
+      "notes": "Used when Ken lands a hair too far for cHP; sHP has longer reach."
+    },
+    {
+      "id": "combo_jhk_clk_cmk_fb",
+      "sequence": ["jump_forward_hk", "crouch_short", "crouch_mk", "hadouken_fierce"],
+      "damage": 42,
+      "notes": "4-hit combo with tight link windows (cLK→cMK=3f). Higher stun build."
+    },
+    {
+      "id": "combo_chp_dpHP",
+      "sequence": ["crouch_fierce", "shoryu_fierce"],
+      "damage": 35,
+      "notes": "No-jump punish when Ken is already in cHP range."
+    },
+    {
+      "id": "combo_shp_fb",
+      "sequence": ["standing_fierce", "hadouken_fierce"],
+      "damage": 28,
+      "notes": "sHP reaches a bit further than cHP when Ken is standing."
+    },
+    {
+      "id": "combo_cmk_fb",
+      "sequence": ["crouch_mk", "hadouken_fierce"],
+      "damage": 25,
+      "notes": "Mid-range poke-cancel. Most reliable footsie punish in Ken's kit."
+    },
+    {
+      "id": "solo_dpHP",
+      "sequence": ["shoryu_fierce"],
+      "damage": 21,
+      "notes": "Solo DP, 5f invincible startup, knockdown. Best mono-hit damage."
+    },
+    {
+      "id": "solo_sweep",
+      "sequence": ["sweep"],
+      "damage": 21,
+      "notes": "Long reach, knockdown, 7f startup. Preferred when cHP range unsafe."
+    },
+    {
+      "id": "solo_chp",
+      "sequence": ["crouch_fierce"],
+      "damage": 17,
+      "notes": "Solo cHP — fast, no knockdown. Leaves Ken neutral-positive."
+    },
+    {
+      "id": "evade_jback_hk",
+      "sequence": ["jump_back_hk"],
+      "damage": 18,
+      "notes": "Back-jump with HK kick. Evades ground attacks, counter-hits any follow-up."
+    },
+    {
+      "id": "evade_jneutral_hk",
+      "sequence": ["jump_neutral_hk"],
+      "damage": 18,
+      "notes": "Vertical jump HK. Preserves stage position, evades sweeps/lows."
+    },
+    {
+      "id": "evade_jback",
+      "sequence": ["jump_back"],
+      "damage": 0,
+      "notes": "Pure evasion, no counter. Last-resort avoidance when everything else fails."
+    },
+    {
+      "id": "defend_block_crouch",
+      "sequence": ["block_crouch"],
+      "damage": 0,
+      "notes": "Crouching block. Covers low + mid attacks. Always feasible, minimal commitment."
+    }
+  ]
+}
