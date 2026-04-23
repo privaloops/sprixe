@@ -86,6 +86,11 @@ export interface CharacterState {
   attackbox?: HitboxRect | null;
   /** Push (body collision) box. */
   pushbox?: HitboxRect | null;
+  /** Per-character hitbox directory pointer (32-bit ROM address at
+   *  player_base+0x34). Needed by the forward simulator to resolve an
+   *  arbitrary future animation frame's boxes via the same two-level
+   *  indirection the extractor uses. */
+  hitboxPtr?: number;
 }
 
 export interface CPUState extends CharacterState {

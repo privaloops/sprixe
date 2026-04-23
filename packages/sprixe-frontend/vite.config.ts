@@ -132,7 +132,7 @@ export default defineConfig(({ command }) => ({
             return;
           }
 
-          let body: { systemPrompt: string; userPrompt: string; maxTokens?: number };
+          let body: { systemPrompt: string; userPrompt: string; maxTokens?: number; model?: string };
           try {
             const chunks: Buffer[] = [];
             for await (const chunk of req) chunks.push(chunk as Buffer);
@@ -152,7 +152,7 @@ export default defineConfig(({ command }) => ({
           try {
             const anthropic = new Anthropic({ apiKey });
             const stream = anthropic.messages.stream({
-              model: "claude-haiku-4-5-20251001",
+              model: body.model ?? "claude-haiku-4-5-20251001",
               max_tokens: body.maxTokens ?? 50,
               system: body.systemPrompt,
               messages: [{ role: "user", content: body.userPrompt }],

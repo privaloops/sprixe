@@ -1,6 +1,7 @@
 import type { ActionId } from '../policy/types';
 import type { CharacterId } from '../../types';
 import { getFrameData, type FrameData } from '../frame-data';
+import { KEN_ANIMPTR_TO_ACTION } from './ken-move-map';
 
 /**
  * animPtr (startup value) → ActionId — lets the tracker look up
@@ -30,6 +31,7 @@ const RYU_ANIMPTR_TO_ACTION: Record<number, ActionId> = {
 
 const TABLES: Partial<Record<CharacterId, Record<number, ActionId>>> = {
   ryu: RYU_ANIMPTR_TO_ACTION,
+  ken: KEN_ANIMPTR_TO_ACTION,
 };
 
 export function actionForAnimPtr(charId: CharacterId, animPtr: number): ActionId | null {
