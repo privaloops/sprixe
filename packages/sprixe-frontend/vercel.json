@@ -12,6 +12,7 @@
     }
   ],
   "rewrites": [
-    { "source": "/arcadedb/:path*", "destination": "https://adb.arcadeitalia.net/:path*" }
+    { "source": "/arcadedb/:path*", "destination": "https://adb.arcadeitalia.net/:path*" },
+    { "source": "/send/:roomId", "destination": "/index.html" }
   ]
 }
