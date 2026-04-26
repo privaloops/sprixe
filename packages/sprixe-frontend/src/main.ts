@@ -320,7 +320,13 @@ function startBrowser(
           romDb: db,
           latencyHint: audioLatencyToHint(settings.get().audio.latency),
         });
-        await db.markPlayed(game.id);
+        // Stats bookkeeping shouldn't be able to abort a launch — if the
+        // IndexedDB write fails (transient quota, profile corruption,
+        // browser kiosk restrictions) we'd rather lose the play count
+        // than refuse to start a game that's already loaded.
+        db.markPlayed(game.id).catch((err) => {
+          console.warn(`[arcade] markPlayed(${game.id}) failed:`, err);
+        });
         browser.root.hidden = true;
         // Stop the ArcadeDB preview so it doesn't keep decoding frames
         // or playing audio behind the live emulator.
