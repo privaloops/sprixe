@@ -30,12 +30,19 @@ export DEBIAN_FRONTEND=noninteractive
 # chromium = RPi OS flavour, ships with VideoCore GPU acceleration.
 # cage     = minimal Wayland compositor: one window, full-screen.
 # seatd    = grants cage access to /dev/dri/card0 without root.
+# mame     = native CPS / Neo-Geo emulator (perf-perfect on Pi 5).
+# nodejs   = runtime for @sprixe/bridge (the local launcher daemon).
+# git      = needed to clone the bridge sources during provisioning.
 apt-get update
 apt-get install -y --no-install-recommends \
     chromium \
     cage \
     seatd \
-    fonts-noto-color-emoji
+    fonts-noto-color-emoji \
+    mame \
+    nodejs \
+    npm \
+    git
 
 # ── /home/sprixe/start-kiosk.sh — the cage wrapper ──────────────────
 # `-d` makes cage exit when the inner command exits, so the
@@ -101,9 +108,58 @@ do
     systemctl disable --now "$svc" 2>/dev/null || true
 done
 
-# ── Enable seatd + finish ──────────────────────────────────────────
+# ── @sprixe/bridge — local daemon that lets the kiosk spawn MAME ───
+# Cloned shallow into /opt/sprixe so the bridge sources stay readable
+# for ad-hoc debug, and so future updates can `git pull` instead of
+# re-running this whole script. The npm install pulls workspace deps
+# at the root because npm requires a unified node_modules tree —
+# disk overhead ~120 MB which is acceptable on a 16 GB+ SD card.
+SPRIXE_REPO=https://github.com/privaloops/sprixe.git
+SPRIXE_DIR=/opt/sprixe
+# Override SPRIXE_BRANCH to provision against an unmerged feature branch
+# (sudo -E bash ~/first-boot.sh with SPRIXE_BRANCH=foo set in your shell).
+SPRIXE_BRANCH="${SPRIXE_BRANCH:-main}"
+if [ ! -d "$SPRIXE_DIR/.git" ]; then
+    git clone --depth 1 --branch "$SPRIXE_BRANCH" "$SPRIXE_REPO" "$SPRIXE_DIR"
+fi
+chown -R sprixe:sprixe "$SPRIXE_DIR"
+sudo -u sprixe npm --prefix "$SPRIXE_DIR" install --no-audit --no-fund
+sudo -u sprixe npm -w @sprixe/bridge --prefix "$SPRIXE_DIR" run build
+
+# ROM staging dir owned by sprixe so the bridge can write without sudo.
+install -d -m 755 -o sprixe -g sprixe /home/sprixe/sprixe-roms
+
+# Systemd unit: starts the bridge after the network is up, restarts
+# on crash, runs as the sprixe user (no root surface).
+cat > /etc/systemd/system/sprixe-bridge.service <<'UNIT'
+[Unit]
+Description=Sprixe Bridge — local daemon for native MAME launches
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=sprixe
+Group=sprixe
+WorkingDirectory=/opt/sprixe/packages/sprixe-bridge
+ExecStart=/usr/bin/node /opt/sprixe/packages/sprixe-bridge/dist/index.js
+Environment=SPRIXE_BRIDGE_PORT=7777
+Environment=SPRIXE_BRIDGE_ROM_DIR=/home/sprixe/sprixe-roms
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+# ── Enable seatd + bridge + finish ─────────────────────────────────
+# Force-enable avahi too: socket activation has been observed to skip
+# the daemon at boot when wpa_supplicant is still negotiating Wi-Fi,
+# leaving sprixe.local unresolvable. Explicit enable kills the race.
 systemctl daemon-reload
 systemctl enable --now seatd.service
+systemctl enable --now avahi-daemon.service
+systemctl enable --now sprixe-bridge.service
 
 touch "$MARKER"
 
