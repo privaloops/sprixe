@@ -45,14 +45,56 @@ re-trigger the kiosk by switching VTs back to tty1 with
 
 - **chromium** + **cage** (Wayland kiosk compositor) + **seatd** (DRM
   access without root) + **fonts-noto-color-emoji**
+- **mame** (apt) — the native emulator the bridge spawns for actual
+  gameplay; Chromium handles the menu and ROM uploads.
+- **nodejs** + **npm** + **git** — runtime and tooling for the bridge
+  daemon below.
+- `/opt/sprixe` — shallow clone of this repo. `npm install` + build
+  produce the bridge's `dist/`. Future updates can `git pull` here
+  rather than re-running this script.
+- `/etc/systemd/system/sprixe-bridge.service` — runs `node
+  /opt/sprixe/packages/sprixe-bridge/dist/index.js` on boot, restarts
+  on failure, listens on `127.0.0.1:7777`.
+- `/home/sprixe/sprixe-roms/` — staging dir the bridge writes ROMs to
+  before passing them to MAME via `-rompath`.
 - `/home/sprixe/start-kiosk.sh` — the cage launcher (Chromium flags +
   the arcade URL)
 - `/home/sprixe/.bash_profile` — auto-launches the kiosk on tty1
 - Autologin drop-in for `sprixe` on tty1
 - Adds `sprixe` to the `video` and `render` groups (KMS access)
-- Enables `seatd.service`
+- Enables `seatd.service`, `avahi-daemon.service`, `sprixe-bridge.service`
 - Disables: bluetooth, hciuart, ModemManager, apt-daily (shrinks boot
-  time). **Avahi stays enabled** — it publishes `sprixe.local` for SSH.
+  time). Avahi is force-enabled (not just installed) because socket
+  activation can lose the race against wpa_supplicant during a cold
+  boot, leaving `sprixe.local` unresolvable.
+
+### Provisioning from a feature branch
+
+Default clones `main`. To test an unmerged branch:
+
+```bash
+ssh sprixe@sprixe.local
+SPRIXE_BRANCH=feature/my-thing sudo -E bash ~/first-boot.sh
+```
+
+## Bridge architecture
+
+The Pi runs Sprixe in two layers:
+
+```
+[cage + Chromium kiosk]  ←→  [Sprixe Frontend (browser)]  ←HTTP/SSE→  [bridge :7777]  ←spawn→  [MAME]
+                                  menu, ROM upload, settings                   /tmp staging         fullscreen
+```
+
+When the user picks a game in the wheel, the frontend probes the
+bridge at boot. If `:7777/health` answers, the ROM ZIP is POSTed to
+`/launch` instead of being fed into the embedded TS engine — MAME
+takes the screen, plays at full speed, and notifies the frontend via
+SSE on `/events` when the user quits. If the bridge is missing (web
+build, no Pi), the frontend falls back to its embedded TS emulator,
+unchanged. Same UI, same code, same URL.
+
+See `packages/sprixe-bridge/README.md` for the protocol details.
 
 ## Why cage and not Xorg
 
