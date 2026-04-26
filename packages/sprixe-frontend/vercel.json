@@ -1,4 +1,7 @@
 {
+  "installCommand": "cd ../.. && npm install",
+  "buildCommand": "cd ../.. && npm -w @sprixe/frontend run build",
+  "outputDirectory": "dist",
   "headers": [
     {
       "source": "/(.*)",
