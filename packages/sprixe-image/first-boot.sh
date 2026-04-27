@@ -114,11 +114,18 @@ done
 # re-running this whole script. The npm install pulls workspace deps
 # at the root because npm requires a unified node_modules tree —
 # disk overhead ~120 MB which is acceptable on a 16 GB+ SD card.
-SPRIXE_REPO=https://github.com/privaloops/sprixe.git
 SPRIXE_DIR=/opt/sprixe
 # Override SPRIXE_BRANCH to provision against an unmerged feature branch
 # (sudo -E bash ~/first-boot.sh with SPRIXE_BRANCH=foo set in your shell).
 SPRIXE_BRANCH="${SPRIXE_BRANCH:-main}"
+# Until the repo goes public, pass SPRIXE_TOKEN=<github PAT> to clone
+# privately. Fine-grained tokens with read-only "Contents" access are
+# enough. Falls back to the public URL when no token is set.
+if [ -n "${SPRIXE_TOKEN:-}" ]; then
+    SPRIXE_REPO="https://x-access-token:${SPRIXE_TOKEN}@github.com/privaloops/sprixe.git"
+else
+    SPRIXE_REPO=https://github.com/privaloops/sprixe.git
+fi
 if [ ! -d "$SPRIXE_DIR/.git" ]; then
     git clone --depth 1 --branch "$SPRIXE_BRANCH" "$SPRIXE_REPO" "$SPRIXE_DIR"
 fi
