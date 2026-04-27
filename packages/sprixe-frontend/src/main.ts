@@ -472,16 +472,14 @@ function startBrowser(
         case "save":    void bridge.sendInput("save").catch(() => {}); return;
         case "load":    void bridge.sendInput("load").catch(() => {}); return;
         case "quit":    void bridge.sendInput("quit").catch(() => {}); return;
-        case "volume": {
-          const level = (cmd.payload as { level?: number } | undefined)?.level;
-          if (typeof level !== "number") return;
-          // No way to set an absolute volume via MAME hotkeys — pulse
-          // the - / = keys just enough times to nudge perception.
-          // Replace later with mixer-level control if exact volume is
-          // required from the phone slider.
-          settings.update({ audio: { masterVolume: level } });
+        case "volume":
+          // No-op on purpose: the audio comes out of MAME, not the
+          // frontend, so updating settings.audio.masterVolume here
+          // would just desync the Settings slider from what the user
+          // actually hears. Wiring this to ALSA / PipeWire mixer or
+          // MAME's Lua console is the proper fix — out of scope of
+          // the phone-remote PR.
           return;
-        }
       }
       return;
     }
